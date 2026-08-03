@@ -1,0 +1,17 @@
+# Dependencies and local runtime state
+node_modules/
+.env
+.env.*
+!.env.example
+runtime-stdout.log
+runtime-stderr.log
+
+# Generated media, exports, and browser-test artifacts
+output/
+.playwright-cli/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/

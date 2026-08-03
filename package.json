@@ -1,0 +1,14 @@
+{
+  "name": "image2-canvas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "verify": "node --check public/app.js && node --check server.mjs && node --check image2-desktop-launcher.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>造像台 · Image2 节点画布</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/styles.css?v=20260801-03">
+</head>
+<body>
+  <section class="home-view" id="homeView">
+    <header class="home-header">
+      <div class="home-brand">
+        <div class="brand-mark" aria-hidden="true">像</div>
+        <div><strong>造像台</strong><span>IMAGE2 WORKSPACE</span></div>
+      </div>
+      <div class="home-header-actions">
+        <div class="theme-switch" id="homeThemeSwitch" aria-label="界面主题">
+          <button type="button" data-theme-value="dark" data-tooltip="暗黑科技"><i data-lucide="moon-star"></i><span>暗黑</span></button>
+          <button type="button" data-theme-value="light" data-tooltip="明亮清晰"><i data-lucide="sun"></i><span>明亮</span></button>
+          <button type="button" data-theme-value="premium" data-tooltip="简约高级"><i data-lucide="gem"></i><span>高级</span></button>
+        </div>
+        <button class="icon-button" id="homeSettingsButton" type="button" aria-label="Image2 设置" data-tooltip="Image2 设置"><i data-lucide="settings-2"></i></button>
+      </div>
+    </header>
+    <main class="home-main">
+      <div class="projects-heading">
+        <div><span class="eyebrow">WORKSPACES</span><h1>项目</h1><p>为每个故事、角色或商品保留独立的节点工作流。</p></div>
+        <button class="button button-primary new-project-button" id="newProjectButton" type="button"><i data-lucide="plus"></i> 新建项目</button>
+      </div>
+      <section class="service-health-panel" aria-labelledby="homeServiceTitle">
+        <div class="service-health-copy">
+          <div class="service-health-icon" aria-hidden="true"><i data-lucide="activity"></i></div>
+          <div>
+            <span class="eyebrow">IMAGE2 SERVICE</span>
+            <div class="service-health-title"><strong id="homeServiceTitle">生图服务</strong><span class="service-health-status" id="homeServiceStatus">检查中</span></div>
+            <p id="homeServiceDetail">正在检查本机服务与 Image2 网关连接。</p>
+          </div>
+        </div>
+        <div class="service-health-actions">
+          <button class="button button-subtle" id="homeCheckServiceButton" type="button"><i data-lucide="plug-zap"></i> 检查连接</button>
+          <button class="button button-primary" id="homeRestartServiceButton" type="button"><i data-lucide="refresh-cw"></i> 恢复生图服务</button>
+        </div>
+      </section>
+      <div class="project-toolbar">
+        <label class="search-field" for="projectSearch"><i data-lucide="search"></i><input id="projectSearch" type="search" placeholder="搜索项目"></label>
+        <span class="project-count" id="projectCount">0 个项目</span>
+      </div>
+      <div class="project-grid" id="projectGrid"></div>
+    </main>
+  </section>
+
+  <div class="app-shell" id="workspaceView" hidden>
+    <header class="topbar">
+      <div class="brand-block">
+        <button class="icon-button" id="backHomeButton" type="button" aria-label="返回项目首页" data-tooltip="返回项目"><i data-lucide="arrow-left"></i></button>
+        <div class="brand-mark" aria-hidden="true">像</div>
+        <div><strong>造像台</strong><button class="project-name" id="projectName" type="button">未命名项目</button></div>
+      </div>
+      <div class="topbar-center" role="group" aria-label="历史操作">
+        <button class="icon-button" id="undoButton" type="button" aria-label="撤销" data-tooltip="撤销"><i data-lucide="undo-2"></i></button>
+        <button class="icon-button" id="redoButton" type="button" aria-label="重做" data-tooltip="重做"><i data-lucide="redo-2"></i></button>
+        <span class="save-state" id="saveState"><i data-lucide="circle-check"></i> 已保存</span>
+      </div>
+      <div class="topbar-actions">
+        <div class="api-state" id="apiState"><span></span><b>检查连接</b></div>
+        <button class="button button-subtle" id="exportProjectButton" type="button"><i data-lucide="package-open"></i> 导出项目</button>
+        <button class="icon-button" id="settingsButton" type="button" aria-label="设置" data-tooltip="设置"><i data-lucide="settings-2"></i></button>
+      </div>
+    </header>
+
+    <aside class="library-panel" id="libraryPanel">
+      <div class="panel-heading">
+        <div><span class="eyebrow">WORKFLOW</span><h2>模块与素材</h2></div>
+        <button class="icon-button" id="importButton" type="button" aria-label="导入图片" data-tooltip="导入图片"><i data-lucide="plus"></i></button>
+      </div>
+      <div class="library-tabs" role="tablist">
+        <button class="tab is-active" type="button" data-library-tab="modules">模块</button>
+        <button class="tab" type="button" data-library-tab="assets">素材</button>
+        <button class="tab" type="button" data-library-tab="history">历史</button>
+      </div>
+      <div class="library-content" id="libraryContent"></div>
+      <div class="library-footer">
+        <button class="button button-quiet" id="importProjectButton" type="button"><i data-lucide="folder-input"></i> 导入项目</button>
+      </div>
+      <div class="panel-resizer panel-resizer-right" id="libraryResizer" role="separator" aria-label="调整左侧栏宽度" aria-orientation="vertical"></div>
+    </aside>
+
+    <main class="workspace" id="workspace" aria-label="节点工作流画布">
+      <div class="flow-switch" id="flowSwitch" role="tablist" aria-label="工作流模式切换">
+        <button type="button" data-flow-mode="workflow" class="is-active"><i data-lucide="workflow"></i> 工作流</button>
+        <button type="button" data-flow-mode="script"><i data-lucide="notebook-pen"></i> 剧本流</button>
+      </div>
+      <div class="script-flow-stage" id="scriptFlowStage" hidden>
+        <svg class="script-edge-layer" id="scriptEdgeLayer" aria-label="角色关系线"></svg>
+        <div class="script-node-layer" id="scriptNodeLayer"></div>
+      </div>
+      <div class="script-tool-rail" id="scriptToolRail" role="toolbar" aria-label="剧本流工具">
+        <button type="button" data-script-quick="select" aria-label="选择" data-tooltip="选择"><i data-lucide="mouse-pointer-2"></i></button>
+        <button type="button" data-script-quick="hand" aria-label="移动画布" data-tooltip="移动画布"><i data-lucide="hand"></i></button>
+        <span></span>
+        <button type="button" data-script-quick="male" aria-label="添加男性角色" data-tooltip="男性角色"><i data-lucide="user-round"></i></button>
+        <button type="button" data-script-quick="female" aria-label="添加女性角色" data-tooltip="女性角色"><i data-lucide="user-round"></i></button>
+        <button type="button" data-script-quick="story" aria-label="添加故事卡" data-tooltip="故事卡"><i data-lucide="book-open"></i></button>
+        <button type="button" data-script-quick="emotion" aria-label="新建情绪曲线" data-tooltip="新建情绪曲线"><i data-lucide="activity"></i></button>
+        <button type="button" data-script-quick="character-arc" aria-label="角色转变" data-tooltip="角色转变"><i data-lucide="route"></i></button>
+        <button type="button" data-script-quick="character-goal" aria-label="角色目标" data-tooltip="角色目标"><i data-lucide="target"></i></button>
+        <button type="button" data-script-quick="ai-assistant" aria-label="添加 AI 助手" data-tooltip="AI助手"><i data-lucide="sparkles"></i></button>
+        <button type="button" data-script-quick="note" aria-label="添加便签" data-tooltip="便签"><i data-lucide="sticky-note"></i></button>
+        <button type="button" data-script-quick="frame" aria-label="添加分组画板" data-tooltip="分组画板"><i data-lucide="frame"></i></button>
+      </div>      <div class="selection-rect" id="selectionRect" hidden></div>
+      <div class="canvas-scene" id="canvasScene">
+        <svg class="edge-layer" id="edgeLayer" aria-label="节点连接线"></svg>
+        <div class="node-layer" id="nodeLayer"></div>
+      </div>
+      <div class="tool-rail" role="toolbar" aria-label="画布工具">
+        <button class="tool-button is-active" type="button" data-tool="select" aria-label="选择" data-tooltip="选择 (V)"><i data-lucide="mouse-pointer-2"></i></button>
+        <button class="tool-button" type="button" data-tool="hand" aria-label="移动画布" data-tooltip="移动画布 (H)"><i data-lucide="hand"></i></button>
+        <span class="tool-divider"></span>
+        <button class="tool-button node-tool prompt-tool" type="button" data-add-node="prompt" aria-label="添加提示词模块" data-tooltip="提示词模块"><i data-lucide="text-cursor-input"></i></button>
+        <button class="tool-button node-tool composition-tool" type="button" data-add-node="composition" aria-label="添加参数控制节点" data-tooltip="参数控制"><i data-lucide="sliders-horizontal"></i></button>
+        <button class="tool-button node-tool image-tool" id="toolUploadButton" type="button" aria-label="添加图片模块" data-tooltip="图片模块"><i data-lucide="image-plus"></i></button>
+        <button class="tool-button node-tool generator-tool" type="button" data-add-node="generator" aria-label="添加 Image2 模块" data-tooltip="Image2 模块"><i data-lucide="sparkles"></i></button>
+        <button class="tool-button node-tool answer-tool" type="button" data-add-node="answer" aria-label="添加模型回答模块" data-tooltip="模型回答"><i data-lucide="message-square-text"></i></button>
+        <button class="tool-button note-tool" type="button" data-add-node="note" aria-label="添加便签" data-tooltip="便签"><i data-lucide="sticky-note"></i></button>
+        <button class="tool-button" id="addFrameButton" type="button" aria-label="新建分组画板" data-tooltip="分组画板 (F)"><i data-lucide="frame"></i></button>
+      </div>
+      <div class="canvas-status">
+        <button class="icon-button" id="fitButton" type="button" aria-label="适应内容" data-tooltip="适应全部"><i data-lucide="scan"></i></button>
+        <button class="zoom-control" id="zoomButton" type="button">68%</button>
+      </div>
+      <button class="mobile-panel-button mobile-left" id="mobileLibraryButton" type="button" aria-label="打开模块"><i data-lucide="panel-left"></i></button>
+      <button class="mobile-panel-button mobile-right" id="mobileInspectorButton" type="button" aria-label="打开属性"><i data-lucide="sliders-horizontal"></i></button>
+
+    </main>
+
+    <aside class="inspector-panel" id="inspectorPanel">
+      <div class="panel-heading inspector-heading">
+        <div><span class="eyebrow" id="inspectorEyebrow">PROJECT</span><h2 id="inspectorTitle">工作流概览</h2></div>
+        <button class="icon-button close-mobile" id="closeInspectorButton" type="button" aria-label="关闭属性"><i data-lucide="x"></i></button>
+      </div>
+      <div class="inspector-content" id="inspectorContent"></div>
+      <div class="panel-resizer panel-resizer-left" id="inspectorResizer" role="separator" aria-label="调整右侧栏宽度" aria-orientation="vertical"></div>
+    </aside>
+  </div>
+
+  <input id="imageFileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+  <input id="projectFileInput" type="file" accept="application/json" hidden>
+
+  <dialog class="settings-dialog" id="newProjectDialog">
+    <form method="dialog" id="newProjectForm">
+      <div class="dialog-heading"><div><span class="eyebrow">NEW WORKSPACE</span><h2>新建项目</h2></div><button class="icon-button" id="closeNewProjectButton" type="button" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <label class="field-label" for="newProjectName">项目名称</label>
+      <input class="text-input" id="newProjectName" type="text" maxlength="60" placeholder="例如：烘焙厨娘第二集" required>
+      <div class="field-label">界面基调</div>
+      <div class="theme-choice-grid" id="newProjectThemes">
+        <label class="theme-choice theme-dark"><input type="radio" name="projectTheme" value="dark"><span><i data-lucide="moon-star"></i><strong>暗黑科技</strong><small>深色节点与高对比连线</small></span></label>
+        <label class="theme-choice theme-light"><input type="radio" name="projectTheme" value="light" checked><span><i data-lucide="sun"></i><strong>明亮清晰</strong><small>高可读性与安静背景</small></span></label>
+        <label class="theme-choice theme-premium"><input type="radio" name="projectTheme" value="premium"><span><i data-lucide="gem"></i><strong>简约高级</strong><small>克制留白与精细层级</small></span></label>
+      </div>
+      <div class="dialog-actions"><button class="button button-subtle" id="cancelNewProjectButton" type="button">取消</button><button class="button button-primary" id="createProjectButton" value="default"><i data-lucide="plus"></i> 创建项目</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="settings-dialog" id="settingsDialog">
+    <form method="dialog" id="settingsForm">
+      <div class="dialog-heading"><div><span class="eyebrow">PREFERENCES</span><h2>工作台设置</h2></div><button class="icon-button" value="cancel" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <div class="field-label">界面基调</div>
+      <div class="settings-theme-switch" id="settingsThemeSwitch">
+        <button type="button" data-theme-value="dark"><i data-lucide="moon-star"></i> 暗黑科技</button>
+        <button type="button" data-theme-value="light"><i data-lucide="sun"></i> 明亮清晰</button>
+        <button type="button" data-theme-value="premium"><i data-lucide="gem"></i> 简约高级</button>
+      </div>
+      <label class="field-label" for="apiBase">API 地址</label>
+      <input class="text-input" id="apiBase" type="text" readonly value="https://rehdasu.cn/v1">
+      <label class="field-label" for="apiKeyInput">临时 API Key</label>
+      <div class="password-row"><input class="text-input" id="apiKeyInput" type="password" autocomplete="off" placeholder="优先使用服务器环境变量"><button class="icon-button" id="revealKeyButton" type="button" aria-label="显示密钥"><i data-lucide="eye"></i></button></div>
+      <p class="field-note">临时密钥仅存在于当前页面内存中，刷新后清除。</p>
+      <div class="dialog-actions"><button class="button button-subtle" value="cancel">取消</button><button class="button button-primary" id="saveSettingsButton" value="default">保存设置</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="dialogue-script-dialog" id="dialogueScriptDialog" aria-labelledby="dialogueScriptTitle">
+    <section class="dialogue-script-shell">
+      <header class="dialogue-script-heading" data-dialogue-drag>
+        <div><span class="eyebrow">DIALOGUE SCRIPT</span><h2 id="dialogueScriptTitle">对话脚本编辑</h2><p id="dialogueCardLabel">故事卡</p></div>
+        <div class="dialogue-heading-actions"><button class="icon-button" id="toggleDialogueFullscreenButton" type="button" aria-label="全屏编辑" title="全屏编辑"><i data-lucide="maximize-2"></i></button><button class="icon-button" id="saveDialogueCardButton" type="button" aria-label="保存卡片" title="保存卡片"><i data-lucide="save"></i></button><button class="icon-button" id="downloadDialogueTextButton" type="button" aria-label="下载对话文本" title="下载对话文本"><i data-lucide="download"></i></button><button class="icon-button" id="closeDialogueScriptButton" type="button" aria-label="关闭对话脚本"><i data-lucide="x"></i></button></div>
+      </header>
+      <section class="dialogue-script-body" id="dialogueScriptBody">
+        <section class="dialogue-main-column">
+          <section class="dialogue-thread" id="dialogueThread" aria-label="对话内容"></section>
+          <section class="dialogue-composer">
+            <div class="dialogue-composer-top">
+              <label class="dialogue-role-picker" for="dialogueRoleSelect"><div id="dialogueRolePreview"></div><select id="dialogueRoleSelect" aria-label="说话角色"></select></label>
+              <div class="dialogue-marker-actions"><button class="button button-subtle" id="addDialogueActionButton" type="button"><i data-lucide="box"></i> 添加动作</button><button class="button button-subtle" id="addDialogueNarrationButton" type="button"><i data-lucide="book-open"></i> 添加旁白</button></div>
+            </div>
+            <div class="dialogue-speech-entry"><textarea id="dialogueSpeechInput" placeholder="输入角色台词，可输入较长内容…" aria-label="台词内容"></textarea><button class="button button-primary" id="addDialogueSpeechButton" type="button"><i data-lucide="send"></i> 添加台词</button></div>
+          </section>
+          
+        </section>
+        <aside class="dialogue-analysis-panel" id="dialogueAnalysisPanel" aria-label="人物分析">
+          <header><span class="eyebrow">CHARACTER NOTES</span><h3>人物分析</h3></header>
+          <div class="dialogue-analysis-tabs" id="dialogueAnalysisTabs" aria-label="对话角色"></div>
+          <div class="dialogue-analysis-content" id="dialogueAnalysisContent"></div>
+        </aside>
+        <span class="dialogue-analysis-resize" data-dialogue-analysis-resize aria-label="调整人物分析栏宽度" role="separator"></span>
+      </section>
+      <span class="dialogue-panel-resize" data-dialogue-resize aria-hidden="true"></span>
+    </section>
+  </dialog>
+  <div class="dialogue-entry-menu" id="dialogueEntryMenu" hidden>
+    <button id="deleteDialogueEntryButton" type="button"><i data-lucide="trash-2"></i> 删除此条内容</button>
+  </div>
+  <div class="dialogue-entry-menu" id="dialogueAnalysisMenu" hidden>
+    <button id="deleteDialogueAnalysisRoleButton" type="button"><i data-lucide="user-minus"></i> 移除人物分析标签</button>
+  </div>
+  <dialog class="preview-dialog" id="previewDialog">
+    <button class="preview-close" id="previewCloseButton" type="button" aria-label="关闭预览"><i data-lucide="x"></i></button>
+    <img id="previewImage" alt="画布图片预览">
+  </dialog>
+
+  <dialog class="crop-dialog" id="cropDialog">
+    <section class="crop-dialog-shell">
+      <header class="dialog-heading"><div><span class="eyebrow">CROP REFERENCE</span><h2>裁剪参考图</h2></div><button class="icon-button" id="closeCropButton" type="button" aria-label="关闭裁剪"><i data-lucide="x"></i></button></header>
+      <div class="crop-stage"><div class="crop-canvas" id="cropCanvas"><img id="cropSourceImage" alt="裁剪原图"><span class="crop-selection" id="cropSelection" hidden></span></div></div>
+      <footer class="crop-dialog-footer"><span>在图片上拖动鼠标框选区域</span><div><button class="button button-subtle" id="cancelCropButton" type="button">取消</button><button class="button button-primary" id="confirmCropButton" type="button"><i data-lucide="crop"></i> 确认裁剪</button></div></footer>
+    </section>
+  </dialog>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  <script src="/vendor/lucide.min.js?v=20260724-8"></script>
+  <script type="module" src="/app.js?v=20260801-03"></script>
+</body>
+</html>
+
+
+
+
+
+
+
