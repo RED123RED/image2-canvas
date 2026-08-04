@@ -863,7 +863,7 @@ function scriptItemById(flow, id) { if (id === "character-manager" && flow.chara
 function scriptItemKind(item) { return item?.type === "story-card" ? "story" : item?.type === "emotion-board" ? "emotion" : item?.type === "story-frame" ? "frame" : item?.type === "character-manager" ? "角色管理" : item?.type === "character-notes" ? "角色功能" : item?.type === "character-arc" ? "character-arc" : item?.type === "character-goal" ? "character-goal" : item?.type === "script-note" ? "便签" : item?.type === "ai-assistant" ? "ai-assistant" : "character"; }
 function copyScriptSelection() {
   const flow = ensureScriptFlow();
-  const allowed = new Set(["character", "story-card", "emotion-board", "character-arc", "character-goal", "script-note", "ai-assistant"]);
+  const allowed = new Set(["character", "story-card", "story-frame", "emotion-board", "character-arc", "character-goal", "script-note", "ai-assistant"]);
   const items = flow.selectedIds.map(id => scriptItemById(flow, id)).filter(item => item && allowed.has(item.type));
   if (!items.length) return toast("请选择剧本模块后再复制", true);
   const ids = new Set(items.map(item => item.id));
@@ -880,7 +880,7 @@ function pasteScriptSelection() {
   if (!scriptClipboard?.items?.length) return toast("请先复制剧本模块", true);
   const flow = ensureScriptFlow(); recordHistory(); const offset = 36 + scriptPasteSerial * 18; const idMap = new Map();
   const copies = scriptClipboard.items.map((item, index) => {
-    const copy = structuredClone(item); const nextId = uid(item.type === "story-card" ? "story" : item.type === "emotion-board" ? "emotion" : item.type === "character-arc" ? "character-arc" : item.type === "character-goal" ? "character-goal" : item.type === "script-note" ? "script-note" : item.type === "ai-assistant" ? "script-ai" : "role");
+    const copy = structuredClone(item); const nextId = uid(item.type === "story-card" ? "story" : item.type === "story-frame" ? "script-frame" : item.type === "emotion-board" ? "emotion" : item.type === "character-arc" ? "character-arc" : item.type === "character-goal" ? "character-goal" : item.type === "script-note" ? "script-note" : item.type === "ai-assistant" ? "script-ai" : "role");
     idMap.set(item.id, nextId); copy.id = nextId; copy.x = Math.round((copy.x || 0) + offset); copy.y = Math.round((copy.y || 0) + offset); copy.createdAt = Date.now() + index;
     if (copy.type === "story-card") copy.displayNumber = "";
     if (copy.type === "emotion-board") copy.levels = {};
@@ -889,6 +889,7 @@ function pasteScriptSelection() {
   copies.forEach(copy => {
     if (copy.type === "character") flow.characters.push(copy);
     else if (copy.type === "story-card") flow.storyCards.push(copy);
+    else if (copy.type === "story-frame") flow.storyFrames.push(copy);
     else if (copy.type === "emotion-board") flow.emotionBoards.push(copy);
     else if (copy.type === "character-arc") { copy.roleIds = copy.roleIds.filter(id => flow.characters.some(role => role.id === id)); flow.characterArcs.push(copy); }
     else if (copy.type === "character-goal") { copy.roleIds = copy.roleIds.filter(id => flow.characters.some(role => role.id === id)); copy.surfaceGoals = (copy.surfaceGoals || []).map(item => ({ ...item, id: uid("surface-goal") })); copy.coreGoals = (copy.coreGoals || []).map(item => ({ ...item, id: uid("core-goal") })); flow.characterGoals.push(copy); }
@@ -2467,7 +2468,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
     const historyShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y");
     const clipboardShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "c" || event.key.toLowerCase() === "v");
     if (clipboardShortcut && isEditable) return;
-    if (clipboardShortcut && state?.flowMode === "script") { if (event.key.toLowerCase() === "c") { event.preventDefault(); copyScriptSelection(); } return; }
+    if (clipboardShortcut && state?.flowMode === "script") { event.preventDefault(); if (event.key.toLowerCase() === "c") copyScriptSelection(); else pasteScriptSelection(); return; }
     if (clipboardShortcut && state?.flowMode !== "script") { const selection = window.getSelection(); const answerTextSelected = Boolean(selection?.toString().trim() && selection.anchorNode?.parentElement?.closest(".answer-response")); if (event.key.toLowerCase() === "c" && answerTextSelected) return; if (event.key.toLowerCase() === "c") { event.preventDefault(); copyWorkflowSelection(); } return; }
     if (historyShortcut && isEditable) { discardEditableHistory(target); discardDialogueEditableHistory(target); return; }
     if (historyShortcut && dialogueEditor && dialogueScriptDialog.open) { const handled = event.shiftKey || event.key.toLowerCase() === "y" ? redoDialogueDraft() : undoDialogueDraft(); if (handled) { event.preventDefault(); return; } }
