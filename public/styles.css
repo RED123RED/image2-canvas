@@ -717,9 +717,9 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .story-card-field { display: grid; grid-template-columns: 31px minmax(0, 1fr); align-items: center; gap: 6px; color: #7590a0; font-size: 10px; }
 .story-card-field input { width: 100%; min-width: 0; padding: 2px 0; border: 0; outline: 0; color: #405866; background: transparent; font: inherit; font-size: 10px; }
 .story-card-field input::placeholder, .story-card-title input::placeholder { color: #a7b4bc; opacity: 1; }
-.story-card-content { flex: 1 1 auto; min-height: 54px; grid-template-columns: 1fr; align-items: stretch; gap: 5px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #e5edf1; }
+.story-card-content { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 54px; gap: 5px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #e5edf1; }
 .story-card-content > span { color: #7994a4; font-size: 10px; }
-.story-card-content textarea { width: 100%; min-height: 0; height: 100%; resize: none; padding: 4px 0; border: 0; outline: 0; color: #405866; background: transparent; font: inherit; font-size: 11px; line-height: 1.65; }
+.story-card-content textarea { flex: 1 1 auto; width: 100%; min-height: 0; resize: none; padding: 0; border: 0; outline: 0; color: #405866; background: transparent; font: inherit; font-size: 11px; line-height: 1.65; }
 .story-card-content textarea::placeholder { color: #a7b4bc; opacity: 1; }
 .story-card-resize { position: absolute; right: 5px; bottom: 5px; width: 16px; height: 16px; border-right: 2px solid #8eaab9; border-bottom: 2px solid #8eaab9; cursor: nwse-resize; opacity: .75; }
 .script-emotion-board { position: absolute; z-index: 2; overflow: hidden; border: 1px solid #d3dfe5; border-radius: 7px; color: #47606f; background: #fff; box-shadow: 0 9px 24px rgba(47, 67, 78, .09); user-select: none; }
@@ -1163,7 +1163,7 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .character-arc-point-event em, .character-arc-point-result em { color: #5d8195; }
 .story-type-control { position: relative; min-height: 23px; }.story-type-control .story-type-value { display: block; min-width: 0; flex: 1 1 auto; overflow: hidden; padding: 2px 0; color: #405866; text-overflow: ellipsis; white-space: nowrap; }.story-type-control button { flex: 0 0 auto; }.story-type-picker { position: absolute; z-index: 28; right: 0; bottom: calc(100% + 5px); display: grid; width: 136px; max-height: 210px; overflow: auto; padding: 5px; border: 1px solid #c8d8e2; border-radius: 6px; background: #fff; box-shadow: 0 10px 24px rgba(48, 77, 96, .18); }.story-type-picker button { display: block; width: 100%; height: auto; min-height: 25px; padding: 5px 7px; border-radius: 4px; color: #456475; background: transparent; text-align: left; font-size: 10px; }.story-type-picker button:hover { color: #2d6f98; background: #edf7fb; }.story-type-picker button.is-custom { margin-top: 3px; border-top: 1px solid #e4edf2; color: #5c86a0; }
 /* Show the complete story type list without an internal scrollbar. */
-.script-story-card { overflow: visible; }
+.script-story-card.has-open-type-picker { overflow: visible; }
 .story-type-picker { max-height: none; overflow: visible; }
 
 /* Larger editable frame titles in both workflows. */
