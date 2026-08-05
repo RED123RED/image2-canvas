@@ -20,11 +20,15 @@ const geminiImageModels = Object.freeze([
   "gemini-3-pro-image-preview",
   "gemini-3.1-flash-image-preview"
 ]);
+const seedreamImageModels = Object.freeze([
+  "doubao-seedream-5-0-pro-260628"
+]);
+const moyuImageModels = Object.freeze([...geminiImageModels, ...seedreamImageModels]);
 const geminiDefaultModel = geminiImageModels.includes(process.env.GEMINI_MOYU_MODEL)
   ? process.env.GEMINI_MOYU_MODEL
   : geminiImageModels[0];
-function normalizeGeminiModel(value) {
-  return geminiImageModels.includes(String(value || "")) ? String(value) : geminiDefaultModel;
+function normalizeMoyuModel(value) {
+  return moyuImageModels.includes(String(value || "")) ? String(value) : geminiDefaultModel;
 }
 const providerConfigDir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "image2-canvas");
 const providerConfigPath = path.join(providerConfigDir, "providers.json");
@@ -282,7 +286,7 @@ async function requestImage2Generation(job) {
 
 async function requestGeminiGeneration(job) {
   const { apiKey, prompt, size, n, references } = job.request;
-  const payload = { model: normalizeGeminiModel(job.model), prompt, size, n };
+  const payload = { model: normalizeMoyuModel(job.model), prompt, size, n };
   // The documented OpenAI-compatible endpoint accepts one reference image.
   if (references[0]) payload.image = references[0];
   const response = await fetch(`${geminiBaseUrl}/v1/images/generations`, {
@@ -306,7 +310,7 @@ async function executeJob(job) {
   await persistJobs();
   await writeJobLog(job, "started");
   try {
-    const result = job.provider === "gemini" ? await requestGeminiGeneration(job) : await requestImage2Generation(job);
+    const result = ["gemini", "moyu"].includes(job.provider) ? await requestGeminiGeneration(job) : await requestImage2Generation(job);
     job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
     job.status = "succeeded";
     job.mode = result.mode;
@@ -341,17 +345,18 @@ async function drainJobs() {
 async function createJob(req, res) {
   try {
     const body = await readJson(req);
-    const provider = body.provider === "gemini" ? "gemini" : "image2";
-    if (provider === "gemini" && body.model && !geminiImageModels.includes(String(body.model))) return sendJson(res, 400, { error: "不支持的 Gemini 图像模型" });
-    const apiKey = provider === "gemini" ? await resolveGeminiApiKey(req) : await resolveApiKey(req);
-    if (!apiKey) return sendJson(res, 401, { error: provider === "gemini" ? "未配置 Gemini API Key，请在设置中保存 Gemini 密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
+    const provider = body.provider === "gemini" ? "gemini" : body.provider === "moyu" ? "moyu" : "image2";
+    const usesMoyu = ["gemini", "moyu"].includes(provider);
+    if (usesMoyu && body.model && !moyuImageModels.includes(String(body.model))) return sendJson(res, 400, { error: "不支持的魔芋图像模型" });
+    const apiKey = usesMoyu ? await resolveGeminiApiKey(req) : await resolveApiKey(req);
+    if (!apiKey) return sendJson(res, 401, { error: usesMoyu ? "未配置魔芋 API Key，请在设置中保存 Gemini 密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
     const quality = ["low", "medium", "high"].includes(body.quality) ? body.quality : "high";
-    const size = provider === "gemini" ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1") : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
+    const size = usesMoyu ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1") : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
     const n = Math.min(4, Math.max(1, Number(body.n) || 1));
     const references = Array.isArray(body.references) ? body.references.slice(0, 8) : [];
-    const selectedModel = provider === "gemini" ? normalizeGeminiModel(body.model) : model;
+    const selectedModel = usesMoyu ? normalizeMoyuModel(body.model) : model;
     const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, n, references } };
     jobs.set(job.id, job);
     pendingJobIds.push(job.id);
@@ -388,7 +393,7 @@ async function checkGeminiGateway(req, res) {
     if (!response.ok) throw gatewayError(response.status, "Gemini 网关鉴权失败");
     const result = await response.json().catch(() => ({}));
     const listedModels = Array.isArray(result.data) ? new Set(result.data.map(item => item?.id)) : null;
-    const availableModels = listedModels ? geminiImageModels.filter(id => listedModels.has(id)) : geminiImageModels;
+    const availableModels = listedModels ? moyuImageModels.filter(id => listedModels.has(id)) : moyuImageModels;
     const available = availableModels.length > 0;
     return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: geminiDefaultModel, models: availableModels, baseUrl: geminiBaseUrl, checkedAt: Date.now() });
   } catch (error) {
@@ -404,7 +409,7 @@ async function saveGeminiProvider(req, res) {
     if (!apiKey) return sendJson(res, 400, { error: "Gemini API Key 不能为空" });
     const previous = await readProviderConfig();
     await saveProviderConfig({ ...previous, gemini: { ...(previous.gemini || {}), apiKey, baseUrl: geminiBaseUrl, model: geminiDefaultModel, updatedAt: Date.now() } });
-    return sendJson(res, 200, { ready: true, provider: "gemini", model: geminiDefaultModel, models: geminiImageModels, baseUrl: geminiBaseUrl });
+    return sendJson(res, 200, { ready: true, provider: "moyu", model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl });
   } catch (error) {
     return sendJson(res, 400, { error: error?.message || "Gemini 设置保存失败" });
   }
@@ -502,7 +507,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/status") {
     const key = await resolveApiKey(req);
     const geminiKey = await resolveGeminiApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: geminiImageModels, baseUrl: geminiBaseUrl }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/gemini/health") return checkGeminiGateway(req, res);
