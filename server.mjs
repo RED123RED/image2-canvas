@@ -353,7 +353,11 @@ async function createJob(req, res) {
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
     const quality = ["low", "medium", "high"].includes(body.quality) ? body.quality : "high";
-    const size = usesMoyu ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1") : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
+    const size = provider === "moyu"
+      ? (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024")
+      : provider === "gemini"
+        ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1")
+        : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
     const n = Math.min(4, Math.max(1, Number(body.n) || 1));
     const references = Array.isArray(body.references) ? body.references.slice(0, 8) : [];
     const selectedModel = usesMoyu ? normalizeMoyuModel(body.model) : model;

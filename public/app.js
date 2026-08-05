@@ -2236,7 +2236,8 @@ async function runGeneratorNode(nodeId) {
     const references = await Promise.all(referenceSources.map(sourceToDataUrl));
     const constraints = generator.constraints?.trim();
     const fullPrompt = constraints ? `${prompt}\n\n必须遵守的限制：${constraints}` : prompt;
-    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesMoyu && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ provider: generator.provider || "image2", model: usesMoyu ? generatorModelForNode(generator) : undefined, prompt: fullPrompt, size: usesMoyu ? generator.aspect : sizeMap[generator.aspect].api, quality: generator.quality, n: generator.batch, references }) }, 75_000);
+    const externalSize = generator.provider === "moyu" ? sizeMap[generator.aspect].api : generator.aspect;
+    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesMoyu && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ provider: generator.provider || "image2", model: usesMoyu ? generatorModelForNode(generator) : undefined, prompt: fullPrompt, size: usesMoyu ? externalSize : sizeMap[generator.aspect].api, quality: generator.quality, n: generator.batch, references }) }, 75_000);
     const job = result.job;
     if (!job?.id) throw new Error("本机服务未返回生成任务");
     generator.activeJobId = job.id;
