@@ -289,19 +289,34 @@ async function requestGeminiGeneration(job) {
   const payload = { model: normalizeMoyuModel(job.model), prompt, size, n };
   // The documented OpenAI-compatible endpoint accepts one reference image.
   if (references[0]) payload.image = references[0];
-  const response = await fetch(`${geminiBaseUrl}/v1/images/generations`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(10 * 60_000)
-  });
-  const raw = await response.text();
-  let result;
-  try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
-  if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || `Gemini 请求失败 (${response.status})`);
-  const items = Array.isArray(result.data) ? result.data : [];
-  if (!items.length) throw gatewayError(502, "Gemini 接口响应中没有图片");
-  return { items, mode: references.length ? "edit" : "generate", referencesUsed: references.length ? 1 : 0 };
+  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`${geminiBaseUrl}/v1/images/generations`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10 * 60_000)
+      });
+      const raw = await response.text();
+      let result;
+      try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
+      if (!response.ok) {
+        lastError = gatewayError(response.status, result?.error?.message || result?.message || `Gemini 请求失败 (${response.status})`);
+        if (response.status < 500 && response.status !== 429) throw lastError;
+      } else {
+        const items = Array.isArray(result.data) ? result.data : [];
+        if (!items.length) throw gatewayError(502, "Gemini 接口响应中没有图片");
+        return { items, mode: references.length ? "edit" : "generate", referencesUsed: references.length ? 1 : 0 };
+      }
+    } catch (error) {
+      lastError = error;
+      if (error?.code && error.code !== "GATEWAY" && error.code !== "RATE_LIMIT") throw error;
+    }
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1200 * (attempt + 1)));
+  }
+  throw lastError || gatewayError(502, "魔芋图像接口请求失败");
 }
 
 async function executeJob(job) {
