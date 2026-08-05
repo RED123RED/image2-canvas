@@ -2295,8 +2295,8 @@ async function runAnswerNode(nodeId) {
 }
 function resetCropSelection() { if (cropSession) setCropSelection({ x: .15, y: .15, width: .7, height: .7 }); }
 function openCropDialog(nodeId) {
-  const node = findNode(nodeId); if (!node?.src) return toast("请先上传或生成一张图片", true);
-  cropSession = { nodeId, selection: { x: .15, y: .15, width: .7, height: .7 }, start: null }; cropSourceImage.src = node.src; cropSelection.hidden = true;
+  const node = findNode(nodeId); const originalSource = node?.originalSrc || node?.src; if (!originalSource) return toast("请先上传或生成一张图片", true);
+  cropSession = { nodeId, originalSource, selection: { x: .15, y: .15, width: .7, height: .7 }, start: null }; cropSourceImage.src = originalSource; cropSelection.hidden = true;
   if (!cropDialog.open) cropDialog.showModal();
   if (cropSourceImage.complete) requestAnimationFrame(resetCropSelection);
 }
@@ -2317,10 +2317,13 @@ function endCropSelection(event) {
 }
 function cropRatioLabel(width, height) { const gcd = (a, b) => b ? gcd(b, a % b) : a; const divisor = gcd(Math.max(1, Math.round(width)), Math.max(1, Math.round(height))); return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`; }
 async function confirmCrop() {
-  const sourceNode = findNode(cropSession?.nodeId); const selection = cropSession?.selection; if (!sourceNode?.src || !selection || !cropSourceImage.naturalWidth) return toast("图片尚未准备完成", true);
+  const sourceNode = findNode(cropSession?.nodeId); const selection = cropSession?.selection; if (!cropSession?.originalSource || !sourceNode || !selection || !cropSourceImage.naturalWidth) return toast("图片尚未准备完成", true);
   try {
-    const sx = Math.round(selection.x * cropSourceImage.naturalWidth); const sy = Math.round(selection.y * cropSourceImage.naturalHeight); const sw = Math.max(1, Math.round(selection.width * cropSourceImage.naturalWidth)); const sh = Math.max(1, Math.round(selection.height * cropSourceImage.naturalHeight));
-    const canvas = document.createElement("canvas"); canvas.width = sw; canvas.height = sh; canvas.getContext("2d").drawImage(cropSourceImage, sx, sy, sw, sh, 0, 0, sw, sh);
+    const sourceWidth = cropSourceImage.naturalWidth; const sourceHeight = cropSourceImage.naturalHeight;
+    const sx = Math.min(sourceWidth - 1, Math.max(0, Math.round(selection.x * sourceWidth))); const sy = Math.min(sourceHeight - 1, Math.max(0, Math.round(selection.y * sourceHeight)));
+    const sw = Math.min(sourceWidth - sx, Math.max(1, Math.round(selection.width * sourceWidth))); const sh = Math.min(sourceHeight - sy, Math.max(1, Math.round(selection.height * sourceHeight)));
+    const canvas = document.createElement("canvas"); canvas.width = sw; canvas.height = sh;
+    const context = canvas.getContext("2d", { alpha: true, colorSpace: "srgb" }); context.imageSmoothingEnabled = false; context.drawImage(cropSourceImage, sx, sy, sw, sh, 0, 0, sw, sh);
     const cropped = canvas.toDataURL("image/png"); const stored = await persistDataUrlImage(cropped); recordHistory(); const node = { id: uid("image"), type: "image", name: `${sourceNode.name} · 裁剪`, x: Math.round(sourceNode.x + sourceNode.width + 46), y: Math.round(sourceNode.y + 36), width: 270, height: nodeHeight("image"), src: stored.url, previewSrc: stored.previewUrl || stored.url, originalSrc: stored.url, source: `${sourceNode.source || "参考图"} · 裁剪`, ratio: cropRatioLabel(sw, sh), createdAt: Date.now() };
     state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null; closeCropDialog(); renderWorkspace(); scheduleSave(); toast("已创建裁剪参考图节点");
   } catch (error) { toast("裁剪失败，请使用本地上传或本机生成的图片", true); }
