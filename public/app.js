@@ -24,6 +24,7 @@ function generatorModelForNode(node) {
   return generatorProviders[node?.provider]?.model || generatorProviders.image2.model;
 }
 function generatorProviderForNode(node) { const provider = generatorProviders[node?.provider] || generatorProviders.image2; return { ...provider, model: generatorModelForNode(node) }; }
+function generatorReferenceLimit(node) { if (node?.provider === "moyu") return 6; if (node?.provider === "gemini") return 14; return 8; }
 const nodeLabels = { prompt: "提示词", composition: "参数控制", image: "图像", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
 const scriptRoleTypes = [
   { id: "male-1", gender: "male", label: "男性 1" },
@@ -422,7 +423,7 @@ function normalizeProject(project) {
     normalized.selectedEdgeId = null;
     normalized.nodes = normalized.nodes.filter(Boolean).map(node => {
       if (node.type === "generator") {
-        const slots = Math.min(8, Math.max(1, Number(node.inputSlots) || 4));
+        const slots = Math.min(14, Math.max(1, Number(node.inputSlots) || 4));
         const promptSlots = Math.min(6, Math.max(1, Number(node.promptSlots) || 1));
         return { ...node, provider: ["gemini", "moyu"].includes(node.provider) ? node.provider : "image2", geminiModel: geminiImageModels.some(item => item.id === node.geminiModel) ? node.geminiModel : geminiImageModels[0].id, moyuModel: seedreamImageModels.some(item => item.id === node.moyuModel) ? node.moyuModel : seedreamImageModels[0].id, width: node.width || 360, promptSlots, inputSlots: slots, height: Math.max(Number(node.height) || 0, nodeHeight("generator", slots, promptSlots)), aspect: sizeMap[node.aspect] ? node.aspect : fixedGeneratorSettings.aspect, quality: ["low", "medium", "high"].includes(node.quality) ? node.quality : fixedGeneratorSettings.quality, batch: Math.min(4, Math.max(1, Number(node.batch) || fixedGeneratorSettings.batch)), status: node.activeJobId ? "running" : "idle" };
       }
@@ -1692,7 +1693,7 @@ function renderGeneratorNodeHtml(node, selected, style) {
     <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-generator-field="aspect" data-node-id="${node.id}" aria-label="图像比例">${Object.keys(sizeMap).map(value => `<option value="${value}"${node.aspect === value ? " selected" : ""}>${value}</option>`).join("")}</select></div>
     <div class="node-field"><label>品质</label>${isMoyu ? `<div class="node-static-field">模型默认</div>` : `<select class="node-select node-interactive" data-generator-field="quality" data-node-id="${node.id}" aria-label="图像品质"><option value="low"${node.quality === "low" ? " selected" : ""}>快速</option><option value="medium"${node.quality === "medium" ? " selected" : ""}>标准</option><option value="high"${node.quality === "high" ? " selected" : ""}>高品质</option></select>`}</div>
     <div class="node-field"><label>张数</label><select class="node-select node-interactive" data-generator-field="batch" data-node-id="${node.id}" aria-label="生成张数">${[1,2,3,4].map(value => `<option value="${value}"${Number(node.batch) === value ? " selected" : ""}>${value}</option>`).join("")}</select></div></div>
-    <div class="generator-inputs">${promptSlots}${slots}</div><div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-input="${node.id}"${node.inputSlots >= 8 ? " disabled" : ""}>${icon("image-plus")} 添加图片输入</button></div>
+    <div class="generator-inputs">${promptSlots}${slots}</div><div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-input="${node.id}"${node.inputSlots >= generatorReferenceLimit(node) ? " disabled" : ""}>${icon("image-plus")} 添加图片输入</button></div>
     <button class="run-node-button node-interactive" type="button" data-run-node="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "play")} ${node.status === "running" ? `${escapeHtml(provider.label)} 处理中` : `运行 ${escapeHtml(provider.label)}`}</button>
     <div class="node-run-state"><span>${escapeHtml(provider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}">${statusLabel}</span></div>
     </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", generatorPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", `Image ${index + 1}`, generatorImagePortTop(node, index))).join("")}${portHtml(node, "image", "image", "output", "Image", 76)}</article>`;
@@ -1746,7 +1747,7 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
     recordHistory(); node.promptSlots += 1; node.height = nodeHeight("generator", node.inputSlots, node.promptSlots); renderCanvas(); renderInspector(); scheduleSave();
   }));
   $$('[data-add-input]').forEach(button => button.addEventListener("click", event => {
-    event.stopPropagation(); const node = findNode(button.dataset.addInput); if (!node || node.inputSlots >= 8) return;
+    event.stopPropagation(); const node = findNode(button.dataset.addInput); if (!node || node.inputSlots >= generatorReferenceLimit(node)) return;
     recordHistory(); node.inputSlots += 1; node.height = nodeHeight("generator", node.inputSlots, node.promptSlots); renderCanvas(); renderInspector(); scheduleSave();
   }));
   $$('[data-run-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); runGeneratorNode(button.dataset.runNode); }));
@@ -2224,7 +2225,7 @@ async function runGeneratorNode(nodeId) {
   const prompt = promptEdges.map(edge => findNode(edge.source)).filter(node => node?.type === "prompt" && !node.disabled).map(node => node.content?.trim()).filter(Boolean).join("\n\n");
   if (!prompt) { selectNode(nodeId); return toast("请连接至少一个有内容且已启用的提示词模块", true); }
   const imageEdges = state.edges.filter(edge => edge.target === nodeId && edge.type === "image" && edge.targetPort.startsWith("image-")).sort((a, b) => Number(a.targetPort.split("-")[1]) - Number(b.targetPort.split("-")[1]));
-  const referenceSources = imageEdges.map(edge => imageSourceFromNode(findNode(edge.source))).filter(Boolean).slice(0, 8);
+  const referenceSources = imageEdges.map(edge => imageSourceFromNode(findNode(edge.source))).filter(Boolean).slice(0, generatorReferenceLimit(generator));
   const provider = generatorProviderForNode(generator);
   const usesMoyu = ["gemini", "moyu"].includes(generator.provider);
   if (!usesMoyu && !$("#apiState").classList.contains("is-ready") && !apiKey) { openSettings(); return toast("请先连接 Image2 API", true); }
@@ -2244,7 +2245,7 @@ async function runGeneratorNode(nodeId) {
     generator.activeJobId = job.id;
     ensureGenerationPlaceholders(generator, job.id, job.imageCount);
     state.selectedIds = [];
-    toast(`${provider.label} 已进入本机任务队列，正在生成 ${job.imageCount} 张图片${usesMoyu && references.length > 1 ? `（${provider.label} 使用第 1 张参考图）` : ""}`);
+    toast(`${provider.label} 已进入本机任务队列，正在生成 ${job.imageCount} 张图片`);
     renderWorkspace();
     scheduleSave();
     pollGenerationJob(generator.id, job.id);

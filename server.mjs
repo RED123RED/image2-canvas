@@ -30,6 +30,9 @@ const geminiDefaultModel = geminiImageModels.includes(process.env.GEMINI_MOYU_MO
 function normalizeMoyuModel(value) {
   return moyuImageModels.includes(String(value || "")) ? String(value) : geminiDefaultModel;
 }
+function moyuReferenceLimit(modelName) {
+  return seedreamImageModels.includes(String(modelName || "")) ? 6 : 14;
+}
 const providerConfigDir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "image2-canvas");
 const providerConfigPath = path.join(providerConfigDir, "providers.json");
 const jobs = new Map();
@@ -286,9 +289,13 @@ async function requestImage2Generation(job) {
 
 async function requestGeminiGeneration(job) {
   const { apiKey, prompt, size, n, references } = job.request;
-  const payload = { model: normalizeMoyuModel(job.model), prompt, size, n };
-  // The documented OpenAI-compatible endpoint accepts one reference image.
-  if (references[0]) payload.image = references[0];
+  const modelName = normalizeMoyuModel(job.model);
+  const selectedReferences = references.slice(0, moyuReferenceLimit(modelName));
+  const payload = { model: modelName, prompt, size, n };
+  if (job.provider === "moyu") payload.watermark = false;
+  // The gateway accepts one reference as a string and multiple references as an array.
+  if (selectedReferences.length === 1) payload.image = selectedReferences[0];
+  else if (selectedReferences.length > 1) payload.image = selectedReferences;
   const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -308,7 +315,7 @@ async function requestGeminiGeneration(job) {
       } else {
         const items = Array.isArray(result.data) ? result.data : [];
         if (!items.length) throw gatewayError(502, "Gemini 接口响应中没有图片");
-        return { items, mode: references.length ? "edit" : "generate", referencesUsed: references.length ? 1 : 0 };
+        return { items, mode: selectedReferences.length ? "edit" : "generate", referencesUsed: selectedReferences.length };
       }
     } catch (error) {
       lastError = error;
@@ -374,7 +381,8 @@ async function createJob(req, res) {
         ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1")
         : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
     const n = Math.min(4, Math.max(1, Number(body.n) || 1));
-    const references = Array.isArray(body.references) ? body.references.slice(0, 8) : [];
+    const maxReferences = provider === "moyu" || provider === "gemini" ? 14 : 8;
+    const references = Array.isArray(body.references) ? body.references.slice(0, maxReferences) : [];
     const selectedModel = usesMoyu ? normalizeMoyuModel(body.model) : model;
     const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, n, references } };
     jobs.set(job.id, job);
