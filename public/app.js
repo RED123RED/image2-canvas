@@ -10,7 +10,13 @@ const sizeMap = {
 };
 const themeLabels = { dark: "暗黑科技", light: "明亮清晰", premium: "简约高级" };
 const fixedGeneratorSettings = Object.freeze({ aspect: "3:4", quality: "medium", batch: 1 });
-const generatorProviders = Object.freeze({ image2: { label: "Image2", model: "gpt-image-2" }, gemini: { label: "Gemini", model: "gemini-3-pro-image-preview" } });
+const geminiImageModels = Object.freeze([
+  { id: "gemini-3-pro-image-preview", label: "Gemini 3 Pro Image" },
+  { id: "gemini-3.1-flash-image-preview", label: "Gemini 3.1 Flash Image" }
+]);
+const generatorProviders = Object.freeze({ image2: { label: "Image2", model: "gpt-image-2" }, gemini: { label: "Gemini", model: geminiImageModels[0].id } });
+function generatorModelForNode(node) { return node?.provider === "gemini" && geminiImageModels.some(item => item.id === node.geminiModel) ? node.geminiModel : generatorProviders[node?.provider]?.model || generatorProviders.image2.model; }
+function generatorProviderForNode(node) { const provider = generatorProviders[node?.provider] || generatorProviders.image2; return { ...provider, model: generatorModelForNode(node) }; }
 const nodeLabels = { prompt: "提示词", composition: "参数控制", image: "图像", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
 const scriptRoleTypes = [
   { id: "male-1", gender: "male", label: "男性 1" },
@@ -294,7 +300,7 @@ function applyCompositionToLinkedPrompts(compositionId) {
   const instruction = promptCompositionInstruction(source.composition); linkedPromptsForComposition(compositionId).forEach(prompt => { prompt.content = upsertPromptCompositionInstruction(prompt.content, source.composition, prompt.compositionInstruction); prompt.compositionInstruction = instruction; });
 }
 function createGeneratorNode(x, y) {
-  return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
+  return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createAnswerNode(x, y) {
   return { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, height: nodeHeight("answer", 4, 1), model: "gpt-5.6", status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
@@ -411,7 +417,7 @@ function normalizeProject(project) {
       if (node.type === "generator") {
         const slots = Math.min(8, Math.max(1, Number(node.inputSlots) || 4));
         const promptSlots = Math.min(6, Math.max(1, Number(node.promptSlots) || 1));
-        return { ...node, provider: node.provider === "gemini" ? "gemini" : "image2", width: node.width || 360, promptSlots, inputSlots: slots, height: Math.max(Number(node.height) || 0, nodeHeight("generator", slots, promptSlots)), aspect: sizeMap[node.aspect] ? node.aspect : fixedGeneratorSettings.aspect, quality: ["low", "medium", "high"].includes(node.quality) ? node.quality : fixedGeneratorSettings.quality, batch: Math.min(4, Math.max(1, Number(node.batch) || fixedGeneratorSettings.batch)), status: node.activeJobId ? "running" : "idle" };
+        return { ...node, provider: node.provider === "gemini" ? "gemini" : "image2", geminiModel: geminiImageModels.some(item => item.id === node.geminiModel) ? node.geminiModel : geminiImageModels[0].id, width: node.width || 360, promptSlots, inputSlots: slots, height: Math.max(Number(node.height) || 0, nodeHeight("generator", slots, promptSlots)), aspect: sizeMap[node.aspect] ? node.aspect : fixedGeneratorSettings.aspect, quality: ["low", "medium", "high"].includes(node.quality) ? node.quality : fixedGeneratorSettings.quality, batch: Math.min(4, Math.max(1, Number(node.batch) || fixedGeneratorSettings.batch)), status: node.activeJobId ? "running" : "idle" };
       }
       if (node.type === "answer") {
         const slots = Math.min(4, Math.max(1, Number(node.inputSlots) || 4));
@@ -1668,13 +1674,13 @@ function generatorPromptPortId(index) { return index === 0 ? "prompt" : `prompt-
 function generatorPromptPortTop(index) { return 162 + index * 30; }
 function generatorImagePortTop(node, index) { return 192 + (node.promptSlots - 1) * 30 + index * 30; }
 function renderGeneratorNodeHtml(node, selected, style) {
-  const provider = generatorProviders[node.provider] || generatorProviders.image2;
+  const provider = generatorProviderForNode(node);
   const isGemini = node.provider === "gemini";
   const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, generatorPromptPortId(index)); const promptNode = findNode(edge?.source); const label = edge ? `${promptNode?.disabled ? "已禁用 · " : ""}${sourceLabelForEdge(edge)}` : "未连接"; return `<div class="input-slot${edge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>${index ? `Prompt ${index + 1}` : "Prompt"}</span><span>${escapeHtml(label)}</span></div>`; }).join("");
   const slots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); return `<div class="input-slot${edge ? " is-connected" : ""}"><span>Image ${index + 1}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
   const statusLabel = node.status === "running" ? "生成中" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个结果` : "待运行";
   return `<article class="canvas-node generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "sparkles")}<div class="node-body generator-body">
-    <div class="node-field generator-provider-field"><label>生图模型</label><select class="node-select node-interactive" data-generator-field="provider" data-node-id="${node.id}" aria-label="生图模型"><option value="image2"${!isGemini ? " selected" : ""}>Image2 · GPT Image 2</option><option value="gemini"${isGemini ? " selected" : ""}>Gemini · Gemini 3 Pro Image</option></select></div>
+    <div class="node-field generator-provider-field"><label>生图模型</label><select class="node-select node-interactive" data-generator-field="providerModel" data-node-id="${node.id}" aria-label="生图模型"><option value="image2"${!isGemini ? " selected" : ""}>Image2 · GPT Image 2</option>${geminiImageModels.map(item => `<option value="${item.id}"${isGemini && node.geminiModel === item.id ? " selected" : ""}>Gemini · ${item.label}</option>`).join("")}</select></div>
     <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-generator-field="aspect" data-node-id="${node.id}" aria-label="图像比例">${Object.keys(sizeMap).map(value => `<option value="${value}"${node.aspect === value ? " selected" : ""}>${value}</option>`).join("")}</select></div>
     <div class="node-field"><label>品质</label>${isGemini ? `<div class="node-static-field">Gemini 默认</div>` : `<select class="node-select node-interactive" data-generator-field="quality" data-node-id="${node.id}" aria-label="图像品质"><option value="low"${node.quality === "low" ? " selected" : ""}>快速</option><option value="medium"${node.quality === "medium" ? " selected" : ""}>标准</option><option value="high"${node.quality === "high" ? " selected" : ""}>高品质</option></select>`}</div>
     <div class="node-field"><label>张数</label><select class="node-select node-interactive" data-generator-field="batch" data-node-id="${node.id}" aria-label="生成张数">${[1,2,3,4].map(value => `<option value="${value}"${Number(node.batch) === value ? " selected" : ""}>${value}</option>`).join("")}</select></div></div>
@@ -1716,12 +1722,14 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
   $$('[data-generator-field]').forEach(control => control.addEventListener("change", event => {
     const node = findNode(control.dataset.nodeId); if (!node) return; recordHistory();
     const field = control.dataset.generatorField;
-    node[field] = field === "batch" ? Number(event.target.value) : event.target.value;
-    if (field === "provider") {
-      const provider = generatorProviders[node.provider] || generatorProviders.image2;
+    if (field === "providerModel") {
+      const selection = event.target.value;
+      node.provider = selection === "image2" ? "image2" : "gemini";
+      if (node.provider === "gemini") node.geminiModel = geminiImageModels.some(item => item.id === selection) ? selection : geminiImageModels[0].id;
+      const provider = generatorProviderForNode(node);
       if (["GPT Image 2", "Gemini Image", "生图"].includes(node.name)) node.name = node.provider === "gemini" ? "Gemini Image" : "GPT Image 2";
-      toast(`已切换为 ${provider.label} 生图`);
-    }
+      toast(`已切换为 ${provider.label} · ${provider.model}`);
+    } else node[field] = field === "batch" ? Number(event.target.value) : event.target.value;
     renderCanvas(); renderInspector(); scheduleSave();
   }));
   $$('[data-add-prompt-input]').forEach(button => button.addEventListener("click", event => {
@@ -1993,7 +2001,7 @@ function renderNodeInspector(node) {
   const incoming = state.edges.filter(edge => edge.target === node.id).length; const outgoing = state.edges.filter(edge => edge.source === node.id).length; let specific = "";
   if (node.type === "image") specific = `${node.src ? `<img class="image-preview" src="${escapeHtml(nodeDisplaySource(node))}" alt="${escapeHtml(node.name)}">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`}<div class="summary-row"><span>输入连接</span><strong>${incoming}</strong></div><div class="summary-row"><span>输出连接</span><strong>${outgoing}</strong></div>`;
   if (node.type === "prompt") specific = `<div class="summary-row"><span>字符数</span><strong>${(node.content || "").length}</strong></div><div class="summary-row"><span>输出连接</span><strong>${outgoing}</strong></div>`;
-  if (node.type === "generator") { const imageInputs = state.edges.filter(edge => edge.target === node.id && edge.type === "image").length; const provider = generatorProviders[node.provider] || generatorProviders.image2; specific = `<div class="summary-row"><span>模型</span><strong>${provider.model}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>参考图</span><strong>${imageInputs}/${node.inputSlots}</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>`; }
+  if (node.type === "generator") { const imageInputs = state.edges.filter(edge => edge.target === node.id && edge.type === "image").length; const provider = generatorProviderForNode(node); specific = `<div class="summary-row"><span>模型</span><strong>${provider.model}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>参考图</span><strong>${imageInputs}/${node.inputSlots}</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>`; }
   if (node.type === "frame") { const contained = frameContainedNodes(node).length; specific = `<div class="summary-row"><span>包含节点</span><strong>${contained}</strong></div><div class="summary-row"><span>画板尺寸</span><strong>${Math.round(node.width)} × ${Math.round(node.height)}</strong></div><p class="field-note">把节点拖入虚线范围后，拖动画板边框即可整体移动这些节点。右下角手柄可以调整画板大小。</p>`; }
   inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">名称</div><input class="text-input" id="nodeNameInput" value="${escapeHtml(node.name)}"></section><section class="control-section">${specific}</section><section class="control-section"><div class="action-list">${node.type === "generator" ? `<button class="action-row" type="button" data-inspector-action="run">${icon("play")}<strong>运行此节点</strong><small>${node.batch} 张</small></button>` : ""}${node.type === "image" ? (node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载图片</strong><small>原始文件</small></button>` : `<button class="action-row" type="button" data-inspector-action="upload">${icon("image-plus")}<strong>上传图像</strong><small>本地参考图</small></button>`) : ""}<button class="action-row" type="button" data-inspector-action="duplicate">${icon("copy")}<strong>复制模块</strong><small>保留当前参数</small></button><button class="action-row danger-action" type="button" data-inspector-action="delete">${icon("trash-2")}<strong>删除模块</strong><small>同时删除连接</small></button></div></section>`;
   $("#nodeNameInput").addEventListener("change", event => { const value = event.target.value.trim(); if (!value || value === node.name) return; recordHistory(); node.name = value; renderCanvas(); renderLibrary(); scheduleSave(); });
@@ -2127,7 +2135,7 @@ function ensureGenerationPlaceholders(generator, jobId, imageCount = generator.b
   if (existing.length) return existing;
   const count = Math.min(4, Math.max(1, Number(imageCount) || Number(generator.batch) || 1));
   const columns = count > 1 ? 2 : 1;
-  const provider = generatorProviders[generator.provider] || generatorProviders.image2;
+  const provider = generatorProviderForNode(generator);
   const placeholders = Array.from({ length: count }, (_, index) => ({ id: uid("result"), type: "loading", generationJobId: jobId, name: `${provider.label} 结果 ${index + 1}`, x: generator.x + generator.width + 190 + (index % columns) * 310, y: generator.y + Math.floor(index / columns) * 360, width: 270, height: nodeHeight("loading"), source: provider.label, ratio: generator.aspect, createdAt: Date.now() + index }));
   state.nodes.push(...placeholders);
   placeholders.forEach(node => state.edges.push({ id: uid("edge"), source: generator.id, sourcePort: "image", target: node.id, targetPort: "result", type: "image" }));
@@ -2137,7 +2145,9 @@ function finishGenerationJob(generatorId, job) {
   const generator = findNode(generatorId);
   if (!generator || generator.activeJobId !== job.id) return;
   const placeholders = ensureGenerationPlaceholders(generator, job.id, job.imageCount);
-  const provider = generatorProviders[job.provider] || generatorProviders[generator.provider] || generatorProviders.image2;
+  const provider = job.provider === "gemini"
+    ? { ...generatorProviders.gemini, model: job.model || geminiImageModels[0].id }
+    : generatorProviderForNode(generator);
   if (job.status === "succeeded") {
     const createdIds = [];
     (job.images || []).forEach((image, index) => {
@@ -2206,7 +2216,7 @@ async function runGeneratorNode(nodeId) {
   if (!prompt) { selectNode(nodeId); return toast("请连接至少一个有内容且已启用的提示词模块", true); }
   const imageEdges = state.edges.filter(edge => edge.target === nodeId && edge.type === "image" && edge.targetPort.startsWith("image-")).sort((a, b) => Number(a.targetPort.split("-")[1]) - Number(b.targetPort.split("-")[1]));
   const referenceSources = imageEdges.map(edge => imageSourceFromNode(findNode(edge.source))).filter(Boolean).slice(0, 8);
-  const provider = generatorProviders[generator.provider] || generatorProviders.image2;
+  const provider = generatorProviderForNode(generator);
   if (generator.provider !== "gemini" && !$("#apiState").classList.contains("is-ready") && !apiKey) { openSettings(); return toast("请先连接 Image2 API", true); }
   isGenerating = true;
   recordHistory();
@@ -2217,7 +2227,7 @@ async function runGeneratorNode(nodeId) {
     const references = await Promise.all(referenceSources.map(sourceToDataUrl));
     const constraints = generator.constraints?.trim();
     const fullPrompt = constraints ? `${prompt}\n\n必须遵守的限制：${constraints}` : prompt;
-    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(generator.provider !== "gemini" && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ provider: generator.provider || "image2", prompt: fullPrompt, size: generator.provider === "gemini" ? generator.aspect : sizeMap[generator.aspect].api, quality: generator.quality, n: generator.batch, references }) }, 75_000);
+    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(generator.provider !== "gemini" && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ provider: generator.provider || "image2", model: generator.provider === "gemini" ? generatorModelForNode(generator) : undefined, prompt: fullPrompt, size: generator.provider === "gemini" ? generator.aspect : sizeMap[generator.aspect].api, quality: generator.quality, n: generator.batch, references }) }, 75_000);
     const job = result.job;
     if (!job?.id) throw new Error("本机服务未返回生成任务");
     generator.activeJobId = job.id;

@@ -16,7 +16,16 @@ const port = Number(process.env.PORT || 45173);
 const baseUrl = (process.env.IMAGE2_BASE_URL || "https://rehdasu.cn/v1").replace(/\/$/, "");
 const model = process.env.IMAGE2_MODEL || "gpt-image-2";
 const geminiBaseUrl = (process.env.GEMINI_MOYU_BASE_URL || "https://www.moyu.info").replace(/\/$/, "");
-const geminiModel = process.env.GEMINI_MOYU_MODEL || "gemini-3-pro-image-preview";
+const geminiImageModels = Object.freeze([
+  "gemini-3-pro-image-preview",
+  "gemini-3.1-flash-image-preview"
+]);
+const geminiDefaultModel = geminiImageModels.includes(process.env.GEMINI_MOYU_MODEL)
+  ? process.env.GEMINI_MOYU_MODEL
+  : geminiImageModels[0];
+function normalizeGeminiModel(value) {
+  return geminiImageModels.includes(String(value || "")) ? String(value) : geminiDefaultModel;
+}
 const providerConfigDir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "image2-canvas");
 const providerConfigPath = path.join(providerConfigDir, "providers.json");
 const jobs = new Map();
@@ -273,7 +282,7 @@ async function requestImage2Generation(job) {
 
 async function requestGeminiGeneration(job) {
   const { apiKey, prompt, size, n, references } = job.request;
-  const payload = { model: geminiModel, prompt, size, n };
+  const payload = { model: normalizeGeminiModel(job.model), prompt, size, n };
   // The documented OpenAI-compatible endpoint accepts one reference image.
   if (references[0]) payload.image = references[0];
   const response = await fetch(`${geminiBaseUrl}/v1/images/generations`, {
@@ -333,6 +342,7 @@ async function createJob(req, res) {
   try {
     const body = await readJson(req);
     const provider = body.provider === "gemini" ? "gemini" : "image2";
+    if (provider === "gemini" && body.model && !geminiImageModels.includes(String(body.model))) return sendJson(res, 400, { error: "不支持的 Gemini 图像模型" });
     const apiKey = provider === "gemini" ? await resolveGeminiApiKey(req) : await resolveApiKey(req);
     if (!apiKey) return sendJson(res, 401, { error: provider === "gemini" ? "未配置 Gemini API Key，请在设置中保存 Gemini 密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const prompt = String(body.prompt || "").trim();
@@ -341,7 +351,8 @@ async function createJob(req, res) {
     const size = provider === "gemini" ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1") : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
     const n = Math.min(4, Math.max(1, Number(body.n) || 1));
     const references = Array.isArray(body.references) ? body.references.slice(0, 8) : [];
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: provider === "gemini" ? geminiModel : model, imageCount: n, request: { apiKey, prompt, quality, size, n, references } };
+    const selectedModel = provider === "gemini" ? normalizeGeminiModel(body.model) : model;
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, n, references } };
     jobs.set(job.id, job);
     pendingJobIds.push(job.id);
     await persistJobs();
@@ -376,8 +387,10 @@ async function checkGeminiGateway(req, res) {
     const response = await fetch(`${geminiBaseUrl}/v1/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
     if (!response.ok) throw gatewayError(response.status, "Gemini 网关鉴权失败");
     const result = await response.json().catch(() => ({}));
-    const available = !Array.isArray(result.data) || result.data.some(item => item?.id === geminiModel);
-    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: geminiModel, baseUrl: geminiBaseUrl, checkedAt: Date.now() });
+    const listedModels = Array.isArray(result.data) ? new Set(result.data.map(item => item?.id)) : null;
+    const availableModels = listedModels ? geminiImageModels.filter(id => listedModels.has(id)) : geminiImageModels;
+    const available = availableModels.length > 0;
+    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: geminiDefaultModel, models: availableModels, baseUrl: geminiBaseUrl, checkedAt: Date.now() });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, 502, { ready: false, gateway: failure.code.toLowerCase(), message: failure.message, checkedAt: Date.now() });
@@ -390,8 +403,8 @@ async function saveGeminiProvider(req, res) {
     const apiKey = String(body.apiKey || "").trim();
     if (!apiKey) return sendJson(res, 400, { error: "Gemini API Key 不能为空" });
     const previous = await readProviderConfig();
-    await saveProviderConfig({ ...previous, gemini: { ...(previous.gemini || {}), apiKey, baseUrl: geminiBaseUrl, model: geminiModel, updatedAt: Date.now() } });
-    return sendJson(res, 200, { ready: true, provider: "gemini", model: geminiModel, baseUrl: geminiBaseUrl });
+    await saveProviderConfig({ ...previous, gemini: { ...(previous.gemini || {}), apiKey, baseUrl: geminiBaseUrl, model: geminiDefaultModel, updatedAt: Date.now() } });
+    return sendJson(res, 200, { ready: true, provider: "gemini", model: geminiDefaultModel, models: geminiImageModels, baseUrl: geminiBaseUrl });
   } catch (error) {
     return sendJson(res, 400, { error: error?.message || "Gemini 设置保存失败" });
   }
@@ -489,7 +502,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/status") {
     const key = await resolveApiKey(req);
     const geminiKey = await resolveGeminiApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiModel, baseUrl: geminiBaseUrl }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: geminiImageModels, baseUrl: geminiBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/gemini/health") return checkGeminiGateway(req, res);
