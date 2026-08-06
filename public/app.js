@@ -24,6 +24,12 @@ function generatorModelForNode(node) {
   return generatorProviders[node?.provider]?.model || generatorProviders.image2.model;
 }
 function generatorProviderForNode(node) { const provider = generatorProviders[node?.provider] || generatorProviders.image2; return { ...provider, model: generatorModelForNode(node) }; }
+function generatorModelLabel(modelId, fallback = "Image2") {
+  if (modelId === "gpt-image-2") return "GPT Image 2";
+  return geminiImageModels.find(item => item.id === modelId)?.label
+    || seedreamImageModels.find(item => item.id === modelId)?.label
+    || fallback;
+}
 function generatorReferenceLimit(node) { if (node?.provider === "moyu") return 6; if (node?.provider === "gemini") return 14; return 8; }
 const nodeLabels = { prompt: "提示词", composition: "参数控制", image: "图像", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
 const scriptRoleTypes = [
@@ -1677,7 +1683,7 @@ function renderImageNodeHtml(node, selected, style) {
   return `<article class="canvas-node image-node${loading ? " loading-node" : ""}${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, loading ? "loader-circle" : "image", actions)}<div class="node-body">
     ${preview}
     <div class="image-node-meta"><strong>${escapeHtml(node.source || "参考图")}</strong><span>${escapeHtml(node.ratio || (hasSource ? "图片" : "未上传"))}</span></div>
-    </div></div>${resizeHandleHtml(node)}${(node.source === "Image2" || node.source === "Gemini" || loading) ? portHtml(node, "result", "image", "input", "Result", 70) : ""}${portHtml(node, "image", "image", "output", "Image", 70)}</article>`;
+    </div></div>${resizeHandleHtml(node)}${(node.generated || node.source === "Image2" || node.source === "Gemini" || loading) ? portHtml(node, "result", "image", "input", "Result", 70) : ""}${portHtml(node, "image", "image", "output", "Image", 70)}</article>`;
 }
 function generatorPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${index}`; }
 function generatorPromptPortTop(index) { return 162 + index * 30; }
@@ -2140,13 +2146,14 @@ function removeGenerationPlaceholders(jobId) {
   state.nodes = state.nodes.filter(node => !ids.has(node.id));
   state.edges = state.edges.filter(edge => !ids.has(edge.target));
 }
-function ensureGenerationPlaceholders(generator, jobId, imageCount = generator.batch) {
+function ensureGenerationPlaceholders(generator, jobId, imageCount = generator.batch, modelId = generatorModelForNode(generator)) {
   const existing = state.nodes.filter(node => node.type === "loading" && node.generationJobId === jobId);
   if (existing.length) return existing;
   const count = Math.min(4, Math.max(1, Number(imageCount) || Number(generator.batch) || 1));
   const columns = count > 1 ? 2 : 1;
   const provider = generatorProviderForNode(generator);
-  const placeholders = Array.from({ length: count }, (_, index) => ({ id: uid("result"), type: "loading", generationJobId: jobId, name: `${provider.label} 结果 ${index + 1}`, x: generator.x + generator.width + 190 + (index % columns) * 310, y: generator.y + Math.floor(index / columns) * 360, width: 270, height: nodeHeight("loading"), source: provider.label, ratio: generator.aspect, createdAt: Date.now() + index }));
+  const modelLabel = generatorModelLabel(modelId, provider.label);
+  const placeholders = Array.from({ length: count }, (_, index) => ({ id: uid("result"), type: "loading", generationJobId: jobId, name: `${modelLabel} 结果 ${index + 1}`, x: generator.x + generator.width + 190 + (index % columns) * 310, y: generator.y + Math.floor(index / columns) * 360, width: 270, height: nodeHeight("loading"), source: provider.label, model: modelId, modelLabel, ratio: generator.aspect, createdAt: Date.now() + index }));
   state.nodes.push(...placeholders);
   placeholders.forEach(node => state.edges.push({ id: uid("edge"), source: generator.id, sourcePort: "image", target: node.id, targetPort: "result", type: "image" }));
   return placeholders;
@@ -2154,17 +2161,18 @@ function ensureGenerationPlaceholders(generator, jobId, imageCount = generator.b
 function finishGenerationJob(generatorId, job) {
   const generator = findNode(generatorId);
   if (!generator || generator.activeJobId !== job.id) return;
-  const placeholders = ensureGenerationPlaceholders(generator, job.id, job.imageCount);
+  const placeholders = ensureGenerationPlaceholders(generator, job.id, job.imageCount, job.model);
   const provider = ["gemini", "moyu"].includes(job.provider)
     ? { ...generatorProviders[job.provider], model: job.model || generatorProviders[job.provider].model }
     : generatorProviderForNode(generator);
+  const modelLabel = generatorModelLabel(job.model || provider.model, provider.label);
   if (job.status === "succeeded") {
     const createdIds = [];
     (job.images || []).forEach((image, index) => {
       const placeholder = placeholders[index];
       if (!placeholder) return;
       const node = findNode(placeholder.id);
-      Object.assign(node, { type: "image", generationJobId: undefined, name: `${provider.label} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
+      Object.assign(node, { type: "image", generationJobId: undefined, name: `${modelLabel} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, model: job.model || provider.model, modelLabel, generated: true, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
       createdIds.push(node.id);
     });
     const unused = placeholders.filter(node => !createdIds.includes(node.id));
@@ -2200,7 +2208,7 @@ async function pollGenerationJob(generatorId, jobId) {
     if (job.status === "succeeded" || job.status === "failed") return finishGenerationJob(generatorId, job);
     generationPollFailures.delete(jobId);
     const hadPlaceholders = state.nodes.some(node => node.type === "loading" && node.generationJobId === jobId);
-    ensureGenerationPlaceholders(generator, jobId, job.imageCount);
+    ensureGenerationPlaceholders(generator, jobId, job.imageCount, job.model);
     if (!hadPlaceholders) { renderCanvas(); requestEdgeRender(); renderLibrary(); renderInspector(); refreshIcons(); }
   } catch {
     // The local service may be restarting. Preserve task state and back off until it returns.
@@ -2243,7 +2251,7 @@ async function runGeneratorNode(nodeId) {
     const job = result.job;
     if (!job?.id) throw new Error("本机服务未返回生成任务");
     generator.activeJobId = job.id;
-    ensureGenerationPlaceholders(generator, job.id, job.imageCount);
+    ensureGenerationPlaceholders(generator, job.id, job.imageCount, job.model);
     state.selectedIds = [];
     toast(`${provider.label} 已进入本机任务队列，正在生成 ${job.imageCount} 张图片`);
     renderWorkspace();
