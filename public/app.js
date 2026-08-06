@@ -42,8 +42,9 @@ function runningHubVideoDimensions(node) {
   return { width: round32(Math.sqrt(area * ratio)), height: round32(Math.sqrt(area / ratio)) };
 }
 function normalizeRunningHubVideo(node) {
-  const next = { ...node, mediaType: "video", provider: "runninghub-h3", videoAspect: runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9", videoQuality: runningHubVideoQualityOptions.some(item => item.value === node?.videoQuality) ? node.videoQuality : "standard", videoSeconds: Math.min(15, Math.max(3, Math.round(Number(node?.videoSeconds) || 6))), promptSlots: 1, inputSlots: 0, width: Math.max(360, Number(node?.width) || 390) };
-  next.height = Math.max(Number(node?.height) || 0, nodeHeight("video-generator", 0, 1));
+  const inputSlots = Math.min(4, Math.max(1, Number(node?.inputSlots) || 4));
+  const next = { ...node, mediaType: "video", provider: "runninghub-h3", videoAspect: runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9", videoQuality: runningHubVideoQualityOptions.some(item => item.value === node?.videoQuality) ? node.videoQuality : "standard", videoSeconds: Math.min(15, Math.max(3, Math.round(Number(node?.videoSeconds) || 6))), promptSlots: 1, inputSlots, width: Math.max(360, Number(node?.width) || 390) };
+  next.height = Math.max(Number(node?.height) || 0, nodeHeight("video-generator", inputSlots, 1));
   next.status = node?.activeJobId ? "running" : "idle";
   return next;
 }
@@ -70,7 +71,7 @@ function generatorModelLabel(modelId, fallback = "Image2") {
     || seedreamImageModels.find(item => item.id === modelId)?.label
     || fallback;
 }
-function generatorReferenceLimit(node) { if (node?.mediaType === "video") return 0; if (node?.provider === "moyu") return 6; if (node?.provider === "gemini") return 14; return 8; }
+function generatorReferenceLimit(node) { if (node?.mediaType === "video") return 4; if (node?.provider === "moyu") return 6; if (node?.provider === "gemini") return 14; return 8; }
 const nodeLabels = { prompt: "提示词", composition: "参数控制", image: "图像", video: "视频", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
 const scriptRoleTypes = [
   { id: "male-1", gender: "male", label: "男性 1" },
@@ -228,7 +229,7 @@ function nodeHeight(type, slots = 4, promptSlots = 1) {
   if (type === "prompt") return 270;
   if (type === "composition") return 470;
   if (type === "image" || type === "loading") return 322;
-  if (type === "video-generator") return 470;
+  if (type === "video-generator") return 470 + Math.max(0, Number(slots) || 0) * 30 + Math.max(0, Number(promptSlots) - 1) * 30;
   if (type === "generator") return 316 + slots * 30 + Math.max(0, promptSlots - 1) * 30;
   if (type === "answer") return 344 + slots * 30 + Math.max(0, promptSlots - 1) * 30;
   return 420;
@@ -360,7 +361,7 @@ function createGeneratorNode(x, y) {
   return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createVideoNode(x, y) {
-  return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 0, width: 390, height: nodeHeight("video-generator", 0, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
+  return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 4, width: 390, height: nodeHeight("video-generator", 4, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createAnswerNode(x, y) {
   return { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, height: nodeHeight("answer", 4, 1), model: "gpt-5.6", status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
@@ -765,7 +766,7 @@ function connectionChoicesForDraft(draft) {
   if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, videoChoice, answerChoice];
   if (source.type === "prompt" && draft.direction === "input" && draft.dataType === "composition") return [compositionChoice];
   if (source.type === "composition" && draft.direction === "output" && draft.dataType === "composition") return [{ kind: "prompt", title: "新建提示词节点", subtitle: "自动接收构图指令", icon: "text-cursor-input" }];
-  if ((source.type === "image" || source.type === "loading") && draft.direction === "output" && draft.dataType === "image") return [generatorChoice, answerChoice];
+  if ((source.type === "image" || source.type === "loading") && draft.direction === "output" && draft.dataType === "image") return [generatorChoice, videoChoice, answerChoice];
   if ((source.type === "generator" || source.type === "answer") && draft.direction === "input" && draft.dataType === "prompt") return [{ kind: "prompt", title: "新建提示词节点", subtitle: "自动连接到此提示词输入", icon: "text-cursor-input" }];
   if ((source.type === "generator" || source.type === "answer") && draft.direction === "input" && draft.dataType === "image") return [{ kind: "reference", title: "新建参考图节点", subtitle: "连接到参考图输入，随后手动上传", icon: "image-plus" }];
   return [];
@@ -1618,6 +1619,10 @@ function renderScriptInspector() {
   if (node.type === "image" || node.type === "loading" || node.type === "video") return portId === "result" ? { x: node.x, y: node.y + 70 } : { x: node.x + node.width, y: node.y + 70 };
   if (node.type === "generator") {
     if (portId === "image" || portId === "video") return { x: node.x + node.width, y: node.y + 76 };
+    if (node.mediaType === "video") {
+      if (portId === "prompt") return { x: node.x, y: node.y + 92 };
+      if (/^image-\d+$/.test(portId)) return { x: node.x, y: node.y + 150 + (Number(portId.split("-")[1]) || 0) * 30 };
+    }
     if (portId === "prompt" || /^prompt-\d+$/.test(portId)) { const index = portId === "prompt" ? 0 : Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + generatorPromptPortTop(index) }; }
     const index = Number(portId.split("-")[1]) || 0;
     return { x: node.x, y: node.y + generatorImagePortTop(node, index) };
@@ -1691,9 +1696,9 @@ function renderNodeHtml(node) {
   if (node.type === "answer") return renderAnswerNodeHtml(node, selected, style);
   return renderImageNodeHtml(node, selected, style);
 }
-function nodeHeaderHtml(node, iconName, actions = "", showMenu = true) {
+function nodeHeaderHtml(node, iconName, actions = "", showMenu = true, dragHandle = false) {
   const menu = showMenu ? `<button class="icon-button node-menu node-interactive" type="button" data-node-menu="${node.id}" aria-label="打开节点属性">${icon("ellipsis")}</button>` : "";
-  return `<header class="node-header"><div class="node-header-title"><span class="node-type-icon">${icon(iconName)}</span><strong>${escapeHtml(node.name)}</strong></div><div class="node-header-actions">${actions}${menu}</div></header>`;
+  return `<header class="node-header${dragHandle ? " node-drag-handle" : ""}"${dragHandle ? ` data-node-drag-handle="${node.id}"` : ""}><div class="node-header-title"><span class="node-type-icon">${icon(iconName)}</span><strong>${escapeHtml(node.name)}</strong></div><div class="node-header-actions">${actions}${menu}</div></header>`;
 }
 function portHtml(node, portId, dataType, direction, label, top) {
   return `<span class="node-port-wrap ${direction}" style="top:${top}px"><button class="node-port ${dataType}" type="button" data-node-id="${node.id}" data-port-id="${portId}" data-data-type="${dataType}" data-direction="${direction}" aria-label="${escapeHtml(label)}"></button></span>`;
@@ -1781,18 +1786,20 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
   const promptEdge = incomingEdge(node.id, "prompt");
   const promptNode = findNode(promptEdge?.source);
   const promptLabel = promptEdge ? `${promptNode?.disabled ? "已禁用 · " : ""}${sourceLabelForEdge(promptEdge)}` : "未连接";
+  const imageSlots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); return `<div class="input-slot${edge ? " is-connected" : ""}"><span>Image ${index + 1}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
   const statusLabel = node.status === "running" ? "生成中" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个视频` : "待运行";
-  return `<article class="canvas-node generator-node video-generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard")}<div class="node-body generator-body">
+  return `<article class="canvas-node generator-node video-generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", "", true, true)}<div class="node-body generator-body">
     <div class="video-provider-badge"><span>${escapeHtml(runningHubVideoProvider.label)}</span><small>工作流 ${escapeHtml("2084196829952045057")} · plus</small></div>
     <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-video-field="aspect" data-node-id="${node.id}" aria-label="视频比例">${runningHubVideoAspects.map(value => `<option value="${value}"${node.videoAspect === value ? " selected" : ""}>${value === "auto" ? "自适应" : value}</option>`).join("")}</select></div>
     <div class="node-field"><label>清晰度</label><select class="node-select node-interactive" data-video-field="quality" data-node-id="${node.id}" aria-label="视频清晰度">${runningHubVideoQualityOptions.map(option => `<option value="${option.value}"${node.videoQuality === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select></div></div>
     <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: 13 }, (_, index) => index + 3).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field"><label>实例</label><div class="node-static-field">API plus · 48G</div></div></div>
     <div class="video-resolution-summary"><span>${escapeHtml(quality.label)}</span><strong>${dimensions.width} × ${dimensions.height}</strong></div>
-    <div class="generator-inputs"><div class="input-slot${promptEdge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>Prompt</span><span>${escapeHtml(promptLabel)}</span></div></div>
-    <div class="video-reference-note">当前 API 导出仅验证提示词、尺寸、时长与 MP4 输出；首尾帧和全能参考节点未接入。</div>
+    <div class="generator-inputs"><div class="input-slot${promptEdge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>Prompt</span><span>${escapeHtml(promptLabel)}</span></div>${imageSlots}</div>
+    <div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-input="${node.id}"${node.inputSlots >= generatorReferenceLimit(node) ? " disabled" : ""}>${icon("image-plus")} 添加图片输入</button></div>
+    <div class="video-reference-note">图片输入现在可以连接和保存；当前 API 导出未把参考节点接入最终输出，运行带图片输入的任务前仍需对应的 RunningHub 工作流版本。</div>
     <button class="run-node-button node-interactive" type="button" data-run-node="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "play")} ${node.status === "running" ? "海螺 H3 处理中" : "运行海螺 H3"}</button>
     <div class="node-run-state"><span>${escapeHtml(runningHubVideoProvider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}">${statusLabel}</span></div>
-    </div></div>${resizeHandleHtml(node)}${portHtml(node, "prompt", "prompt", "input", "Prompt", 92)}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
+    </div></div>${resizeHandleHtml(node)}${portHtml(node, "prompt", "prompt", "input", "Prompt", 92)}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", `Image ${index + 1}`, 150 + index * 30)).join("")}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
 }
 function answerPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${index}`; }
 function answerPromptPortTop(index) { return 118 + index * 30; }
@@ -1808,6 +1815,7 @@ function renderAnswerNodeHtml(node, selected, style) {
 
 function bindNodeEvents() {
   $$(".canvas-node").forEach(element => element.addEventListener("pointerdown", handleNodePointerDown));
+  $$('[data-node-drag-handle]').forEach(handle => handle.addEventListener("pointerdown", event => { if (event.target.closest(".node-interactive, .node-port")) return; event.stopPropagation(); handleNodePointerDown(event); }));
   $$('[data-node-resize]').forEach(handle => handle.addEventListener("pointerdown", startResize));
   $$('[data-download-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.downloadNode); if (node) downloadNode(node); }));
   $$('[data-crop-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); openCropDialog(button.dataset.cropNode); }));
@@ -1854,7 +1862,7 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
   }));
   $$('[data-add-input]').forEach(button => button.addEventListener("click", event => {
     event.stopPropagation(); const node = findNode(button.dataset.addInput); if (!node || node.inputSlots >= generatorReferenceLimit(node)) return;
-    recordHistory(); node.inputSlots += 1; node.height = nodeHeight("generator", node.inputSlots, node.promptSlots); renderCanvas(); renderInspector(); scheduleSave();
+    recordHistory(); node.inputSlots += 1; node.height = node.mediaType === "video" ? nodeHeight("video-generator", node.inputSlots, node.promptSlots) : nodeHeight("generator", node.inputSlots, node.promptSlots); renderCanvas(); renderInspector(); scheduleSave();
   }));
   $$('[data-run-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); runGeneratorNode(button.dataset.runNode); }));
   $$('[data-add-answer-prompt-input]').forEach(button => button.addEventListener("click", event => {
@@ -2527,6 +2535,8 @@ async function runVideoGeneratorNode(generator) {
   const promptEdges = state.edges.filter(edge => edge.target === generator.id && edge.type === "prompt" && (edge.targetPort === "prompt" || /^prompt-\d+$/.test(edge.targetPort))).sort((a, b) => (a.targetPort === "prompt" ? 0 : Number(a.targetPort.split("-")[1]) || 0) - (b.targetPort === "prompt" ? 0 : Number(b.targetPort.split("-")[1]) || 0));
   const prompt = promptEdges.map(edge => findNode(edge.source)).filter(node => node?.type === "prompt" && !node.disabled).map(node => node.content?.trim()).filter(Boolean).join("\n\n");
   if (!prompt) { selectNode(generator.id); return toast("请连接至少一个有内容且已启用的提示词模块", true); }
+  const imageEdges = state.edges.filter(edge => edge.target === generator.id && edge.type === "image" && edge.targetPort.startsWith("image-"));
+  if (imageEdges.length) return toast("当前 RunningHub API 导出尚未接入视频参考图，图片连接已保存但暂不能运行", true);
   if (!runningHubApiKey) {
     try { const status = await requestJson("/api/status", {}, 10_000); if (!status.runninghub?.ready) { openSettings(); return toast("请先在设置中保存 RunningHub API Key", true); } }
     catch { return toast("本机服务不可用，无法检查 RunningHub 设置", true); }
