@@ -387,14 +387,46 @@ function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
   return { nodeId, fieldName, fieldValue: String(fieldValue ?? "") };
 }
 
+const runningHubVideoReferenceNodes = Object.freeze({
+  "first-frame": ["60"],
+  "last-frame": ["72"],
+  "first-last-frame": ["60", "72"],
+  "reference": ["60", "72", "128", "129"]
+});
+
+function normalizeRunningHubVideoMode(value) {
+  return Object.hasOwn(runningHubVideoReferenceNodes, value) ? value : "reference";
+}
+
+async function uploadRunningHubReference(apiKey, dataUrl, index) {
+  const source = parseStoredImage(dataUrl, `第 ${index + 1} 张视频参考图`);
+  const form = new FormData();
+  form.append("file", new Blob([source.buffer], { type: source.mime }), `reference-${index + 1}.${source.extension}`);
+  const response = await fetch(`${runningHubBaseUrl}/openapi/v2/media/upload/binary`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    body: form,
+    signal: AbortSignal.timeout(120_000)
+  });
+  const raw = await response.text();
+  let result;
+  try { result = JSON.parse(raw); } catch { result = {}; }
+  const fileName = String(result?.data?.fileName || "").trim();
+  if (!response.ok || Number(result?.code) !== 0 || !fileName) throw gatewayError(response.status || 502, result?.message || "RunningHub 视频参考图上传失败");
+  return fileName;
+}
+
 async function requestRunningHubGeneration(job) {
-  const { apiKey, prompt, width, height, seconds } = job.request;
+  const { apiKey, prompt, width, height, seconds, videoMode, references = [] } = job.request;
   const nodeInfoList = [
     runningHubNodeInfo("59", "value", prompt),
     runningHubNodeInfo("46", "value", width),
     runningHubNodeInfo("78", "value", height),
     runningHubNodeInfo("14", "value", seconds)
   ];
+  const referenceNodes = runningHubVideoReferenceNodes[normalizeRunningHubVideoMode(videoMode)];
+  const uploadedReferences = await Promise.all(references.slice(0, referenceNodes.length).map((reference, index) => uploadRunningHubReference(apiKey, reference, index)));
+  uploadedReferences.forEach((fileName, index) => nodeInfoList.push(runningHubNodeInfo(referenceNodes[index], "image", fileName)));
   const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
   const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${runningHubWorkflowId}`, {
     method: "POST",
@@ -418,7 +450,7 @@ async function requestRunningHubGeneration(job) {
     if (status.status === "SUCCESS") {
       const results = Array.isArray(status.results) ? status.results.filter(item => item?.url || item?.text) : [];
       if (!results.length) throw gatewayError(502, "RunningHub 任务成功但没有可下载结果");
-      return { items: results, mode: "workflow", mediaType: "video", taskId: submitted.taskId };
+      return { items: results, mode: "workflow", mediaType: "video", taskId: submitted.taskId, referencesUsed: uploadedReferences.length };
     }
     if (status.status === "FAILED") throw gatewayError(502, status.errorMessage || status.failedReason?.message || `RunningHub 任务失败 (${status.errorCode || "UNKNOWN"})`);
     await new Promise(resolve => setTimeout(resolve, 5_000));
@@ -506,11 +538,15 @@ async function createRunningHubJob(req, res, body) {
     if (!apiKey) return sendJson(res, 401, { error: "未配置 RunningHub API Key，请在设置中保存密钥" });
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
-    if (Array.isArray(body.references) && body.references.length) return sendJson(res, 400, { error: "当前 H3 API 工作流未暴露参考素材输入，请先使用纯提示词模式" });
+    const videoMode = normalizeRunningHubVideoMode(String(body.videoMode || "reference"));
+    const requiredReferences = videoMode === "first-last-frame" ? 2 : 1;
+    const maxReferences = runningHubVideoReferenceNodes[videoMode].length;
+    const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, maxReferences);
+    if (references.length < requiredReferences) return sendJson(res, 400, { error: `${videoMode === "first-frame" ? "首帧" : videoMode === "last-frame" ? "尾帧" : videoMode === "first-last-frame" ? "首尾帧" : "全能参考"}模式至少需要 ${requiredReferences} 张参考图` });
     const width = Math.min(4096, Math.max(32, Number(body.width) || 1376));
     const height = Math.min(4096, Math.max(32, Number(body.height) || 768));
     const seconds = Math.min(15, Math.max(3, Math.round(Number(body.seconds) || 6)));
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${runningHubWorkflowId}`, mediaType: "video", imageCount: 1, request: { apiKey, prompt, width, height, seconds } };
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${runningHubWorkflowId}`, mediaType: "video", imageCount: 1, videoMode, request: { apiKey, prompt, width, height, seconds, videoMode, references } };
     jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
   } catch (error) {
     const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });

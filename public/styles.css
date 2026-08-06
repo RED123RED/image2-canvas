@@ -1151,7 +1151,8 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .canvas-context-option span { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 5px; color: var(--blue); background: var(--blue-soft); }
 .canvas-context-option:nth-child(1) span { color: var(--edge-prompt); background: var(--violet-soft); }
 .canvas-context-option:nth-child(3) span { color: var(--edge-image); background: var(--primary-soft); }
-.canvas-context-option:nth-child(6) span { color: #a87932; background: #fff4d6; }
+.canvas-context-option:nth-child(5) span { color: #b17128; background: #fff1dd; }
+.canvas-context-option:nth-child(7) span { color: #a87932; background: #fff4d6; }
 .canvas-context-option svg { width: 16px; height: 16px; }
 .canvas-context-option strong { font-size: 13px; font-weight: 650; }
 
