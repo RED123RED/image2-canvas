@@ -23,6 +23,30 @@ const generatorOutputSizeOptions = Object.freeze({
   "gemini-3.1-flash-image-preview": [{ value: "1K", label: "1K · 网关上限" }],
   "doubao-seedream-5-0-pro-260628": [{ value: "2K", label: "2K · 当前最大" }]
 });
+const runningHubVideoAspects = Object.freeze(["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "9:21", "5:4", "4:5", "2:1", "1:2"]);
+const runningHubVideoQualityOptions = Object.freeze([
+  { value: "general", label: "一般", megapixels: 0.6 },
+  { value: "standard", label: "标准", megapixels: 1.0 },
+  { value: "clear", label: "清晰", megapixels: 2.0 }
+]);
+const runningHubVideoProvider = Object.freeze({ label: "海螺 H3 视频", model: "RunningHub · API plus" });
+function runningHubVideoQuality(node) { return runningHubVideoQualityOptions.find(item => item.value === node?.videoQuality) || runningHubVideoQualityOptions[1]; }
+function runningHubVideoDimensions(node) {
+  const quality = runningHubVideoQuality(node);
+  const aspect = node?.videoAspect === "auto" ? "16:9" : (node?.videoAspect || "16:9");
+  const [ratioWidth, ratioHeight] = aspect.split(":").map(Number);
+  const base = { general: [1056, 608], standard: [1376, 768], clear: [1920, 1088] }[quality.value] || [1376, 768];
+  if (!Number.isFinite(ratioWidth) || !Number.isFinite(ratioHeight) || ratioWidth <= 0 || ratioHeight <= 0 || aspect === "16:9") return { width: base[0], height: base[1] };
+  const area = base[0] * base[1]; const ratio = ratioWidth / ratioHeight;
+  const round32 = value => Math.max(32, Math.round(value / 32) * 32);
+  return { width: round32(Math.sqrt(area * ratio)), height: round32(Math.sqrt(area / ratio)) };
+}
+function normalizeRunningHubVideo(node) {
+  const next = { ...node, mediaType: "video", provider: "runninghub-h3", videoAspect: runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9", videoQuality: runningHubVideoQualityOptions.some(item => item.value === node?.videoQuality) ? node.videoQuality : "standard", videoSeconds: Math.min(15, Math.max(3, Math.round(Number(node?.videoSeconds) || 6))), promptSlots: 1, inputSlots: 0, width: Math.max(360, Number(node?.width) || 390) };
+  next.height = Math.max(Number(node?.height) || 0, nodeHeight("video-generator", 0, 1));
+  next.status = node?.activeJobId ? "running" : "idle";
+  return next;
+}
 function generatorOutputModelId(node) { return node?.provider === "gemini" ? node.geminiModel : node?.provider === "moyu" ? node.moyuModel : "image2"; }
 function generatorOutputOptions(node) { return generatorOutputSizeOptions[generatorOutputModelId(node)] || generatorOutputSizeOptions.image2; }
 function generatorDefaultOutputSize(node) { return generatorOutputOptions(node).at(-1)?.value || "current"; }
@@ -34,19 +58,20 @@ function generatorApiSize(node) {
 }
 const generatorProviders = Object.freeze({ image2: { label: "Image2", model: "gpt-image-2" }, gemini: { label: "Gemini", model: geminiImageModels[0].id }, moyu: { label: "豆包 Seedream", model: seedreamImageModels[0].id } });
 function generatorModelForNode(node) {
+  if (node?.mediaType === "video" || node?.provider === "runninghub-h3") return runningHubVideoProvider.model;
   if (node?.provider === "gemini" && geminiImageModels.some(item => item.id === node.geminiModel)) return node.geminiModel;
   if (node?.provider === "moyu" && seedreamImageModels.some(item => item.id === node.moyuModel)) return node.moyuModel;
   return generatorProviders[node?.provider]?.model || generatorProviders.image2.model;
 }
-function generatorProviderForNode(node) { const provider = generatorProviders[node?.provider] || generatorProviders.image2; return { ...provider, model: generatorModelForNode(node) }; }
+function generatorProviderForNode(node) { if (node?.mediaType === "video" || node?.provider === "runninghub-h3") return runningHubVideoProvider; const provider = generatorProviders[node?.provider] || generatorProviders.image2; return { ...provider, model: generatorModelForNode(node) }; }
 function generatorModelLabel(modelId, fallback = "Image2") {
   if (modelId === "gpt-image-2") return "GPT Image 2";
   return geminiImageModels.find(item => item.id === modelId)?.label
     || seedreamImageModels.find(item => item.id === modelId)?.label
     || fallback;
 }
-function generatorReferenceLimit(node) { if (node?.provider === "moyu") return 6; if (node?.provider === "gemini") return 14; return 8; }
-const nodeLabels = { prompt: "提示词", composition: "参数控制", image: "图像", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
+function generatorReferenceLimit(node) { if (node?.mediaType === "video") return 0; if (node?.provider === "moyu") return 6; if (node?.provider === "gemini") return 14; return 8; }
+const nodeLabels = { prompt: "提示词", composition: "参数控制", image: "图像", video: "视频", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
 const scriptRoleTypes = [
   { id: "male-1", gender: "male", label: "男性 1" },
   { id: "male-2", gender: "male", label: "男性 2" },
@@ -81,6 +106,7 @@ const projectFileInput = $("#projectFileInput");
 const settingsDialog = $("#settingsDialog");
 const newProjectDialog = $("#newProjectDialog");
 const previewDialog = $("#previewDialog");
+const previewVideo = $("#previewVideo");
 const cropDialog = $("#cropDialog");
 const cropCanvas = $("#cropCanvas");
 const cropSourceImage = $("#cropSourceImage");
@@ -162,6 +188,7 @@ const SCRIPT_ZOOM_MIN = 0.05;
 const SCRIPT_ZOOM_MAX = 5;
 const generationPollFailures = new Map();
 let apiKey = "";
+let runningHubApiKey = "";
 let isGenerating = false;
 let projectSearch = "";
 let projectOpeningId = null;
@@ -201,6 +228,7 @@ function nodeHeight(type, slots = 4, promptSlots = 1) {
   if (type === "prompt") return 270;
   if (type === "composition") return 470;
   if (type === "image" || type === "loading") return 322;
+  if (type === "video-generator") return 470;
   if (type === "generator") return 316 + slots * 30 + Math.max(0, promptSlots - 1) * 30;
   if (type === "answer") return 344 + slots * 30 + Math.max(0, promptSlots - 1) * 30;
   return 420;
@@ -331,6 +359,9 @@ function applyCompositionToLinkedPrompts(compositionId) {
 function createGeneratorNode(x, y) {
   return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
+function createVideoNode(x, y) {
+  return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 0, width: 390, height: nodeHeight("video-generator", 0, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
+}
 function createAnswerNode(x, y) {
   return { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, height: nodeHeight("answer", 4, 1), model: "gpt-5.6", status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
 }
@@ -444,6 +475,7 @@ function normalizeProject(project) {
     normalized.selectedEdgeId = null;
     normalized.nodes = normalized.nodes.filter(Boolean).map(node => {
       if (node.type === "generator") {
+        if (node.mediaType === "video" || node.provider === "runninghub-h3") return normalizeRunningHubVideo(node);
         const slots = Math.min(14, Math.max(1, Number(node.inputSlots) || 4));
         const promptSlots = Math.min(6, Math.max(1, Number(node.promptSlots) || 1));
         const normalized = { ...node, provider: ["gemini", "moyu"].includes(node.provider) ? node.provider : "image2", geminiModel: geminiImageModels.some(item => item.id === node.geminiModel) ? node.geminiModel : geminiImageModels[0].id, moyuModel: seedreamImageModels.some(item => item.id === node.moyuModel) ? node.moyuModel : seedreamImageModels[0].id, width: node.width || 360, promptSlots, inputSlots: slots, height: Math.max(Number(node.height) || 0, nodeHeight("generator", slots, promptSlots)), aspect: sizeMap[node.aspect] ? node.aspect : fixedGeneratorSettings.aspect, quality: ["low", "medium", "high"].includes(node.quality) ? node.quality : fixedGeneratorSettings.quality, batch: Math.min(4, Math.max(1, Number(node.batch) || fixedGeneratorSettings.batch)), status: node.activeJobId ? "running" : "idle" };
@@ -453,7 +485,9 @@ function normalizeProject(project) {
       if (node.type === "answer") {
         const slots = Math.min(4, Math.max(1, Number(node.inputSlots) || 4));
         return { ...node, name: node.name || "模型回答", width: Math.max(320, Number(node.width) || 380), promptSlots: 1, inputSlots: slots, height: Math.max(Number(node.height) || 0, nodeHeight("answer", slots, 1)), model: ["gpt-5.5", "gpt-5.6"].includes(node.model) ? node.model : "gpt-5.6", status: node.status === "running" ? "running" : "idle", answer: String(node.answer || ""), error: String(node.error || "") };
-      }      if (node.type === "image") return { ...node, width: node.width || 270, height: node.height || nodeHeight("image") };
+      }
+      if (node.type === "image") return { ...node, width: node.width || 270, height: node.height || nodeHeight("image") };
+      if (node.type === "video") return { ...node, mediaType: "video", width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || 322), outputType: node.outputType || "mp4", status: "idle" };
       if (node.type === "prompt") { const width = node.width || 320; const height = Math.max(Number(node.height) || 0, nodeHeight("prompt")); return { ...node, width, height, content: stripPromptCompositionMarkers(node.content), compositionInstruction: String(node.compositionInstruction || ""), composition: normalizePromptComposition(node.composition), promptLayout: normalizePromptLayout(node.promptLayout, width, height), disabled: Boolean(node.disabled) }; }
       if (node.type === "composition") return { ...node, name: node.name === "构图控制" ? "参数控制" : node.name || "参数控制", width: Math.max(300, Number(node.width) || 390), height: Math.max(320, Number(node.height) || nodeHeight("composition")), composition: normalizePromptComposition(node.composition) };
       if (node.type === "note") return { ...node, name: node.name || "便签", content: String(node.content || ""), width: Math.max(170, Number(node.width) || 260), height: Math.max(130, Number(node.height) || 190) };
@@ -725,9 +759,10 @@ function connectionChoicesForDraft(draft) {
   const source = findNode(draft?.nodeId);
   if (!source) return [];
   const generatorChoice = { kind: "generator", title: "新建生图节点", subtitle: "默认 Image2，可切换 Gemini", icon: "sparkles" };
+  const videoChoice = { kind: "video", title: "新建视频节点", subtitle: "海螺 H3 · RunningHub", icon: "clapperboard" };
   const answerChoice = { kind: "answer", title: "新建模型回答节点", subtitle: "自动连接并用于文本回答", icon: "message-square-text" };
   const compositionChoice = { kind: "composition", title: "新建参数控制节点", subtitle: "自动写入已连接的提示词", icon: "sliders-horizontal" };
-  if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, answerChoice];
+  if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, videoChoice, answerChoice];
   if (source.type === "prompt" && draft.direction === "input" && draft.dataType === "composition") return [compositionChoice];
   if (source.type === "composition" && draft.direction === "output" && draft.dataType === "composition") return [{ kind: "prompt", title: "新建提示词节点", subtitle: "自动接收构图指令", icon: "text-cursor-input" }];
   if ((source.type === "image" || source.type === "loading") && draft.direction === "output" && draft.dataType === "image") return [generatorChoice, answerChoice];
@@ -740,6 +775,7 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   recordHistory();
   let node = null;
   if (kind === "generator") node = createGeneratorNode(Math.round(screenToScene(clientX, clientY).x - 180), Math.round(screenToScene(clientX, clientY).y - 180));
+  if (kind === "video") node = createVideoNode(Math.round(screenToScene(clientX, clientY).x - 195), Math.round(screenToScene(clientX, clientY).y - 235));
   if (kind === "answer") node = createAnswerNode(Math.round(screenToScene(clientX, clientY).x - 190), Math.round(screenToScene(clientX, clientY).y - 185));
   if (kind === "prompt") node = createPromptNode(Math.round(screenToScene(clientX, clientY).x - 160), Math.round(screenToScene(clientX, clientY).y - 145), "");
   if (kind === "composition") node = createCompositionNode(Math.round(screenToScene(clientX, clientY).x - 175), Math.round(screenToScene(clientX, clientY).y - 145));
@@ -747,10 +783,10 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   if (!node) return;
   state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null;
   if (draft.direction === "output") {
-    const targetPort = (kind === "generator" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
+    const targetPort = (kind === "generator" || kind === "video" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
     if (targetPort) connectPorts(draft, { nodeId: node.id, portId: targetPort, dataType: draft.dataType, direction: "input" }, false);
   } else {
-    const outputPort = kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : "image";
+    const outputPort = kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : kind === "video" ? "video" : "image";
     connectPorts({ nodeId: node.id, portId: outputPort, dataType: draft.dataType, direction: "output" }, draft, false);
   }
   renderCanvas(); renderInspector(); scheduleSave();
@@ -1579,9 +1615,9 @@ function renderScriptInspector() {
   if (!node) return { x: 0, y: 0 };
   if (node.type === "prompt") return portId === "composition" ? { x: node.x, y: node.y + 104 } : { x: node.x + node.width, y: node.y + 72 };
   if (node.type === "composition") return { x: node.x + node.width, y: node.y + 72 };
-  if (node.type === "image" || node.type === "loading") return portId === "result" ? { x: node.x, y: node.y + 70 } : { x: node.x + node.width, y: node.y + 70 };
+  if (node.type === "image" || node.type === "loading" || node.type === "video") return portId === "result" ? { x: node.x, y: node.y + 70 } : { x: node.x + node.width, y: node.y + 70 };
   if (node.type === "generator") {
-    if (portId === "image") return { x: node.x + node.width, y: node.y + 76 };
+    if (portId === "image" || portId === "video") return { x: node.x + node.width, y: node.y + 76 };
     if (portId === "prompt" || /^prompt-\d+$/.test(portId)) { const index = portId === "prompt" ? 0 : Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + generatorPromptPortTop(index) }; }
     const index = Number(portId.split("-")[1]) || 0;
     return { x: node.x, y: node.y + generatorImagePortTop(node, index) };
@@ -1650,6 +1686,7 @@ function renderNodeHtml(node) {
   if (node.type === "prompt") return renderPromptNodeHtml(node, selected, style);
     if (node.type === "composition") return renderCompositionNodeHtml(node, selected, style);
   if (node.type === "note") return renderNoteHtml(node, selected, style);
+  if (node.type === "video") return renderVideoNodeHtml(node, selected, style);
   if (node.type === "generator") return renderGeneratorNodeHtml(node, selected, style);
   if (node.type === "answer") return renderAnswerNodeHtml(node, selected, style);
   return renderImageNodeHtml(node, selected, style);
@@ -1695,18 +1732,20 @@ function renderNoteHtml(node, selected, style) {
 function nodeCanvasSource(node) { return node?.originalSrc || node?.src || node?.previewSrc || ""; }
 function renderImageNodeHtml(node, selected, style) {
   const loading = node.type === "loading";
+  const loadingMediaType = loading && node.mediaType === "video" ? "video" : "image";
   const hasSource = Boolean(node.src);
   const actions = loading ? "" : hasSource ? `<button class="icon-button node-interactive" type="button" data-crop-node="${node.id}" aria-label="裁剪参考图" data-tooltip="裁剪参考图">${icon("crop")}</button><button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载图片" data-tooltip="下载图片">${icon("download")}</button>` : `<button class="icon-button node-interactive" type="button" data-upload-node="${node.id}" aria-label="上传图像" data-tooltip="上传图像">${icon("image-plus")}</button>`;
   const preview = loading ? `<div class="loading-preview">${icon("loader-circle")}<span>${escapeHtml(node.source || "生图")} 生成中</span></div>` : hasSource ? `<img class="image-preview node-interactive" data-preview-node="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}" draggable="false" decoding="async">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`;
   return `<article class="canvas-node image-node${loading ? " loading-node" : ""}${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, loading ? "loader-circle" : "image", actions)}<div class="node-body">
     ${preview}
     <div class="image-node-meta"><strong>${escapeHtml(node.source || "参考图")}</strong><span>${escapeHtml(node.ratio || (hasSource ? "图片" : "未上传"))}</span></div>
-    </div></div>${resizeHandleHtml(node)}${(node.generated || node.source === "Image2" || node.source === "Gemini" || loading) ? portHtml(node, "result", "image", "input", "Result", 70) : ""}${portHtml(node, "image", "image", "output", "Image", 70)}</article>`;
+    </div></div>${(node.generated || node.source === "Image2" || node.source === "Gemini" || loading) ? portHtml(node, "result", loadingMediaType, "input", "Result", 70) : ""}${portHtml(node, loadingMediaType, loadingMediaType, "output", loadingMediaType === "video" ? "Video" : "Image", 70)}</article>`;
 }
 function generatorPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${index}`; }
 function generatorPromptPortTop(index) { return 162 + index * 30; }
 function generatorImagePortTop(node, index) { return 192 + (node.promptSlots - 1) * 30 + index * 30; }
 function renderGeneratorNodeHtml(node, selected, style) {
+  if (node.mediaType === "video") return renderVideoGeneratorNodeHtml(node, selected, style);
   const provider = generatorProviderForNode(node);
   const isMoyu = node.provider === "gemini" || node.provider === "moyu";
   const outputOptions = generatorOutputOptions(node);
@@ -1727,6 +1766,33 @@ function renderGeneratorNodeHtml(node, selected, style) {
     <button class="run-node-button node-interactive" type="button" data-run-node="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "play")} ${node.status === "running" ? `${escapeHtml(provider.label)} 处理中` : `运行 ${escapeHtml(provider.label)}`}</button>
     <div class="node-run-state"><span>${escapeHtml(provider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}">${statusLabel}</span></div>
     </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", generatorPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", `Image ${index + 1}`, generatorImagePortTop(node, index))).join("")}${portHtml(node, "image", "image", "output", "Image", 76)}</article>`;
+}
+function renderVideoNodeHtml(node, selected, style) {
+  const hasSource = Boolean(node.src);
+  const actions = hasSource ? `<button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载视频" data-tooltip="下载视频">${icon("download")}</button>` : "";
+  const preview = hasSource
+    ? `<video class="video-preview node-interactive" data-preview-video="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" controls preload="metadata"></video>`
+    : `<div class="loading-preview">${icon("video")}<span>视频结果不可用</span></div>`;
+  return `<article class="canvas-node image-node video-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", actions)}<div class="node-body">${preview}<div class="image-node-meta"><strong>${escapeHtml(node.source || "海螺 H3 视频")}</strong><span>${escapeHtml(node.outputType || "mp4")}</span></div></div></div>${resizeHandleHtml(node)}${portHtml(node, "result", "video", "input", "Result", 70)}${portHtml(node, "video", "video", "output", "Video", 70)}</article>`;
+}
+function renderVideoGeneratorNodeHtml(node, selected, style) {
+  const dimensions = runningHubVideoDimensions(node);
+  const quality = runningHubVideoQuality(node);
+  const promptEdge = incomingEdge(node.id, "prompt");
+  const promptNode = findNode(promptEdge?.source);
+  const promptLabel = promptEdge ? `${promptNode?.disabled ? "已禁用 · " : ""}${sourceLabelForEdge(promptEdge)}` : "未连接";
+  const statusLabel = node.status === "running" ? "生成中" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个视频` : "待运行";
+  return `<article class="canvas-node generator-node video-generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard")}<div class="node-body generator-body">
+    <div class="video-provider-badge"><span>${escapeHtml(runningHubVideoProvider.label)}</span><small>工作流 ${escapeHtml("2084196829952045057")} · plus</small></div>
+    <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-video-field="aspect" data-node-id="${node.id}" aria-label="视频比例">${runningHubVideoAspects.map(value => `<option value="${value}"${node.videoAspect === value ? " selected" : ""}>${value === "auto" ? "自适应" : value}</option>`).join("")}</select></div>
+    <div class="node-field"><label>清晰度</label><select class="node-select node-interactive" data-video-field="quality" data-node-id="${node.id}" aria-label="视频清晰度">${runningHubVideoQualityOptions.map(option => `<option value="${option.value}"${node.videoQuality === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select></div></div>
+    <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: 13 }, (_, index) => index + 3).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field"><label>实例</label><div class="node-static-field">API plus · 48G</div></div></div>
+    <div class="video-resolution-summary"><span>${escapeHtml(quality.label)}</span><strong>${dimensions.width} × ${dimensions.height}</strong></div>
+    <div class="generator-inputs"><div class="input-slot${promptEdge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>Prompt</span><span>${escapeHtml(promptLabel)}</span></div></div>
+    <div class="video-reference-note">当前 API 导出仅验证提示词、尺寸、时长与 MP4 输出；首尾帧和全能参考节点未接入。</div>
+    <button class="run-node-button node-interactive" type="button" data-run-node="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "play")} ${node.status === "running" ? "海螺 H3 处理中" : "运行海螺 H3"}</button>
+    <div class="node-run-state"><span>${escapeHtml(runningHubVideoProvider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}">${statusLabel}</span></div>
+    </div></div>${resizeHandleHtml(node)}${portHtml(node, "prompt", "prompt", "input", "Prompt", 92)}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
 }
 function answerPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${index}`; }
 function answerPromptPortTop(index) { return 118 + index * 30; }
@@ -1758,6 +1824,15 @@ $$('[data-note-content]').forEach(textarea => textarea.addEventListener("input",
 $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.confirmHorizon); if (!node || node.type !== "composition") return; const composition = normalizePromptComposition(node.composition); if (!composition.horizonPending) return; recordHistory(); node.composition = normalizePromptComposition({ ...composition, horizonEnabled: true, horizonPending: false }); applyCompositionToLinkedPrompts(node.id); renderCanvas(); renderInspector(); scheduleSave(); toast("地平线已写入提示词"); }));
   $$('[data-composition-panel]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.compositionNode); if (!node || node.type !== "composition") return; const composition = normalizePromptComposition(node.composition); const panel = button.dataset.compositionPanel === "expression" ? "expression" : "parameters"; if (composition.panel === panel) return; node.composition = normalizePromptComposition({ ...composition, panel }); renderCanvas(); renderInspector(); scheduleSave(); }));  $$('[data-composition-field]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.compositionNode); if (!node || node.type !== "composition") return; recordHistory(); const field = button.dataset.compositionField; const composition = normalizePromptComposition(node.composition); const value = composition[field] === button.dataset.compositionValue ? null : button.dataset.compositionValue; node.composition = normalizePromptComposition({ ...composition, [field]: value }); applyCompositionToLinkedPrompts(node.id); renderCanvas(); renderInspector(); scheduleSave(); })); $$('[data-prompt-text-resize], [data-prompt-composition-width-resize]').forEach(handle => { handle.addEventListener("pointerdown", startPromptLayoutResize); handle.addEventListener("pointermove", movePromptLayoutResize); handle.addEventListener("pointerup", finishPromptLayoutResize); handle.addEventListener("pointercancel", finishPromptLayoutResize); });
   $$('[data-preview-node]').forEach(image => image.addEventListener("dblclick", event => { event.stopPropagation(); const node = findNode(image.dataset.previewNode); if (node) openPreview(node); }));
+  $$('[data-preview-video]').forEach(video => video.addEventListener("dblclick", event => { event.stopPropagation(); const node = findNode(video.dataset.previewVideo); if (node) openVideoPreview(node); }));
+  $$('[data-video-field]').forEach(control => control.addEventListener("change", event => {
+    const node = findNode(control.dataset.nodeId); if (!node || node.mediaType !== "video") return;
+    recordHistory(); const field = control.dataset.videoField;
+    if (field === "seconds") node.videoSeconds = Math.min(15, Math.max(3, Number(event.target.value) || 6));
+    else if (field === "aspect") node.videoAspect = runningHubVideoAspects.includes(event.target.value) ? event.target.value : "16:9";
+    else if (field === "quality") node.videoQuality = runningHubVideoQualityOptions.some(item => item.value === event.target.value) ? event.target.value : "standard";
+    renderCanvas(); renderInspector(); scheduleSave();
+  }));
   $$('[data-generator-field]').forEach(control => control.addEventListener("change", event => {
     const node = findNode(control.dataset.nodeId); if (!node) return; recordHistory();
     const field = control.dataset.generatorField;
@@ -1982,6 +2057,7 @@ function fitContent() {
   const center = sceneCenter(); recordHistory(); let node;
   if (type === "prompt") node = createPromptNode(Math.round(center.x - 160), Math.round(center.y - 145));
   if (type === "generator") node = createGeneratorNode(Math.round(center.x - 180), Math.round(center.y - 180));
+  if (type === "video") node = createVideoNode(Math.round(center.x - 195), Math.round(center.y - 235));
   if (type === "answer") node = createAnswerNode(Math.round(center.x - 190), Math.round(center.y - 185));
   if (type === "composition") node = createCompositionNode(Math.round(center.x - 175), Math.round(center.y - 145));
   if (type === "note") node = createNote(Math.round(center.x - 130), Math.round(center.y - 95));
@@ -2009,13 +2085,14 @@ function renderLibrary() {
     <button class="module-item" type="button" data-library-add="prompt"><span class="module-icon prompt">${icon("text-cursor-input")}</span><span class="module-copy"><strong>提示词</strong><small>输出 Prompt 文本</small></span></button><button class="module-item" type="button" data-library-add="composition"><span class="module-icon composition">${icon("sliders-horizontal")}</span><span class="module-copy"><strong>参数控制</strong><small>透视、地平线与摄影参数</small></span></button>
     <button class="module-item" type="button" data-library-image><span class="module-icon image">${icon("image-plus")}</span><span class="module-copy"><strong>参考图</strong><small>输出 Image 图像</small></span></button>
     <button class="module-item" type="button" data-library-add="generator"><span class="module-icon generator">${icon("sparkles")}</span><span class="module-copy"><strong>生图</strong><small>Image2 / Gemini · 最多 8 张图</small></span></button>
+    <button class="module-item" type="button" data-library-add="video"><span class="module-icon video">${icon("clapperboard")}</span><span class="module-copy"><strong>视频</strong><small>海螺 H3 · API plus · MP4</small></span></button>
     <button class="module-item" type="button" data-library-add="answer"><span class="module-icon answer">${icon("message-square-text")}</span><span class="module-copy"><strong>模型回答</strong><small>最多 6 条提示词 · 8 张参考图</small></span></button>
     </div><div class="section-label"><span>当前结构</span><span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词模块</span><strong>${counts("prompt")}</strong></div><div class="summary-row"><span>参数控制</span><strong>${counts("composition")}</strong></div><div class="summary-row"><span>图像模块</span><strong>${counts("image")}</strong></div><div class="summary-row"><span>生图模块</span><strong>${counts("generator")}</strong></div><div class="summary-row"><span>模型回答</span><strong>${counts("answer")}</strong></div>`;
   $$('[data-library-add]').forEach(button => button.addEventListener("click", () => addNode(button.dataset.libraryAdd))); $("[data-library-image]")?.addEventListener("click", () => imageFileInput.click()); refreshIcons();
 }
-function assetRowHtml(node) { const thumb = node.src ? `<img class="asset-thumb" src="${escapeHtml(nodeDisplaySource(node))}" alt="">` : `<span class="asset-thumb asset-thumb-empty">${icon("image-plus")}</span>`; return `<button class="asset-row${state.selectedIds.includes(node.id) ? " is-selected" : ""}" type="button" data-select-node="${node.id}">${thumb}<span class="asset-copy"><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.source || "素材")} · ${escapeHtml(node.ratio || (node.src ? "图片" : "未上传"))}</small></span><span class="asset-kind">${outgoingEdges(node.id, "image").length} 链接</span></button>`; }
-function renderAssetsLibrary() { const images = state.nodes.filter(node => node.type === "image"); libraryContent.innerHTML = `<div class="section-label"><span>图像素材</span><span>${images.length}</span></div>${images.map(assetRowHtml).join("") || emptyHtml("images", "尚未导入图像")}`; bindLibraryRows(); }
-function renderHistoryLibrary() { const recent = state.recentIds.map(findNode).filter(node => node?.type === "image"); libraryContent.innerHTML = `<div class="section-label"><span>生成结果</span><span>${recent.length}</span></div>${recent.map(assetRowHtml).join("") || emptyHtml("history", "还没有运行记录")}`; bindLibraryRows(); }
+function assetRowHtml(node) { const thumb = node.src ? node.type === "video" ? `<video class="asset-thumb" src="${escapeHtml(nodeDisplaySource(node))}" muted preload="metadata"></video>` : `<img class="asset-thumb" src="${escapeHtml(nodeDisplaySource(node))}" alt="">` : `<span class="asset-thumb asset-thumb-empty">${icon("image-plus")}</span>`; const outputType = node.type === "video" ? (node.outputType || "mp4") : (node.ratio || (node.src ? "图片" : "未上传")); return `<button class="asset-row${state.selectedIds.includes(node.id) ? " is-selected" : ""}" type="button" data-select-node="${node.id}">${thumb}<span class="asset-copy"><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.source || "素材")} · ${escapeHtml(outputType)}</small></span><span class="asset-kind">${outgoingEdges(node.id, node.type === "video" ? "video" : "image").length} 链接</span></button>`; }
+function renderAssetsLibrary() { const images = state.nodes.filter(node => ["image", "video"].includes(node.type)); libraryContent.innerHTML = `<div class="section-label"><span>素材与视频</span><span>${images.length}</span></div>${images.map(assetRowHtml).join("") || emptyHtml("images", "尚未导入图像或视频")}`; bindLibraryRows(); }
+function renderHistoryLibrary() { const recent = state.recentIds.map(findNode).filter(node => node && ["image", "video"].includes(node.type)); libraryContent.innerHTML = `<div class="section-label"><span>生成结果</span><span>${recent.length}</span></div>${recent.map(assetRowHtml).join("") || emptyHtml("history", "还没有运行记录")}`; bindLibraryRows(); }
 function emptyHtml(iconName, message) { return `<div class="empty-state">${icon(iconName)}<p>${escapeHtml(message)}</p></div>`; }
 function bindLibraryRows() { $$('[data-select-node]').forEach(button => button.addEventListener("click", () => { selectNode(button.dataset.selectNode); focusNode(button.dataset.selectNode); $("#libraryPanel").classList.remove("is-open"); })); refreshIcons(); }
 function focusNode(id) { const node = findNode(id); if (!node) return; const rect = workspace.getBoundingClientRect(); state.viewport.x = rect.width / 2 - (node.x + node.width / 2) * state.viewport.scale; state.viewport.y = rect.height / 2 - (node.y + node.height / 2) * state.viewport.scale; updateViewport(); }
@@ -2023,9 +2100,9 @@ function renderInspector() {
   if (state?.flowMode === "script") return renderScriptInspector();
   if (selectedEdgeId) return renderEdgeInspector(); const node = selectedNode(); if (node) return renderNodeInspector(node);
   $("#inspectorEyebrow").textContent = "PROJECT"; $("#inspectorTitle").textContent = "工作流概览";
-  const prompts = state.nodes.filter(node => node.type === "prompt").length; const compositions = state.nodes.filter(node => node.type === "composition").length; const images = state.nodes.filter(node => node.type === "image").length; const generators = state.nodes.filter(node => node.type === "generator").length; const answers = state.nodes.filter(node => node.type === "answer").length;
-  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">项目结构 <span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词</span><strong>${prompts}</strong></div><div class="summary-row"><span>参数控制</span><strong>${compositions}</strong></div><div class="summary-row"><span>图像素材</span><strong>${images}</strong></div><div class="summary-row"><span>生图</span><strong>${generators}</strong></div><div class="summary-row"><span>模型回答</span><strong>${answers}</strong></div></section>
-    <section class="control-section"><div class="control-title">数据流</div><div class="edge-summary"><span class="edge-swatch prompt"></span><span>Prompt 文本连接</span></div><div class="edge-summary"><span class="edge-swatch composition"></span><span>参数控制连接</span></div><div class="edge-summary"><span class="edge-swatch"></span><span>Image 图像连接</span></div></section>
+  const prompts = state.nodes.filter(node => node.type === "prompt").length; const compositions = state.nodes.filter(node => node.type === "composition").length; const images = state.nodes.filter(node => node.type === "image").length; const videos = state.nodes.filter(node => node.type === "video").length; const generators = state.nodes.filter(node => node.type === "generator").length; const answers = state.nodes.filter(node => node.type === "answer").length;
+  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">项目结构 <span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词</span><strong>${prompts}</strong></div><div class="summary-row"><span>参数控制</span><strong>${compositions}</strong></div><div class="summary-row"><span>图像素材</span><strong>${images}</strong></div><div class="summary-row"><span>视频结果</span><strong>${videos}</strong></div><div class="summary-row"><span>生图</span><strong>${generators}</strong></div><div class="summary-row"><span>模型回答</span><strong>${answers}</strong></div></section>
+    <section class="control-section"><div class="control-title">数据流</div><div class="edge-summary"><span class="edge-swatch prompt"></span><span>Prompt 文本连接</span></div><div class="edge-summary"><span class="edge-swatch composition"></span><span>参数控制连接</span></div><div class="edge-summary"><span class="edge-swatch"></span><span>Image 图像连接</span></div><div class="edge-summary"><span class="edge-swatch video"></span><span>Video 视频连接</span></div></section>
     <section class="control-section"><div class="control-title">界面基调 <span>${themeLabels[state.theme]}</span></div><div class="settings-theme-switch">${themeButtonsHtml()}</div></section>`;
   bindInspectorThemeButtons(); refreshIcons();
 }
@@ -2034,17 +2111,18 @@ function bindInspectorThemeButtons() { $$("#inspectorContent [data-theme-value]"
 function renderEdgeInspector() {
   const edge = state.edges.find(item => item.id === selectedEdgeId); if (!edge) { selectedEdgeId = null; return renderInspector(); }
   $("#inspectorEyebrow").textContent = "CONNECTION"; $("#inspectorTitle").textContent = "连接属性";
-  inspectorContent.innerHTML = `<section class="control-section"><div class="edge-summary"><span class="edge-swatch ${edge.type === "prompt" ? "prompt" : ""}"></span><span>${edge.type === "prompt" ? "Prompt 文本" : "Image 图像"}</span></div><div class="summary-row"><span>来源</span><strong>${escapeHtml(findNode(edge.source)?.name || "-")}</strong></div><div class="summary-row"><span>目标</span><strong>${escapeHtml(findNode(edge.target)?.name || "-")}</strong></div><div class="summary-row"><span>输入端口</span><strong>${escapeHtml(edge.targetPort)}</strong></div></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteEdgeButton" type="button">${icon("unlink")} 删除连接</button></section>`;
+  inspectorContent.innerHTML = `<section class="control-section"><div class="edge-summary"><span class="edge-swatch ${edge.type === "prompt" ? "prompt" : edge.type === "video" ? "video" : ""}"></span><span>${edge.type === "prompt" ? "Prompt 文本" : edge.type === "video" ? "Video 视频" : "Image 图像"}</span></div><div class="summary-row"><span>来源</span><strong>${escapeHtml(findNode(edge.source)?.name || "-")}</strong></div><div class="summary-row"><span>目标</span><strong>${escapeHtml(findNode(edge.target)?.name || "-")}</strong></div><div class="summary-row"><span>输入端口</span><strong>${escapeHtml(edge.targetPort)}</strong></div></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteEdgeButton" type="button">${icon("unlink")} 删除连接</button></section>`;
   $("#deleteEdgeButton").addEventListener("click", deleteSelection); refreshIcons();
 }
 function renderNodeInspector(node) {
-  $("#inspectorEyebrow").textContent = node.type.toUpperCase(); $("#inspectorTitle").textContent = `${nodeLabels[node.type] || "模块"}属性`;
+  $("#inspectorEyebrow").textContent = node.mediaType === "video" ? "VIDEO" : node.type.toUpperCase(); $("#inspectorTitle").textContent = `${nodeLabels[node.type] || "模块"}属性`;
   const incoming = state.edges.filter(edge => edge.target === node.id).length; const outgoing = state.edges.filter(edge => edge.source === node.id).length; let specific = "";
   if (node.type === "image") specific = `${node.src ? `<img class="image-preview" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`}<div class="summary-row"><span>输入连接</span><strong>${incoming}</strong></div><div class="summary-row"><span>输出连接</span><strong>${outgoing}</strong></div>`;
   if (node.type === "prompt") specific = `<div class="summary-row"><span>字符数</span><strong>${(node.content || "").length}</strong></div><div class="summary-row"><span>输出连接</span><strong>${outgoing}</strong></div>`;
-  if (node.type === "generator") { const imageInputs = state.edges.filter(edge => edge.target === node.id && edge.type === "image").length; const provider = generatorProviderForNode(node); specific = `<div class="summary-row"><span>模型</span><strong>${provider.model}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>参考图</span><strong>${imageInputs}/${node.inputSlots}</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>`; }
+  if (node.type === "generator" && node.mediaType !== "video") { const imageInputs = state.edges.filter(edge => edge.target === node.id && edge.type === "image").length; const provider = generatorProviderForNode(node); specific = `<div class="summary-row"><span>模型</span><strong>${provider.model}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>参考图</span><strong>${imageInputs}/${node.inputSlots}</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>`; }
+  if (node.mediaType === "video") { const dimensions = runningHubVideoDimensions(node); specific = `<div class="summary-row"><span>模型</span><strong>${runningHubVideoProvider.model}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>清晰度</span><strong>${runningHubVideoQuality(node).label}</strong></div><div class="summary-row"><span>尺寸</span><strong>${dimensions.width} × ${dimensions.height}</strong></div><div class="summary-row"><span>时长</span><strong>${node.videoSeconds} 秒</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>`; }
   if (node.type === "frame") { const contained = frameContainedNodes(node).length; specific = `<div class="summary-row"><span>包含节点</span><strong>${contained}</strong></div><div class="summary-row"><span>画板尺寸</span><strong>${Math.round(node.width)} × ${Math.round(node.height)}</strong></div><p class="field-note">把节点拖入虚线范围后，拖动画板边框即可整体移动这些节点。右下角手柄可以调整画板大小。</p>`; }
-  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">名称</div><input class="text-input" id="nodeNameInput" value="${escapeHtml(node.name)}"></section><section class="control-section">${specific}</section><section class="control-section"><div class="action-list">${node.type === "generator" ? `<button class="action-row" type="button" data-inspector-action="run">${icon("play")}<strong>运行此节点</strong><small>${node.batch} 张</small></button>` : ""}${node.type === "image" ? (node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载图片</strong><small>原始文件</small></button>` : `<button class="action-row" type="button" data-inspector-action="upload">${icon("image-plus")}<strong>上传图像</strong><small>本地参考图</small></button>`) : ""}<button class="action-row" type="button" data-inspector-action="duplicate">${icon("copy")}<strong>复制模块</strong><small>保留当前参数</small></button><button class="action-row danger-action" type="button" data-inspector-action="delete">${icon("trash-2")}<strong>删除模块</strong><small>同时删除连接</small></button></div></section>`;
+  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">名称</div><input class="text-input" id="nodeNameInput" value="${escapeHtml(node.name)}"></section><section class="control-section">${specific}</section><section class="control-section"><div class="action-list">${node.type === "generator" ? `<button class="action-row" type="button" data-inspector-action="run">${icon("play")}<strong>运行此节点</strong><small>${node.mediaType === "video" ? "MP4 视频" : `${node.batch} 张`}</small></button>` : ""}${node.type === "image" ? (node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载图片</strong><small>原始文件</small></button>` : `<button class="action-row" type="button" data-inspector-action="upload">${icon("image-plus")}<strong>上传图像</strong><small>本地参考图</small></button>`) : ""}${node.type === "video" && node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载视频</strong><small>${escapeHtml(node.outputType || "mp4")}</small></button>` : ""}<button class="action-row" type="button" data-inspector-action="duplicate">${icon("copy")}<strong>复制模块</strong><small>保留当前参数</small></button><button class="action-row danger-action" type="button" data-inspector-action="delete">${icon("trash-2")}<strong>删除模块</strong><small>同时删除连接</small></button></div></section>`;
   $("#nodeNameInput").addEventListener("change", event => { const value = event.target.value.trim(); if (!value || value === node.name) return; recordHistory(); node.name = value; renderCanvas(); renderLibrary(); scheduleSave(); });
   $$("#inspectorContent [data-upload-node]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); triggerReferenceUpload(button.dataset.uploadNode); }));
   $$('[data-inspector-action]').forEach(button => button.addEventListener("click", () => { const action = button.dataset.inspectorAction; if (action === "run") runGeneratorNode(node.id); if (action === "upload") triggerReferenceUpload(node.id); if (action === "download") downloadNode(node); if (action === "duplicate") duplicateSelected(); if (action === "delete") deleteSelection(); }));
@@ -2174,13 +2252,14 @@ function removeGenerationPlaceholders(jobId) {
 function ensureGenerationPlaceholders(generator, jobId, imageCount = generator.batch, modelId = generatorModelForNode(generator)) {
   const existing = state.nodes.filter(node => node.type === "loading" && node.generationJobId === jobId);
   if (existing.length) return existing;
-  const count = Math.min(4, Math.max(1, Number(imageCount) || Number(generator.batch) || 1));
+  const isVideo = generator.mediaType === "video" || generator.provider === "runninghub-h3";
+  const count = isVideo ? 1 : Math.min(4, Math.max(1, Number(imageCount) || Number(generator.batch) || 1));
   const columns = count > 1 ? 2 : 1;
   const provider = generatorProviderForNode(generator);
   const modelLabel = generatorModelLabel(modelId, provider.label);
-  const placeholders = Array.from({ length: count }, (_, index) => ({ id: uid("result"), type: "loading", generationJobId: jobId, name: `${modelLabel} 结果 ${index + 1}`, x: generator.x + generator.width + 190 + (index % columns) * 310, y: generator.y + Math.floor(index / columns) * 360, width: 270, height: nodeHeight("loading"), source: provider.label, model: modelId, modelLabel, ratio: generator.aspect, createdAt: Date.now() + index }));
+  const placeholders = Array.from({ length: count }, (_, index) => ({ id: uid("result"), type: "loading", mediaType: isVideo ? "video" : "image", generationJobId: jobId, name: `${modelLabel} 结果 ${index + 1}`, x: generator.x + generator.width + 190 + (index % columns) * 310, y: generator.y + Math.floor(index / columns) * 360, width: 270, height: nodeHeight("loading"), source: provider.label, model: modelId, modelLabel, ratio: isVideo ? `${runningHubVideoDimensions(generator).width}:${runningHubVideoDimensions(generator).height}` : generator.aspect, outputType: isVideo ? "mp4" : "png", createdAt: Date.now() + index }));
   state.nodes.push(...placeholders);
-  placeholders.forEach(node => state.edges.push({ id: uid("edge"), source: generator.id, sourcePort: "image", target: node.id, targetPort: "result", type: "image" }));
+  placeholders.forEach(node => state.edges.push({ id: uid("edge"), source: generator.id, sourcePort: isVideo ? "video" : "image", target: node.id, targetPort: "result", type: isVideo ? "video" : "image" }));
   return placeholders;
 }
 function finishGenerationJob(generatorId, job) {
@@ -2193,11 +2272,13 @@ function finishGenerationJob(generatorId, job) {
   const modelLabel = generatorModelLabel(job.model || provider.model, provider.label);
   if (job.status === "succeeded") {
     const createdIds = [];
-    (job.images || []).forEach((image, index) => {
+    const isVideo = generator.mediaType === "video" || job.provider === "runninghub-h3";
+    const outputs = isVideo ? (job.media || []) : (job.images || []);
+    outputs.forEach((image, index) => {
       const placeholder = placeholders[index];
       if (!placeholder) return;
       const node = findNode(placeholder.id);
-      Object.assign(node, { type: "image", generationJobId: undefined, name: `${modelLabel} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, model: job.model || provider.model, modelLabel, generated: true, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
+      Object.assign(node, { type: isVideo ? "video" : "image", mediaType: isVideo ? "video" : "image", generationJobId: undefined, name: `${modelLabel} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, model: job.model || provider.model, modelLabel, outputType: image.outputType || (isVideo ? "mp4" : "png"), generated: true, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
       createdIds.push(node.id);
     });
     const unused = placeholders.filter(node => !createdIds.includes(node.id));
@@ -2209,7 +2290,7 @@ function finishGenerationJob(generatorId, job) {
     state.selectedIds = createdIds;
     state.recentIds = [...createdIds, ...state.recentIds].slice(0, 60);
     state.libraryTab = "history";
-    toast(`${provider.label} 已完成 ${createdIds.length} 张图片`);
+    toast(`${provider.label} 已完成 ${createdIds.length} 个${isVideo ? "视频" : "图片"}`);
   } else {
     removeGenerationPlaceholders(job.id);
     generator.status = "idle";
@@ -2254,6 +2335,7 @@ function resumeGenerationJobs() {
 }
 async function runGeneratorNode(nodeId) {
   const generator = findNode(nodeId); if (!generator || generator.type !== "generator" || isGenerating || generator.activeJobId) return;
+  if (generator.mediaType === "video" || generator.provider === "runninghub-h3") return runVideoGeneratorNode(generator);
   const promptEdges = state.edges.filter(edge => edge.target === nodeId && edge.type === "prompt" && (edge.targetPort === "prompt" || /^prompt-\d+$/.test(edge.targetPort))).sort((a, b) => (a.targetPort === "prompt" ? 0 : Number(a.targetPort.split("-")[1]) || 0) - (b.targetPort === "prompt" ? 0 : Number(b.targetPort.split("-")[1]) || 0));
   const prompt = promptEdges.map(edge => findNode(edge.source)).filter(node => node?.type === "prompt" && !node.disabled).map(node => node.content?.trim()).filter(Boolean).join("\n\n");
   if (!prompt) { selectNode(nodeId); return toast("请连接至少一个有内容且已启用的提示词模块", true); }
@@ -2364,23 +2446,25 @@ async function confirmCrop() {
   } catch (error) { toast("裁剪失败，请使用本地上传或本机生成的图片", true); }
 }
 
-function openPreview(node) { const source = node?.originalSrc || node?.src; if (!source) return; $("#previewImage").src = source; previewDialog.showModal(); }
+function openPreview(node) { const source = node?.originalSrc || node?.src; if (!source) return; $("#previewImage").hidden = false; previewVideo.hidden = true; previewVideo.pause(); previewVideo.removeAttribute("src"); $("#previewImage").src = source; previewDialog.showModal(); }
+function openVideoPreview(node) { const source = node?.originalSrc || node?.src; if (!source) return; $("#previewImage").hidden = true; previewVideo.hidden = false; previewVideo.src = source; previewVideo.load(); previewDialog.showModal(); }
 async function downloadNode(node) {
   try {
     const source = node?.originalSrc || node?.src;
-    if (!source) throw new Error("图片地址为空");
+    const isVideo = node?.type === "video";
+    if (!source) throw new Error(`${isVideo ? "视频" : "图片"}地址为空`);
     let href = source;
     let objectUrl = "";
     if (href.startsWith("data:")) {
       const [meta, encoded] = href.split(",", 2);
-      const mime = meta.match(/^data:([^;]+)/)?.[1] || "image/png";
+      const mime = meta.match(/^data:([^;]+)/)?.[1] || (isVideo ? "video/mp4" : "image/png");
       const binary = atob(encoded || "");
       const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
       objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
       href = objectUrl;
     }
-    const sourceExtension = source.match(/^data:image\/(png|jpeg|webp)/i)?.[1] || source.match(/\.(png|jpe?g|webp)(?:[?#]|$)/i)?.[1] || "png";
-    const extension = sourceExtension.toLowerCase() === "jpeg" ? "jpg" : sourceExtension.toLowerCase();
+    const sourceExtension = node?.outputType || source.match(/^data:(?:image|video)\/(mp4|webm|quicktime|png|jpeg|webp)/i)?.[1] || source.match(/\.(mp4|webm|mov|png|jpe?g|webp)(?:[?#]|$)/i)?.[1] || (isVideo ? "mp4" : "png");
+    const extension = sourceExtension.toLowerCase() === "jpeg" ? "jpg" : sourceExtension.toLowerCase() === "quicktime" ? "mov" : sourceExtension.toLowerCase();
     const link = document.createElement("a");
     link.href = href;
     link.download = `${node.name.replace(/[\\/:*?"<>|]/g, "-")}.${extension}`;
@@ -2389,8 +2473,8 @@ async function downloadNode(node) {
     link.click();
     link.remove();
     if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-    toast("图片下载已开始");
-  } catch { toast("图片下载失败", true); }
+    toast(`${isVideo ? "视频" : "图片"}下载已开始`);
+  } catch { toast(`${node?.type === "video" ? "视频" : "图片"}下载失败`, true); }
 }
 function exportProject() { const blob = new Blob([JSON.stringify(cleanProjectForSave(), null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `${state.projectName.replace(/[\\/:*?"<>|]/g, "-")}.image2.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 async function importProject(file) {
@@ -2439,6 +2523,23 @@ async function restartImage2Service() {
     setHomeServiceState("恢复失败", error.message || "请重新打开桌面应用。", "error"); toast(error.message || "生图服务恢复失败", true);
   } finally { checkButton.disabled = false; restartButton.disabled = false; }
 }
+async function runVideoGeneratorNode(generator) {
+  const promptEdges = state.edges.filter(edge => edge.target === generator.id && edge.type === "prompt" && (edge.targetPort === "prompt" || /^prompt-\d+$/.test(edge.targetPort))).sort((a, b) => (a.targetPort === "prompt" ? 0 : Number(a.targetPort.split("-")[1]) || 0) - (b.targetPort === "prompt" ? 0 : Number(b.targetPort.split("-")[1]) || 0));
+  const prompt = promptEdges.map(edge => findNode(edge.source)).filter(node => node?.type === "prompt" && !node.disabled).map(node => node.content?.trim()).filter(Boolean).join("\n\n");
+  if (!prompt) { selectNode(generator.id); return toast("请连接至少一个有内容且已启用的提示词模块", true); }
+  if (!runningHubApiKey) {
+    try { const status = await requestJson("/api/status", {}, 10_000); if (!status.runninghub?.ready) { openSettings(); return toast("请先在设置中保存 RunningHub API Key", true); } }
+    catch { return toast("本机服务不可用，无法检查 RunningHub 设置", true); }
+  }
+  isGenerating = true; recordHistory(); generator.status = "running"; generator.activePrompt = prompt; renderWorkspace();
+  try {
+    const dimensions = runningHubVideoDimensions(generator);
+    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(runningHubApiKey ? { "x-runninghub-api-key": runningHubApiKey } : {}) }, body: JSON.stringify({ provider: "runninghub-h3", prompt, width: dimensions.width, height: dimensions.height, seconds: generator.videoSeconds, references: [] }) }, 75_000);
+    const job = result.job; if (!job?.id) throw new Error("本机服务未返回视频任务");
+    generator.activeJobId = job.id; ensureGenerationPlaceholders(generator, job.id, 1, job.model); state.selectedIds = []; toast(`${runningHubVideoProvider.label} 已进入任务队列，正在生成视频`); renderWorkspace(); scheduleSave(); pollGenerationJob(generator.id, job.id);
+  } catch (error) { generator.status = "idle"; delete generator.activePrompt; toast(error.message || "视频任务创建失败", true); renderWorkspace(); scheduleSave(); }
+  finally { isGenerating = false; updateHistoryButtons(); }
+}
 async function refreshGeminiSettingsStatus() {
   const statusElement = $("#geminiKeyStatus"); if (!statusElement) return;
   try {
@@ -2446,7 +2547,12 @@ async function refreshGeminiSettingsStatus() {
     statusElement.textContent = result.gemini?.ready ? `已配置 · ${result.gemini.model}` : "尚未配置，保存密钥后即可在生图节点中选择 Gemini。";
   } catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
 }
-function openSettings() { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); const input = $("#geminiApiKeyInput"); if (input) input.value = ""; settingsDialog.showModal(); void refreshGeminiSettingsStatus(); }
+async function refreshRunningHubSettingsStatus() {
+  const statusElement = $("#runningHubKeyStatus"); if (!statusElement) return;
+  try { const result = await requestJson("/api/status", {}, 5_000); statusElement.textContent = result.runninghub?.ready ? `已配置 · 工作流 ${result.runninghub.workflowId} · ${result.runninghub.instanceType}` : "尚未配置，保存密钥后即可运行海螺 H3 视频。"; }
+  catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
+}
+function openSettings() { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); const input = $("#geminiApiKeyInput"); if (input) input.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; settingsDialog.showModal(); void refreshGeminiSettingsStatus(); void refreshRunningHubSettingsStatus(); }
 function bindStaticEvents() {
   $("#newProjectButton").addEventListener("click", () => {
     $("#newProjectName").value = ""; const radio = $(`#newProjectThemes input[value="${globalTheme}"]`); if (radio) radio.checked = true;
@@ -2501,16 +2607,22 @@ function bindStaticEvents() {
   $("#settingsButton").addEventListener("click", openSettings);
   $("#revealKeyButton").addEventListener("click", () => { const input = $("#apiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $("#revealGeminiKeyButton").addEventListener("click", () => { const input = $("#geminiApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
+  $("#revealRunningHubKeyButton").addEventListener("click", () => { const input = $("#runningHubApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.addEventListener("click", () => { setTheme(button.dataset.themeValue); $$("#settingsThemeSwitch [data-theme-value]").forEach(item => item.classList.toggle("is-active", item.dataset.themeValue === button.dataset.themeValue)); }));
   $("#saveSettingsButton").addEventListener("click", async event => {
     event.preventDefault();
     apiKey = $("#apiKeyInput").value.trim();
     const geminiKey = $("#geminiApiKeyInput").value.trim();
+    const runningHubKey = $("#runningHubApiKeyInput").value.trim();
     if (geminiKey) {
       try { await requestJson("/api/providers/gemini", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: geminiKey }) }, 10_000); }
       catch (error) { return toast(error.message || "Gemini 密钥保存失败", true); }
     }
-    settingsDialog.close(); checkApiStatus(); toast(geminiKey ? "Gemini 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "将使用服务器环境中的 Image2 API Key"));
+    if (runningHubKey) {
+      try { await requestJson("/api/providers/runninghub", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: runningHubKey }) }, 10_000); }
+      catch (error) { return toast(error.message || "RunningHub 密钥保存失败", true); }
+    }
+    settingsDialog.close(); checkApiStatus(); toast(runningHubKey ? "RunningHub 密钥已安全保存" : geminiKey ? "Gemini 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "将使用服务器环境中的 Image2 API Key"));
   });
   $("#projectName").addEventListener("click", () => { const next = window.prompt("项目名称", state.projectName)?.trim(); if (!next || next === state.projectName) return; recordHistory(); state.projectName = next; renderWorkspace(); scheduleSave(); });
   $("#closeDialogueScriptButton").addEventListener("click", closeStoryDialogue);
@@ -2531,7 +2643,7 @@ $("#downloadDialogueTextButton").addEventListener("click", downloadDialogueText)
   window.addEventListener("resize", () => { if (dialogueScriptDialog.open) applyDialoguePanelLayout(); });
 $("#dialogueSpeechInput").addEventListener("keydown", event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); addDialogueSpeech(); } });
 dialogueScriptDialog.addEventListener("cancel", event => { event.preventDefault(); closeStoryDialogue(); });
-dialogueScriptDialog.addEventListener("click", event => event.stopPropagation());$("#previewCloseButton").addEventListener("click", () => previewDialog.close());
+dialogueScriptDialog.addEventListener("click", event => event.stopPropagation());$("#previewCloseButton").addEventListener("click", () => { previewVideo.pause(); previewVideo.removeAttribute("src"); previewDialog.close(); });
   $("#closeCropButton").addEventListener("click", closeCropDialog);
   $("#cancelCropButton").addEventListener("click", closeCropDialog);
   $("#confirmCropButton").addEventListener("click", confirmCrop);
@@ -2542,7 +2654,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   cropCanvas.addEventListener("pointercancel", endCropSelection);
   cropDialog.addEventListener("cancel", event => { event.preventDefault(); closeCropDialog(); });
   cropDialog.addEventListener("click", event => { if (event.target === cropDialog) closeCropDialog(); });
-  previewDialog.addEventListener("click", event => { if (event.target === previewDialog) previewDialog.close(); });
+  previewDialog.addEventListener("click", event => { if (event.target === previewDialog) { previewVideo.pause(); previewVideo.removeAttribute("src"); previewDialog.close(); } });
   $("#mobileLibraryButton").addEventListener("click", () => $("#libraryPanel").classList.toggle("is-open"));
   $("#mobileInspectorButton").addEventListener("click", () => $("#inspectorPanel").classList.toggle("is-open"));
   $("#closeInspectorButton").addEventListener("click", () => $("#inspectorPanel").classList.remove("is-open"));

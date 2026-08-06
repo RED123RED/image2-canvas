@@ -16,6 +16,9 @@ const port = Number(process.env.PORT || 45173);
 const baseUrl = (process.env.IMAGE2_BASE_URL || "https://rehdasu.cn/v1").replace(/\/$/, "");
 const model = process.env.IMAGE2_MODEL || "gpt-image-2";
 const geminiBaseUrl = (process.env.GEMINI_MOYU_BASE_URL || "https://www.moyu.info").replace(/\/$/, "");
+const runningHubBaseUrl = (process.env.RUNNINGHUB_BASE_URL || "https://www.runninghub.cn").replace(/\/$/, "");
+const runningHubWorkflowId = "2084196829952045057";
+const runningHubInstanceType = process.env.RUNNINGHUB_INSTANCE_TYPE === "default" ? "default" : "plus";
 const geminiImageModels = Object.freeze([
   "gemini-3-pro-image-preview",
   "gemini-3.1-flash-image-preview"
@@ -57,7 +60,10 @@ const mimeTypes = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime"
 };
 
 function sendJson(res, status, payload) {
@@ -182,6 +188,14 @@ async function resolveGeminiApiKey(req) {
   return typeof config?.gemini?.apiKey === "string" ? config.gemini.apiKey.trim() : "";
 }
 
+async function resolveRunningHubApiKey(req) {
+  const explicit = req.headers["x-runninghub-api-key"];
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  if (process.env.RUNNINGHUB_API_KEY) return process.env.RUNNINGHUB_API_KEY.trim();
+  const config = await readProviderConfig();
+  return typeof config?.runninghub?.apiKey === "string" ? config.runninghub.apiKey.trim() : "";
+}
+
 function parseDataUrl(dataUrl, index) {
   const match = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl || "");
   if (!match) throw new Error(`第 ${index + 1} 张参考图格式无效`);
@@ -231,9 +245,17 @@ function classifyError(error) {
 }
 
 function extensionForMime(mime = "") {
+  if (mime.includes("mp4")) return "mp4";
+  if (mime.includes("webm")) return "webm";
+  if (mime.includes("quicktime")) return "mov";
   if (mime.includes("webp")) return "webp";
   if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
   return "png";
+}
+
+function extensionForOutputType(outputType = "") {
+  const value = String(outputType || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  return ["mp4", "webm", "mov", "png", "jpg", "jpeg", "webp", "gif"].includes(value) ? value : "bin";
 }
 
 async function fetchResultImage(url) {
@@ -243,6 +265,21 @@ async function fetchResultImage(url) {
       const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
       if (!response.ok) throw gatewayError(response.status, "生成成功，但读取返回图片失败");
       return { buffer: Buffer.from(await response.arrayBuffer()), mime: response.headers.get("content-type") || "image/png" };
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function fetchRemoteFile(url, fallbackMime = "application/octet-stream") {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
+      if (!response.ok) throw gatewayError(response.status, "生成成功，但读取返回文件失败");
+      return { buffer: Buffer.from(await response.arrayBuffer()), mime: response.headers.get("content-type") || fallbackMime };
     } catch (error) {
       lastError = error;
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
@@ -261,6 +298,18 @@ async function persistGeneratedImage(job, item, index) {
   const filename = `${job.id}-${index + 1}.${extension}`;
   await fs.writeFile(path.join(generatedDir, filename), image.buffer);
   return { url: `/api/generated/${filename}`, revisedPrompt: item.revised_prompt || "" };
+}
+
+async function persistGeneratedMedia(job, item, index) {
+  const outputType = extensionForOutputType(item?.outputType);
+  const file = item?.b64_json
+    ? { buffer: Buffer.from(item.b64_json, "base64"), mime: mimeTypes[`.${outputType}`] || "application/octet-stream" }
+    : item?.url ? await fetchRemoteFile(item.url, mimeTypes[`.${outputType}`] || "application/octet-stream") : null;
+  if (!file?.buffer?.length) throw new Error("RunningHub 返回的媒体文件为空");
+  const extension = outputType !== "bin" ? outputType : extensionForMime(file.mime);
+  const filename = `${job.id}-${index + 1}.${extension}`;
+  await fs.writeFile(path.join(generatedDir, filename), file.buffer);
+  return { url: `/api/generated/${filename}`, outputType: extension, nodeId: item?.nodeId || "", text: item?.text || "" };
 }
 
 async function requestImage2Generation(job) {
@@ -334,14 +383,58 @@ async function requestGeminiGeneration(job) {
   throw lastError || gatewayError(502, "魔芋图像接口请求失败");
 }
 
+function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
+  return { nodeId, fieldName, fieldValue: String(fieldValue ?? "") };
+}
+
+async function requestRunningHubGeneration(job) {
+  const { apiKey, prompt, width, height, seconds } = job.request;
+  const nodeInfoList = [
+    runningHubNodeInfo("59", "value", prompt),
+    runningHubNodeInfo("46", "value", width),
+    runningHubNodeInfo("78", "value", height),
+    runningHubNodeInfo("14", "value", seconds)
+  ];
+  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
+  const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${runningHubWorkflowId}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ addMetadata: true, nodeInfoList, instanceType: runningHubInstanceType, usePersonalQueue: false }),
+    signal: AbortSignal.timeout(60_000)
+  });
+  const submitRaw = await submitResponse.text();
+  let submitted;
+  try { submitted = JSON.parse(submitRaw); } catch { submitted = {}; }
+  if (!submitResponse.ok || !submitted?.taskId) throw gatewayError(submitResponse.status || 502, submitted?.errorMessage || submitted?.message || "RunningHub 工作流提交失败");
+  const startedAt = Date.now();
+  let lastStatus = submitted;
+  while (Date.now() - startedAt < 45 * 60_000) {
+    const response = await fetch(`${runningHubBaseUrl}/openapi/v2/query`, { method: "POST", headers, body: JSON.stringify({ taskId: submitted.taskId }), signal: AbortSignal.timeout(60_000) });
+    const raw = await response.text();
+    let status;
+    try { status = JSON.parse(raw); } catch { status = {}; }
+    if (!response.ok) throw gatewayError(response.status, status?.errorMessage || status?.message || "RunningHub 任务查询失败");
+    lastStatus = status;
+    if (status.status === "SUCCESS") {
+      const results = Array.isArray(status.results) ? status.results.filter(item => item?.url || item?.text) : [];
+      if (!results.length) throw gatewayError(502, "RunningHub 任务成功但没有可下载结果");
+      return { items: results, mode: "workflow", mediaType: "video", taskId: submitted.taskId };
+    }
+    if (status.status === "FAILED") throw gatewayError(502, status.errorMessage || status.failedReason?.message || `RunningHub 任务失败 (${status.errorCode || "UNKNOWN"})`);
+    await new Promise(resolve => setTimeout(resolve, 5_000));
+  }
+  throw gatewayError(504, `RunningHub 任务等待超时 (${lastStatus?.taskId || submitted.taskId})`);
+}
+
 async function executeJob(job) {
   job.status = "running";
   job.startedAt = Date.now();
   await persistJobs();
   await writeJobLog(job, "started");
   try {
-    const result = ["gemini", "moyu"].includes(job.provider) ? await requestGeminiGeneration(job) : await requestImage2Generation(job);
-    job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
+    const result = job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : ["gemini", "moyu"].includes(job.provider) ? await requestGeminiGeneration(job) : await requestImage2Generation(job);
+    if (result.mediaType === "video") job.media = await Promise.all(result.items.map((item, index) => persistGeneratedMedia(job, item, index)));
+    else job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
     job.status = "succeeded";
     job.mode = result.mode;
     job.referencesUsed = result.referencesUsed;
@@ -375,7 +468,8 @@ async function drainJobs() {
 async function createJob(req, res) {
   try {
     const body = await readJson(req);
-    const provider = body.provider === "gemini" ? "gemini" : body.provider === "moyu" ? "moyu" : "image2";
+    const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "gemini" ? "gemini" : body.provider === "moyu" ? "moyu" : "image2";
+    if (provider === "runninghub-h3") return createRunningHubJob(req, res, body);
     const usesMoyu = ["gemini", "moyu"].includes(provider);
     if (usesMoyu && body.model && !moyuImageModels.includes(String(body.model))) return sendJson(res, 400, { error: "不支持的魔芋图像模型" });
     const apiKey = usesMoyu ? await resolveGeminiApiKey(req) : await resolveApiKey(req);
@@ -403,6 +497,23 @@ async function createJob(req, res) {
   } catch (error) {
     const failure = classifyError(error);
     sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
+  }
+}
+
+async function createRunningHubJob(req, res, body) {
+  try {
+    const apiKey = await resolveRunningHubApiKey(req);
+    if (!apiKey) return sendJson(res, 401, { error: "未配置 RunningHub API Key，请在设置中保存密钥" });
+    const prompt = String(body.prompt || "").trim();
+    if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
+    if (Array.isArray(body.references) && body.references.length) return sendJson(res, 400, { error: "当前 H3 API 工作流未暴露参考素材输入，请先使用纯提示词模式" });
+    const width = Math.min(4096, Math.max(32, Number(body.width) || 1376));
+    const height = Math.min(4096, Math.max(32, Number(body.height) || 768));
+    const seconds = Math.min(15, Math.max(3, Math.round(Number(body.seconds) || 6)));
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${runningHubWorkflowId}`, mediaType: "video", imageCount: 1, request: { apiKey, prompt, width, height, seconds } };
+    jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
+  } catch (error) {
+    const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
   }
 }
 
@@ -451,6 +562,19 @@ async function saveGeminiProvider(req, res) {
   }
 }
 
+async function saveRunningHubProvider(req, res) {
+  try {
+    const body = await readJson(req, 64 * 1024);
+    const apiKey = String(body.apiKey || "").trim();
+    if (!apiKey) return sendJson(res, 400, { error: "RunningHub API Key 不能为空" });
+    const previous = await readProviderConfig();
+    await saveProviderConfig({ ...previous, runninghub: { ...(previous.runninghub || {}), apiKey, baseUrl: runningHubBaseUrl, workflowId: runningHubWorkflowId, updatedAt: Date.now() } });
+    return sendJson(res, 200, { ready: true, provider: "runninghub-h3", workflowId: runningHubWorkflowId, baseUrl: runningHubBaseUrl });
+  } catch (error) {
+    return sendJson(res, 400, { error: error?.message || "RunningHub 设置保存失败" });
+  }
+}
+
 async function restartLocalService(req, res) {
   await persistJobs();
   sendJson(res, 202, { restarting: true, message: "本机生图服务正在恢复" });
@@ -482,7 +606,7 @@ async function serveStoredImage(res, directory, filename) {
     res.writeHead(200, { "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "image/png", "Cache-Control": "private, max-age=3600" });
     res.end(data);
   } catch {
-    sendJson(res, 404, { error: "图片文件不存在" });
+    sendJson(res, 404, { error: "媒体文件不存在" });
   }
 }
 async function serveGenerated(res, filename) { return serveStoredImage(res, generatedDir, filename); }
@@ -543,11 +667,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/status") {
     const key = await resolveApiKey(req);
     const geminiKey = await resolveGeminiApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl }, jobs: jobs.size });
+    const runningHubKey = await resolveRunningHubApiKey(req);
+    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/gemini/health") return checkGeminiGateway(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/gemini") return saveGeminiProvider(req, res);
+  if (req.method === "POST" && url.pathname === "/api/providers/runninghub") return saveRunningHubProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/restart") return restartLocalService(req, res);
   if (req.method === "POST" && url.pathname === "/api/assets") return storeAsset(req, res);
   if (req.method === "POST" && url.pathname === "/api/generate") return createJob(req, res);
