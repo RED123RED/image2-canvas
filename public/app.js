@@ -43,7 +43,7 @@ function runningHubVideoDimensions(node) {
 }
 function normalizeRunningHubVideo(node) {
   const inputSlots = Math.min(4, Math.max(1, Number(node?.inputSlots) || 4));
-  const next = { ...node, mediaType: "video", provider: "runninghub-h3", videoAspect: runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9", videoQuality: runningHubVideoQualityOptions.some(item => item.value === node?.videoQuality) ? node.videoQuality : "standard", videoSeconds: Math.min(15, Math.max(3, Math.round(Number(node?.videoSeconds) || 6))), promptSlots: 1, inputSlots, width: Math.max(360, Number(node?.width) || 390) };
+  const next = { ...node, mediaType: "video", provider: "runninghub-h3", x: Number.isFinite(Number(node?.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node?.y)) ? Number(node.y) : 0, videoAspect: runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9", videoQuality: runningHubVideoQualityOptions.some(item => item.value === node?.videoQuality) ? node.videoQuality : "standard", videoSeconds: Math.min(15, Math.max(3, Math.round(Number(node?.videoSeconds) || 6))), promptSlots: 1, inputSlots, width: Math.max(360, Number(node?.width) || 390) };
   next.height = Math.max(Number(node?.height) || 0, nodeHeight("video-generator", inputSlots, 1));
   next.status = node?.activeJobId ? "running" : "idle";
   return next;
@@ -361,7 +361,7 @@ function createGeneratorNode(x, y) {
   return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createVideoNode(x, y) {
-  return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 4, width: 390, height: nodeHeight("video-generator", 4, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
+  return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 4, width: 390, height: nodeHeight("video-generator", 4, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createAnswerNode(x, y) {
   return { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, height: nodeHeight("answer", 4, 1), model: "gpt-5.6", status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
@@ -1698,7 +1698,7 @@ function renderNodeHtml(node) {
 }
 function nodeHeaderHtml(node, iconName, actions = "", showMenu = true, dragHandle = false) {
   const menu = showMenu ? `<button class="icon-button node-menu node-interactive" type="button" data-node-menu="${node.id}" aria-label="打开节点属性">${icon("ellipsis")}</button>` : "";
-  return `<header class="node-header${dragHandle ? " node-drag-handle" : ""}"${dragHandle ? ` data-node-drag-handle="${node.id}"` : ""}><div class="node-header-title"><span class="node-type-icon">${icon(iconName)}</span><strong>${escapeHtml(node.name)}</strong></div><div class="node-header-actions">${actions}${menu}</div></header>`;
+  return `<header class="node-header${dragHandle ? " node-drag-handle" : ""}"${dragHandle ? ` data-node-drag-handle="${node.id}" data-node-id="${node.id}"` : ""}><div class="node-header-title"><span class="node-type-icon">${icon(iconName)}</span><strong>${escapeHtml(node.name)}</strong></div><div class="node-header-actions">${actions}${menu}</div></header>`;
 }
 function portHtml(node, portId, dataType, direction, label, top) {
   return `<span class="node-port-wrap ${direction}" style="top:${top}px"><button class="node-port ${dataType}" type="button" data-node-id="${node.id}" data-port-id="${portId}" data-data-type="${dataType}" data-direction="${direction}" aria-label="${escapeHtml(label)}"></button></span>`;
@@ -1815,7 +1815,7 @@ function renderAnswerNodeHtml(node, selected, style) {
 
 function bindNodeEvents() {
   $$(".canvas-node").forEach(element => element.addEventListener("pointerdown", handleNodePointerDown));
-  $$('[data-node-drag-handle]').forEach(handle => handle.addEventListener("pointerdown", event => { if (event.target.closest(".node-interactive, .node-port")) return; event.stopPropagation(); handleNodePointerDown(event); }));
+  $$('[data-node-drag-handle]').forEach(handle => handle.addEventListener("pointerdown", event => { if (event.target.closest(".node-interactive, .node-port")) return; event.preventDefault(); event.stopPropagation(); startNodeDrag(event, handle.dataset.nodeDragHandle); }));
   $$('[data-node-resize]').forEach(handle => handle.addEventListener("pointerdown", startResize));
   $$('[data-download-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.downloadNode); if (node) downloadNode(node); }));
   $$('[data-crop-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); openCropDialog(button.dataset.cropNode); }));
@@ -1939,7 +1939,9 @@ function finishSelectionBox() {
 }
 function handleNodePointerDown(event) {
   if (event.target.closest(".node-interactive, .node-port")) return;
-  const nodeId = event.currentTarget.dataset.nodeId;
+  startNodeDrag(event, event.currentTarget.dataset.nodeId);
+}
+function startNodeDrag(event, nodeId) {
   const node = findNode(nodeId);
   if (!node) return;
   if (state.tool === "hand" || spacePressed || event.button === 1) return startPan(event);
