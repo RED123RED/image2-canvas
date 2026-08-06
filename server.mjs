@@ -33,6 +33,13 @@ function normalizeMoyuModel(value) {
 function moyuReferenceLimit(modelName) {
   return seedreamImageModels.includes(String(modelName || "")) ? 6 : 14;
 }
+function normalizeMoyuOutputSize(modelName, value) {
+  const modelId = String(modelName || "");
+  if (modelId === "gemini-3-pro-image-preview") return ["1K", "2K", "4K"].includes(value) ? value : "4K";
+  if (modelId === "gemini-3.1-flash-image-preview") return "1K";
+  if (seedreamImageModels.includes(modelId)) return "2K";
+  return "1K";
+}
 const providerConfigDir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "image2-canvas");
 const providerConfigPath = path.join(providerConfigDir, "providers.json");
 const jobs = new Map();
@@ -288,10 +295,11 @@ async function requestImage2Generation(job) {
 }
 
 async function requestGeminiGeneration(job) {
-  const { apiKey, prompt, size, n, references } = job.request;
+  const { apiKey, prompt, size, outputSize, n, references } = job.request;
   const modelName = normalizeMoyuModel(job.model);
   const selectedReferences = references.slice(0, moyuReferenceLimit(modelName));
   const payload = { model: modelName, prompt, size, n };
+  if (job.provider === "gemini") payload.quality = normalizeMoyuOutputSize(modelName, outputSize);
   if (job.provider === "moyu") payload.watermark = false;
   // The gateway accepts one reference as a string and multiple references as an array.
   if (selectedReferences.length === 1) payload.image = selectedReferences[0];
@@ -380,11 +388,12 @@ async function createJob(req, res) {
       : provider === "gemini"
         ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1")
         : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
+    const selectedModel = usesMoyu ? normalizeMoyuModel(body.model) : model;
+    const outputSize = usesMoyu ? normalizeMoyuOutputSize(selectedModel, String(body.outputSize || "")) : "current";
     const n = Math.min(4, Math.max(1, Number(body.n) || 1));
     const maxReferences = provider === "moyu" || provider === "gemini" ? 14 : 8;
     const references = Array.isArray(body.references) ? body.references.slice(0, maxReferences) : [];
-    const selectedModel = usesMoyu ? normalizeMoyuModel(body.model) : model;
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, n, references } };
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, outputSize, n, references } };
     jobs.set(job.id, job);
     pendingJobIds.push(job.id);
     await persistJobs();
