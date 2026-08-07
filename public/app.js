@@ -683,6 +683,14 @@ function setTheme(theme) {
   applyTheme(theme);
 }
 function formatDate(timestamp) { return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp)); }
+function formatGenerationDuration(durationMs) {
+  const milliseconds = Number(durationMs);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "";
+  const totalSeconds = Math.round(milliseconds / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes ? `${minutes}分${String(seconds).padStart(2, "0")}秒` : `${seconds}秒`;
+}
 function renderHome() {
   $("#homeView").hidden = false;
   $("#workspaceView").hidden = true;
@@ -1807,11 +1815,15 @@ function renderGeneratorNodeHtml(node, selected, style) {
 }
 function renderVideoNodeHtml(node, selected, style) {
   const hasSource = Boolean(node.src);
+  const generationDuration = formatGenerationDuration(node.generationDurationMs);
   const actions = hasSource ? `<button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载视频" data-tooltip="下载视频">${icon("download")}</button>` : "";
   const preview = hasSource
     ? `<video class="video-preview node-interactive" data-preview-video="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" controls preload="metadata"></video>`
     : `<div class="loading-preview">${icon("video")}<span>视频结果不可用</span></div>`;
-  return `<article class="canvas-node image-node video-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", actions)}<div class="node-body">${preview}<div class="image-node-meta"><strong>${escapeHtml(node.source || "海螺 H3 视频")}</strong><span>${escapeHtml(node.outputType || "mp4")}</span></div></div></div>${resizeHandleHtml(node)}${portHtml(node, "result", "video", "input", "Result", 70)}${portHtml(node, "video", "video", "output", "Video", 70)}</article>`;
+  const resultMeta = generationDuration
+    ? `<span class="video-result-meta"><span>${escapeHtml(node.outputType || "mp4")}</span><span class="video-generation-time" title="包含云端排队、生成、回传和本地保存">生成耗时 ${escapeHtml(generationDuration)}</span></span>`
+    : `<span>${escapeHtml(node.outputType || "mp4")}</span>`;
+  return `<article class="canvas-node image-node video-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", actions)}<div class="node-body">${preview}<div class="image-node-meta"><strong>${escapeHtml(node.source || "海螺 H3 视频")}</strong>${resultMeta}</div></div></div>${resizeHandleHtml(node)}${portHtml(node, "result", "video", "input", "Result", 70)}${portHtml(node, "video", "video", "output", "Video", 70)}</article>`;
 }
 function renderVideoGeneratorNodeHtml(node, selected, style) {
   const dimensions = runningHubVideoDimensions(node);
@@ -2322,12 +2334,15 @@ function finishGenerationJob(generatorId, job) {
   if (job.status === "succeeded") {
     const createdIds = [];
     const isVideo = generator.mediaType === "video" || job.provider === "runninghub-h3";
+    const generationDurationMs = Number.isFinite(Number(job.durationMs))
+      ? Number(job.durationMs)
+      : Math.max(0, Number(job.finishedAt || 0) - Number(job.startedAt || 0));
     const outputs = isVideo ? (job.media || []) : (job.images || []);
     outputs.forEach((image, index) => {
       const placeholder = placeholders[index];
       if (!placeholder) return;
       const node = findNode(placeholder.id);
-      Object.assign(node, { type: isVideo ? "video" : "image", mediaType: isVideo ? "video" : "image", generationJobId: undefined, name: `${modelLabel} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, model: job.model || provider.model, modelLabel, outputType: image.outputType || (isVideo ? "mp4" : "png"), generated: true, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
+      Object.assign(node, { type: isVideo ? "video" : "image", mediaType: isVideo ? "video" : "image", generationJobId: undefined, name: `${modelLabel} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, model: job.model || provider.model, modelLabel, outputType: image.outputType || (isVideo ? "mp4" : "png"), generationDurationMs: isVideo ? generationDurationMs : undefined, generated: true, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
       createdIds.push(node.id);
     });
     const unused = placeholders.filter(node => !createdIds.includes(node.id));

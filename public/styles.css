@@ -492,6 +492,9 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .video-reference-note { margin: 7px 0 9px; color: var(--muted); font-size: 8px; line-height: 1.45; }
 .image-node-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; color: var(--muted); font-size: 9px; }
 .image-node-meta strong { max-width: 72%; overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+.video-node .image-node-meta strong { max-width: 44%; }
+.video-result-meta { display: inline-flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 5px; white-space: nowrap; }
+.video-generation-time { color: var(--accent); font-variant-numeric: tabular-nums; }
 .generator-body { padding: 10px 12px; }
 .node-field-row { gap: 7px; margin-bottom: 8px; }
 .node-field { min-width: 0; flex: 1; }
