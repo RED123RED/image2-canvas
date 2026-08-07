@@ -328,6 +328,7 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
   background-color: var(--canvas);
   background-image: radial-gradient(circle, var(--canvas-dot) 1px, transparent 1px);
   background-size: 20px 20px;
+  cursor: grab;
   touch-action: none;
 }
 .workspace.is-panning { cursor: grabbing; }
@@ -426,7 +427,7 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .workspace.is-flow-interacting .edge-hit { pointer-events: none; }
 .edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; vector-effect: non-scaling-stroke; }
 
-.canvas-node { position: absolute; overflow: visible; user-select: none; }
+.canvas-node { position: absolute; overflow: visible; cursor: move; user-select: none; }
 .canvas-node.is-dragging { will-change: transform; }
 .canvas-node.is-dragging .image-preview { backface-visibility: hidden; }
 .canvas-node.is-selected > .node-card, .canvas-node.is-selected > .frame-body { outline: 2px solid var(--blue); outline-offset: 3px; }

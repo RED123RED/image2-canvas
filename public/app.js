@@ -2698,9 +2698,11 @@ function bindStaticEvents() {
     closeConnectionMenu();
     if (state?.flowMode === "script") return;
     if (event.target.closest(".flow-switch, .tool-rail, .canvas-status, .mobile-panel-button")) return;
-    if (state.tool === "hand" || spacePressed || event.button === 1) return startPan(event);
     if (event.target.closest(".canvas-node, .node-port, .node-interactive")) return;
-    beginSelectionBox(event);
+    if (event.button === 2) return;
+    // Left-drag pans the empty canvas; Shift keeps the existing box-selection workflow available.
+    if (event.shiftKey && state.tool !== "hand" && !spacePressed && event.button === 0) return beginSelectionBox(event);
+    if (state.tool === "hand" || spacePressed || [0, 1].includes(event.button)) return startPan(event);
   });
   workspace.addEventListener("wheel", event => { if (state?.flowMode === "script") return handleScriptWheel(event); handleWheel(event); }, { passive: false });
   scriptEdgeLayer.addEventListener("pointerdown", event => {
@@ -2816,7 +2818,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   workspace.addEventListener("drop", async event => { event.preventDefault(); if (state?.flowMode === "script") return; if (event.dataTransfer.files.length) await importImages(event.dataTransfer.files); });
   $$("#scriptToolRail [data-script-quick]").forEach(button => button.addEventListener("click", () => { const action = button.dataset.scriptQuick; if (action === "select" || action === "hand") return setActiveTool(action); if (action === "male") return addScriptCharacter("male-1"); if (action === "female") return addScriptCharacter("female-1"); if (action === "story") return addStoryCard(); if (action === "emotion") return addEmotionBoard(); if (action === "character-arc") return addCharacterArc(); if (action === "character-goal") return addCharacterGoal(); if (action === "ai-assistant") return addScriptAssistant(); if (action === "note") return addScriptNote(); if (action === "frame") return addScriptFrame(); }));  $("#libraryResizer").addEventListener("pointerdown", event => startPanelResize(event, "library"));
   $("#inspectorResizer").addEventListener("pointerdown", event => startPanelResize(event, "inspector"));
-  scriptFlowStage.addEventListener("pointerdown", event => { if (!state || state.flowMode !== "script") return; if (event.target.closest(".script-character-node, .script-note-card, .flow-switch, .canvas-status")) return; if (state.tool === "hand" || spacePressed || event.button === 1) return startScriptPan(event); startScriptSelection(event); });
+  scriptFlowStage.addEventListener("pointerdown", event => { if (!state || state.flowMode !== "script") return; if (event.target.closest(".script-character-node, .script-note-card, .flow-switch, .canvas-status")) return; if (event.button === 2) return; if (event.shiftKey && state.tool !== "hand" && !spacePressed && event.button === 0) return startScriptSelection(event); if (state.tool === "hand" || spacePressed || [0, 1].includes(event.button)) return startScriptPan(event); });
 }
 async function init() { bindStaticEvents(); await loadProjectMetas(); renderHome(); await checkApiStatus(); }
 init();
