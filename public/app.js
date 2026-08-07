@@ -1991,8 +1991,11 @@ function sceneCenter() { const rect = workspace.getBoundingClientRect(); return 
 function workspacePoint(clientX, clientY) { const rect = workspace.getBoundingClientRect(); return { x: clientX - rect.left, y: clientY - rect.top }; }
 function rectFromScenePoints(a, b) { return { left: Math.min(a.x, b.x), top: Math.min(a.y, b.y), right: Math.max(a.x, b.x), bottom: Math.max(a.y, b.y) }; }
 function rectIntersectsNode(rect, node) { return node.x < rect.right && node.x + node.width > rect.left && node.y < rect.bottom && node.y + node.height > rect.top; }
+function clearNativeTextSelection() { window.getSelection?.()?.removeAllRanges(); }
+function allowsCanvasTextSelection(target) { const element = target instanceof Element ? target : target?.parentElement; return Boolean(element?.closest("input, textarea, [contenteditable=true], .answer-response")); }
 function beginSelectionBox(event) {
   if (!state || event.button !== 0) return;
+  event.preventDefault(); event.stopPropagation(); clearNativeTextSelection();
   selectionSession = { additive: event.shiftKey, moved: false, startScene: screenToScene(event.clientX, event.clientY), startWorkspace: workspacePoint(event.clientX, event.clientY), currentScene: null, currentWorkspace: null, before: [...state.selectedIds] };
   selectedEdgeId = null;
   renderEdges(); renderInspector();
@@ -2030,6 +2033,7 @@ function finishSelectionBox() {
   if (session.moved) state.selectedIds = session.additive ? [...new Set([...session.before, ...hitIds])] : hitIds;
   else if (!session.additive) state.selectedIds = [];
   selectedEdgeId = null;
+  clearNativeTextSelection();
   renderCanvasSelection(); renderEdges(); renderLibrary(); renderInspector();
 }
 function handleNodePointerDown(event) {
@@ -2040,7 +2044,7 @@ function startNodeDrag(event, nodeId) {
   const node = findNode(nodeId);
   if (!node) return;
   if (state.tool === "hand" || spacePressed || event.button === 1) return startPan(event);
-  event.stopPropagation();
+  event.preventDefault(); event.stopPropagation(); clearNativeTextSelection();
   const alreadySelected = state.selectedIds.includes(nodeId);
   if (event.shiftKey) selectNode(nodeId, true);
   else if (!alreadySelected || state.selectedIds.length <= 1) selectNode(nodeId, false);
@@ -2064,7 +2068,7 @@ function startResize(event) {
   selectNode(node.id); const point = screenToScene(event.clientX, event.clientY); const corner = event.currentTarget.dataset.nodeResizeCorner || "se"; resizeSession = { nodeId: node.id, corner, start: point, moved: false, before: snapshot(), origin: { x: node.x, y: node.y, width: node.width, height: node.height }, element: nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`) };
   workspace.classList.add("is-flow-interacting"); if (resizeSession.element) resizeSession.element.style.willChange = "width, height";
 }
-function startPan(event) { event.preventDefault(); panSession = { clientX: event.clientX, clientY: event.clientY, x: state.viewport.x, y: state.viewport.y, moved: false, clearSelectionOnClick: event.button === 0 && state.tool !== "hand" && !spacePressed }; workspace.classList.add("is-panning", "is-flow-interacting"); }
+function startPan(event) { event.preventDefault(); clearNativeTextSelection(); panSession = { clientX: event.clientX, clientY: event.clientY, x: state.viewport.x, y: state.viewport.y, moved: false, clearSelectionOnClick: event.button === 0 && state.tool !== "hand" && !spacePressed }; workspace.classList.add("is-panning", "is-flow-interacting"); }
 function startConnection(event) {
   closeConnectionMenu();
   event.stopPropagation(); event.preventDefault(); const port = event.currentTarget;
@@ -2704,6 +2708,7 @@ function bindStaticEvents() {
     if (event.shiftKey && state.tool !== "hand" && !spacePressed && event.button === 0) return beginSelectionBox(event);
     if (state.tool === "hand" || spacePressed || [0, 1].includes(event.button)) return startPan(event);
   });
+  workspace.addEventListener("selectstart", event => { if (!allowsCanvasTextSelection(event.target)) event.preventDefault(); });
   workspace.addEventListener("wheel", event => { if (state?.flowMode === "script") return handleScriptWheel(event); handleWheel(event); }, { passive: false });
   scriptEdgeLayer.addEventListener("pointerdown", event => {
     const path = event.target.closest("[data-script-edge]"); if (!path) return;
