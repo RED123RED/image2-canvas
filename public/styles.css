@@ -493,7 +493,7 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .image-node-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; color: var(--muted); font-size: 9px; }
 .image-node-meta strong { max-width: 72%; overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
 .video-node .image-node-meta strong { max-width: 44%; }
-.video-result-meta { display: inline-flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 5px; white-space: nowrap; }
+.video-result-meta { display: inline-flex; min-width: 0; flex-direction: column; align-items: flex-end; justify-content: center; gap: 2px; white-space: nowrap; }
 .video-generation-time { color: var(--accent); font-variant-numeric: tabular-nums; }
 .generator-body { padding: 10px 12px; }
 .node-field-row { gap: 7px; margin-bottom: 8px; }
@@ -547,6 +547,9 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .loading-node .node-card { background: var(--surface-soft); }
 .loading-preview { display: grid; height: 218px; place-items: center; color: var(--muted); font-size: 10px; }
 .loading-preview svg { width: 20px; height: 20px; animation: spin 1s linear infinite; }
+.video-loading-preview > div { display: grid; justify-items: center; gap: 7px; }
+.video-loading-preview strong { color: var(--ink); font-size: 16px; font-variant-numeric: tabular-nums; }
+.video-loading-preview small { color: var(--muted); font-size: 9px; }
 .connection-menu { position: fixed; z-index: 2000; width: 276px; max-height: 382px; overflow: hidden; padding: 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: color-mix(in srgb, var(--surface-raised) 94%, transparent); box-shadow: 0 18px 44px rgba(0,0,0,.22); backdrop-filter: blur(14px); }
 .connection-menu-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 3px 4px 8px; border-bottom: 1px solid var(--line); }
 .connection-menu-title span { color: var(--ink); font-size: 12px; font-weight: 800; }

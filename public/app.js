@@ -213,6 +213,7 @@ const WORKFLOW_ZOOM_MAX = 5;
 const SCRIPT_ZOOM_MIN = 0.05;
 const SCRIPT_ZOOM_MAX = 5;
 const generationPollFailures = new Map();
+let generationElapsedClock = null;
 let apiKey = "";
 let runningHubApiKey = "";
 let isGenerating = false;
@@ -690,6 +691,40 @@ function formatGenerationDuration(durationMs) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return minutes ? `${minutes}分${String(seconds).padStart(2, "0")}秒` : `${seconds}秒`;
+}
+function runningHubGenerationStageLabel(stage) {
+  if (stage === "上传参考图") return "正在上传参考图";
+  if (stage === "提交工作流") return "正在提交工作流";
+  if (stage === "查询任务") return "RunningHub 正在生成";
+  return "正在准备任务";
+}
+function videoResultProfileLabel(node) {
+  if (!node) return "";
+  const model = String(node.model || "");
+  const quality = ["standard", "clear"].includes(node.videoQuality)
+    ? node.videoQuality
+    : model.includes(runningHubFirstFrameProfiles.clear.workflowId) ? "clear"
+      : model.includes(runningHubFirstFrameProfiles.standard.workflowId) ? "standard" : "";
+  if (!quality) return "";
+  const profile = runningHubFirstFrameProfile({ videoQuality: quality });
+  const width = Number(node.videoWidth) || profile.dimensions.width;
+  const height = Number(node.videoHeight) || profile.dimensions.height;
+  return `${profile.label} · ${width} × ${height}`;
+}
+function refreshGenerationElapsedClock() {
+  const elements = $$('[data-generation-elapsed]');
+  if (!elements.length) {
+    if (generationElapsedClock) { clearInterval(generationElapsedClock); generationElapsedClock = null; }
+    return;
+  }
+  elements.forEach(element => {
+    const elapsed = formatGenerationDuration(Date.now() - Number(element.dataset.generationElapsed || 0)) || "0秒";
+    element.textContent = `已等待 ${elapsed}`;
+  });
+}
+function syncGenerationElapsedClock() {
+  refreshGenerationElapsedClock();
+  if (!generationElapsedClock && $$('[data-generation-elapsed]').length) generationElapsedClock = setInterval(refreshGenerationElapsedClock, 1000);
 }
 function renderHome() {
   $("#homeView").hidden = false;
@@ -1713,7 +1748,7 @@ function renderEdges() {
 }
 function renderCanvas() {
   const nodes = [...state.nodes].sort((a, b) => { if (a.type === "frame" && b.type !== "frame") return -1; if (b.type === "frame" && a.type !== "frame") return 1; return (a.createdAt || 0) - (b.createdAt || 0); });
-  nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); renderEdges(); bindNodeEvents();
+  nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
 }
 function frameContainedNodes(frame) {
   return state.nodes.filter(item => item.type !== "frame" && item.id !== frame.id && item.x + item.width / 2 >= frame.x && item.x + item.width / 2 <= frame.x + frame.width && item.y + item.height / 2 >= frame.y && item.y + item.height / 2 <= frame.y + frame.height);
@@ -1780,8 +1815,15 @@ function renderImageNodeHtml(node, selected, style) {
   const loading = node.type === "loading";
   const loadingMediaType = loading && node.mediaType === "video" ? "video" : "image";
   const hasSource = Boolean(node.src);
+  const isVideoLoading = loading && loadingMediaType === "video";
+  const elapsed = formatGenerationDuration(Date.now() - Number(node.generationStartedAt || 0)) || "0秒";
+  const loadingStage = runningHubGenerationStageLabel(node.generationStage);
   const actions = loading ? "" : hasSource ? `<button class="icon-button node-interactive" type="button" data-crop-node="${node.id}" aria-label="裁剪参考图" data-tooltip="裁剪参考图">${icon("crop")}</button><button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载图片" data-tooltip="下载图片">${icon("download")}</button>` : `<button class="icon-button node-interactive" type="button" data-upload-node="${node.id}" aria-label="上传图像" data-tooltip="上传图像">${icon("image-plus")}</button>`;
-  const preview = loading ? `<div class="loading-preview">${icon("loader-circle")}<span>${escapeHtml(node.source || "生图")} 生成中</span></div>` : hasSource ? `<img class="image-preview node-interactive" data-preview-node="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}" draggable="false" decoding="async">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`;
+  const preview = loading
+    ? isVideoLoading
+      ? `<div class="loading-preview video-loading-preview"><div>${icon("loader-circle")}<span>${escapeHtml(node.source || "海螺 H3 视频")} 生成中</span><strong data-generation-elapsed="${Number(node.generationStartedAt) || Date.now()}">已等待 ${escapeHtml(elapsed)}</strong><small>${escapeHtml(loadingStage)}</small></div></div>`
+      : `<div class="loading-preview">${icon("loader-circle")}<span>${escapeHtml(node.source || "生图")} 生成中</span></div>`
+    : hasSource ? `<img class="image-preview node-interactive" data-preview-node="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}" draggable="false" decoding="async">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`;
   return `<article class="canvas-node image-node${loading ? " loading-node" : ""}${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, loading ? "loader-circle" : "image", actions)}<div class="node-body">
     ${preview}
     <div class="image-node-meta"><strong>${escapeHtml(node.source || "参考图")}</strong><span>${escapeHtml(node.ratio || (hasSource ? "图片" : "未上传"))}</span></div>
@@ -1816,13 +1858,14 @@ function renderGeneratorNodeHtml(node, selected, style) {
 function renderVideoNodeHtml(node, selected, style) {
   const hasSource = Boolean(node.src);
   const generationDuration = formatGenerationDuration(node.generationDurationMs);
+  const profileLabel = videoResultProfileLabel(node);
   const actions = hasSource ? `<button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载视频" data-tooltip="下载视频">${icon("download")}</button>` : "";
   const preview = hasSource
     ? `<video class="video-preview node-interactive" data-preview-video="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" controls preload="metadata"></video>`
     : `<div class="loading-preview">${icon("video")}<span>视频结果不可用</span></div>`;
   const resultMeta = generationDuration
-    ? `<span class="video-result-meta"><span>${escapeHtml(node.outputType || "mp4")}</span><span class="video-generation-time" title="包含云端排队、生成、回传和本地保存">生成耗时 ${escapeHtml(generationDuration)}</span></span>`
-    : `<span>${escapeHtml(node.outputType || "mp4")}</span>`;
+    ? `<span class="video-result-meta"><span>${escapeHtml(node.outputType || "mp4")}${profileLabel ? ` · ${escapeHtml(profileLabel)}` : ""}</span><span class="video-generation-time" title="包含云端排队、生成、回传和本地保存">生成耗时 ${escapeHtml(generationDuration)}</span></span>`
+    : `<span>${escapeHtml(node.outputType || "mp4")}${profileLabel ? ` · ${escapeHtml(profileLabel)}` : ""}</span>`;
   return `<article class="canvas-node image-node video-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", actions)}<div class="node-body">${preview}<div class="image-node-meta"><strong>${escapeHtml(node.source || "海螺 H3 视频")}</strong>${resultMeta}</div></div></div>${resizeHandleHtml(node)}${portHtml(node, "result", "video", "input", "Result", 70)}${portHtml(node, "video", "video", "output", "Video", 70)}</article>`;
 }
 function renderVideoGeneratorNodeHtml(node, selected, style) {
@@ -2310,15 +2353,18 @@ function removeGenerationPlaceholders(jobId) {
   state.nodes = state.nodes.filter(node => !ids.has(node.id));
   state.edges = state.edges.filter(edge => !ids.has(edge.target));
 }
-function ensureGenerationPlaceholders(generator, jobId, imageCount = generator.batch, modelId = generatorModelForNode(generator)) {
+function ensureGenerationPlaceholders(generator, jobId, imageCount = generator.batch, modelId = generatorModelForNode(generator), generationStartedAt = Date.now()) {
   const existing = state.nodes.filter(node => node.type === "loading" && node.generationJobId === jobId);
-  if (existing.length) return existing;
+  if (existing.length) {
+    existing.forEach(node => { if (!Number.isFinite(Number(node.generationStartedAt))) node.generationStartedAt = Number(generationStartedAt) || Date.now(); });
+    return existing;
+  }
   const isVideo = generator.mediaType === "video" || generator.provider === "runninghub-h3";
   const count = isVideo ? 1 : Math.min(4, Math.max(1, Number(imageCount) || Number(generator.batch) || 1));
   const columns = count > 1 ? 2 : 1;
   const provider = generatorProviderForNode(generator);
   const modelLabel = generatorModelLabel(modelId, provider.label);
-  const placeholders = Array.from({ length: count }, (_, index) => ({ id: uid("result"), type: "loading", mediaType: isVideo ? "video" : "image", generationJobId: jobId, name: `${modelLabel} 结果 ${index + 1}`, x: generator.x + generator.width + 190 + (index % columns) * 310, y: generator.y + Math.floor(index / columns) * 360, width: 270, height: nodeHeight("loading"), source: provider.label, model: modelId, modelLabel, ratio: isVideo ? `${runningHubVideoDimensions(generator).width}:${runningHubVideoDimensions(generator).height}` : generator.aspect, outputType: isVideo ? "mp4" : "png", createdAt: Date.now() + index }));
+  const placeholders = Array.from({ length: count }, (_, index) => ({ id: uid("result"), type: "loading", mediaType: isVideo ? "video" : "image", generationJobId: jobId, generationStartedAt: Number(generationStartedAt) || Date.now(), generationStage: isVideo ? "" : undefined, videoQuality: isVideo ? generator.videoQuality : undefined, name: `${modelLabel} 结果 ${index + 1}`, x: generator.x + generator.width + 190 + (index % columns) * 310, y: generator.y + Math.floor(index / columns) * 360, width: 270, height: nodeHeight("loading"), source: provider.label, model: modelId, modelLabel, ratio: isVideo ? `${runningHubVideoDimensions(generator).width}:${runningHubVideoDimensions(generator).height}` : generator.aspect, outputType: isVideo ? "mp4" : "png", createdAt: Date.now() + index }));
   state.nodes.push(...placeholders);
   placeholders.forEach(node => state.edges.push({ id: uid("edge"), source: generator.id, sourcePort: isVideo ? "video" : "image", target: node.id, targetPort: "result", type: isVideo ? "video" : "image" }));
   return placeholders;
@@ -2326,7 +2372,7 @@ function ensureGenerationPlaceholders(generator, jobId, imageCount = generator.b
 function finishGenerationJob(generatorId, job) {
   const generator = findNode(generatorId);
   if (!generator || generator.activeJobId !== job.id) return;
-  const placeholders = ensureGenerationPlaceholders(generator, job.id, job.imageCount, job.model);
+  const placeholders = ensureGenerationPlaceholders(generator, job.id, job.imageCount, job.model, job.startedAt || job.createdAt);
   const provider = ["gemini", "moyu"].includes(job.provider)
     ? { ...generatorProviders[job.provider], model: job.model || generatorProviders[job.provider].model }
     : generatorProviderForNode(generator);
@@ -2334,6 +2380,7 @@ function finishGenerationJob(generatorId, job) {
   if (job.status === "succeeded") {
     const createdIds = [];
     const isVideo = generator.mediaType === "video" || job.provider === "runninghub-h3";
+    const videoProfile = isVideo ? runningHubFirstFrameProfile({ videoQuality: job.videoQuality || generator.videoQuality }) : null;
     const generationDurationMs = Number.isFinite(Number(job.durationMs))
       ? Number(job.durationMs)
       : Math.max(0, Number(job.finishedAt || 0) - Number(job.startedAt || 0));
@@ -2342,7 +2389,7 @@ function finishGenerationJob(generatorId, job) {
       const placeholder = placeholders[index];
       if (!placeholder) return;
       const node = findNode(placeholder.id);
-      Object.assign(node, { type: isVideo ? "video" : "image", mediaType: isVideo ? "video" : "image", generationJobId: undefined, name: `${modelLabel} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, model: job.model || provider.model, modelLabel, outputType: image.outputType || (isVideo ? "mp4" : "png"), generationDurationMs: isVideo ? generationDurationMs : undefined, generated: true, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
+      Object.assign(node, { type: isVideo ? "video" : "image", mediaType: isVideo ? "video" : "image", generationJobId: undefined, generationStage: undefined, name: `${modelLabel} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, model: job.model || provider.model, modelLabel, outputType: image.outputType || (isVideo ? "mp4" : "png"), videoQuality: isVideo ? videoProfile.quality : undefined, videoWidth: isVideo ? videoProfile.dimensions.width : undefined, videoHeight: isVideo ? videoProfile.dimensions.height : undefined, generationDurationMs: isVideo ? generationDurationMs : undefined, generated: true, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
       createdIds.push(node.id);
     });
     const unused = placeholders.filter(node => !createdIds.includes(node.id));
@@ -2380,8 +2427,11 @@ async function pollGenerationJob(generatorId, jobId) {
     if (job.status === "succeeded" || job.status === "failed") return finishGenerationJob(generatorId, job);
     generationPollFailures.delete(jobId);
     const hadPlaceholders = state.nodes.some(node => node.type === "loading" && node.generationJobId === jobId);
-    ensureGenerationPlaceholders(generator, jobId, job.imageCount, job.model);
-    if (!hadPlaceholders) { renderCanvas(); requestEdgeRender(); renderLibrary(); renderInspector(); refreshIcons(); }
+    const placeholders = ensureGenerationPlaceholders(generator, jobId, job.imageCount, job.model, job.startedAt || job.createdAt);
+    const stage = runningHubGenerationStageLabel(job.runningHub?.stage);
+    const stageChanged = placeholders.some(node => node.mediaType === "video" && node.generationStage !== stage);
+    placeholders.forEach(node => { if (node.mediaType === "video") node.generationStage = stage; });
+    if (!hadPlaceholders || stageChanged) { renderCanvas(); requestEdgeRender(); renderLibrary(); renderInspector(); refreshIcons(); }
   } catch {
     // The local service may be restarting. Preserve task state and back off until it returns.
     const failures = (generationPollFailures.get(jobId) || 0) + 1;
@@ -2424,7 +2474,7 @@ async function runGeneratorNode(nodeId) {
     const job = result.job;
     if (!job?.id) throw new Error("本机服务未返回生成任务");
     generator.activeJobId = job.id;
-    ensureGenerationPlaceholders(generator, job.id, job.imageCount, job.model);
+    ensureGenerationPlaceholders(generator, job.id, job.imageCount, job.model, job.createdAt);
     state.selectedIds = [];
     toast(`${provider.label} 已进入本机任务队列，正在生成 ${job.imageCount} 张图片`);
     renderWorkspace();
@@ -2609,7 +2659,7 @@ async function runVideoGeneratorNode(generator) {
     const references = await Promise.all(referenceSources.map(sourceToDataUrl));
     const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(runningHubApiKey ? { "x-runninghub-api-key": runningHubApiKey } : {}) }, body: JSON.stringify({ provider: "runninghub-h3", prompt, width: dimensions.width, height: dimensions.height, seconds: generator.videoSeconds, videoMode: generator.videoMode, videoQuality: generator.videoQuality, references }) }, 75_000);
     const job = result.job; if (!job?.id) throw new Error("本机服务未返回视频任务");
-    generator.activeJobId = job.id; ensureGenerationPlaceholders(generator, job.id, 1, job.model); state.selectedIds = []; toast(`${runningHubVideoProvider.label} 已进入任务队列，正在生成视频`); renderWorkspace(); scheduleSave(); pollGenerationJob(generator.id, job.id);
+    generator.activeJobId = job.id; ensureGenerationPlaceholders(generator, job.id, 1, job.model, job.createdAt); state.selectedIds = []; toast(`${runningHubVideoProvider.label} 已进入任务队列，正在生成视频`); renderWorkspace(); scheduleSave(); pollGenerationJob(generator.id, job.id);
   } catch (error) { generator.status = "idle"; delete generator.activePrompt; toast(error.message || "视频任务创建失败", true); renderWorkspace(); scheduleSave(); }
   finally { isGenerating = false; updateHistoryButtons(); }
 }
