@@ -388,6 +388,7 @@ function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
 }
 
 const runningHubVideoReferenceNodes = Object.freeze({
+  "text-to-video": [],
   "first-frame": ["60"],
   "last-frame": ["72"],
   "first-last-frame": ["60", "72"],
@@ -539,7 +540,7 @@ async function createRunningHubJob(req, res, body) {
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
     const videoMode = normalizeRunningHubVideoMode(String(body.videoMode || "reference"));
-    const requiredReferences = videoMode === "first-last-frame" ? 2 : 1;
+    const requiredReferences = videoMode === "first-last-frame" ? 2 : videoMode === "text-to-video" ? 0 : 1;
     const maxReferences = runningHubVideoReferenceNodes[videoMode].length;
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, maxReferences);
     if (references.length < requiredReferences) return sendJson(res, 400, { error: `${videoMode === "first-frame" ? "首帧" : videoMode === "last-frame" ? "尾帧" : videoMode === "first-last-frame" ? "首尾帧" : "全能参考"}模式至少需要 ${requiredReferences} 张参考图` });
