@@ -2064,7 +2064,7 @@ function startResize(event) {
   selectNode(node.id); const point = screenToScene(event.clientX, event.clientY); const corner = event.currentTarget.dataset.nodeResizeCorner || "se"; resizeSession = { nodeId: node.id, corner, start: point, moved: false, before: snapshot(), origin: { x: node.x, y: node.y, width: node.width, height: node.height }, element: nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`) };
   workspace.classList.add("is-flow-interacting"); if (resizeSession.element) resizeSession.element.style.willChange = "width, height";
 }
-function startPan(event) { event.preventDefault(); panSession = { clientX: event.clientX, clientY: event.clientY, x: state.viewport.x, y: state.viewport.y }; workspace.classList.add("is-panning", "is-flow-interacting"); }
+function startPan(event) { event.preventDefault(); panSession = { clientX: event.clientX, clientY: event.clientY, x: state.viewport.x, y: state.viewport.y, moved: false, clearSelectionOnClick: event.button === 0 && state.tool !== "hand" && !spacePressed }; workspace.classList.add("is-panning", "is-flow-interacting"); }
 function startConnection(event) {
   closeConnectionMenu();
   event.stopPropagation(); event.preventDefault(); const port = event.currentTarget;
@@ -2091,7 +2091,7 @@ function handlePointerMove(event) {
   if (handleScriptPointerMove(event)) return;
   if (connectionDraft) { connectionDraft.current = screenToScene(event.clientX, event.clientY); requestEdgeRender(); return; }
   if (selectionSession) { updateSelectionBox(event); return; }
-  if (panSession) { state.viewport.x = panSession.x + event.clientX - panSession.clientX; state.viewport.y = panSession.y + event.clientY - panSession.clientY; updateViewport(); return; }
+  if (panSession) { const dx = event.clientX - panSession.clientX; const dy = event.clientY - panSession.clientY; if (Math.abs(dx) + Math.abs(dy) > 1) panSession.moved = true; state.viewport.x = panSession.x + dx; state.viewport.y = panSession.y + dy; updateViewport(); return; }
   if (resizeSession) {
     const node = findNode(resizeSession.nodeId); if (!node) return; const point = screenToScene(event.clientX, event.clientY); const min = resizeMinimum(node);
     const deltaX = point.x - resizeSession.start.x; const deltaY = point.y - resizeSession.start.y;
@@ -2111,7 +2111,7 @@ function handlePointerUp(event) {
   workspace.classList.remove("is-flow-interacting");
   if (connectionDraft) finishConnection(event);
   if (selectionSession) finishSelectionBox();
-  if (panSession) { panSession = null; workspace.classList.remove("is-panning"); scheduleSave(); }
+  if (panSession) { const session = panSession; panSession = null; workspace.classList.remove("is-panning"); if (session.moved) scheduleSave(); else if (session.clearSelectionOnClick && (state.selectedIds.length || selectedEdgeId)) { state.selectedIds = []; selectedEdgeId = null; renderCanvasSelection(); renderEdges(); renderLibrary(); renderInspector(); } }
   if (resizeSession) {
     if (resizeSession.element) resizeSession.element.style.willChange = "";
     if (resizeSession.moved) { undoStack.push(resizeSession.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); }
