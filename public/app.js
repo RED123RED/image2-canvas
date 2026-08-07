@@ -1908,6 +1908,7 @@ function renderAnswerNodeHtml(node, selected, style) {
 }
 
 function bindNodeEvents() {
+  $$('[data-answer-selectable]').forEach(element => { element.tabIndex = 0; });
   $$(".canvas-node").forEach(element => element.addEventListener("pointerdown", handleNodePointerDown));
   $$('[data-node-drag-handle]').forEach(handle => handle.addEventListener("pointerdown", event => { if (event.target.closest(".node-interactive, .node-port")) return; event.preventDefault(); event.stopPropagation(); startNodeDrag(event, handle.dataset.nodeDragHandle); }));
   $$('[data-node-resize]').forEach(handle => handle.addEventListener("pointerdown", startResize));
@@ -1993,6 +1994,8 @@ function rectFromScenePoints(a, b) { return { left: Math.min(a.x, b.x), top: Mat
 function rectIntersectsNode(rect, node) { return node.x < rect.right && node.x + node.width > rect.left && node.y < rect.bottom && node.y + node.height > rect.top; }
 function clearNativeTextSelection() { window.getSelection?.()?.removeAllRanges(); }
 function allowsCanvasTextSelection(target) { const element = target instanceof Element ? target : target?.parentElement; return Boolean(element?.closest("input, textarea, [contenteditable=true], .answer-response")); }
+function selectedAnswerResponse() { const active = document.activeElement instanceof Element ? document.activeElement.closest(".answer-response") : null; if (active) return active; const selection = window.getSelection(); const anchor = selection?.anchorNode; const element = anchor instanceof Element ? anchor : anchor?.parentElement; return element?.closest(".answer-response") || null; }
+function selectAnswerResponse(response) { const selection = window.getSelection(); if (!response || !selection) return; const range = document.createRange(); range.selectNodeContents(response); selection.removeAllRanges(); selection.addRange(range); }
 function beginSelectionBox(event) {
   if (!state || event.button !== 0) return;
   event.preventDefault(); event.stopPropagation(); clearNativeTextSelection();
@@ -2800,6 +2803,8 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
     const isEditable = Boolean(target?.matches("input, textarea, select, [contenteditable=true]"));
     const historyShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y");
     const clipboardShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "c" || event.key.toLowerCase() === "v");
+    const selectAllShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a";
+    if (selectAllShortcut && !isEditable) { event.preventDefault(); selectAnswerResponse(selectedAnswerResponse()); return; }
     if (clipboardShortcut && isEditable) return;
     if (clipboardShortcut && state?.flowMode === "script") { event.preventDefault(); if (event.key.toLowerCase() === "c") copyScriptSelection(); else pasteScriptSelection(); return; }
     if (clipboardShortcut && state?.flowMode !== "script") { const selection = window.getSelection(); const answerTextSelected = Boolean(selection?.toString().trim() && selection.anchorNode?.parentElement?.closest(".answer-response")); if (event.key.toLowerCase() === "c" && answerTextSelected) return; if (event.key.toLowerCase() === "c") { event.preventDefault(); copyWorkflowSelection(); } return; }
