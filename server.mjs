@@ -95,7 +95,11 @@ function persistJobs() {
 
 async function writeJobLog(job, event) {
   await fs.mkdir(outputDir, { recursive: true });
-  const entry = { at: new Date().toISOString(), id: job.id, event, status: job.status, code: job.errorCode || "", durationMs: job.finishedAt && job.startedAt ? job.finishedAt - job.startedAt : 0 };
+  const runningHub = job.runningHub || {};
+  const entry = {
+    at: new Date().toISOString(), id: job.id, event, status: job.status, code: job.errorCode || "", durationMs: job.finishedAt && job.startedAt ? job.finishedAt - job.startedAt : 0,
+    remoteTaskId: job.remoteTaskId || "", runningHubStage: runningHub.stage || "", runningHubStatus: runningHub.status || "", runningHubHttpStatus: runningHub.httpStatus || 0, runningHubErrorCode: runningHub.errorCode || ""
+  };
   await fs.appendFile(generationLogPath, `${JSON.stringify(entry)}\n`, "utf8");
 }
 
@@ -230,10 +234,11 @@ async function storeAsset(req, res) {
     return sendJson(res, 400, { error: error?.message || "本地素材保存失败" });
   }
 }
-function gatewayError(status, message) {
+function gatewayError(status, message, diagnostic = null) {
   const code = status === 401 || status === 403 ? "AUTH" : status === 429 ? "RATE_LIMIT" : status >= 500 ? "GATEWAY" : "REQUEST";
   const error = new Error(message || `Image2 请求失败 (${status})`);
   error.code = code;
+  if (diagnostic) error.diagnostic = diagnostic;
   return error;
 }
 
@@ -242,6 +247,46 @@ function classifyError(error) {
   if (error?.name === "TimeoutError") return { code: "TIMEOUT", message: "生成等待超时，网关可能仍在繁忙，请稍后重新运行" };
   if (error?.name === "TypeError") return { code: "NETWORK", message: "无法连接 Image2 网关，请检查网络后重新运行" };
   return { code: "UNKNOWN", message: error?.message || "生成失败" };
+}
+
+function diagnosticText(value, maxLength = 900) {
+  const text = typeof value === "string" ? value : value == null ? "" : JSON.stringify(value);
+  return text
+    .replace(/(Bearer\s+)[^\s"',]+/gi, "$1[REDACTED]")
+    .replace(/((?:api[_-]?key|authorization|token|secret)\s*["':=]\s*)(?:Bearer\s+)?[^\s"',}]+/gi, "$1[REDACTED]")
+    .replace(/\b[a-f0-9]{32,}\b/gi, "[REDACTED]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function runningHubDiagnostic(stage, httpStatus, result, raw = "") {
+  const failedReason = result?.failedReason?.message || result?.failedReason?.error || result?.failedReason;
+  const errorMessage = result?.errorMessage || result?.message || result?.error?.message || "";
+  return {
+    stage,
+    httpStatus: Number.isFinite(Number(httpStatus)) ? Number(httpStatus) : 0,
+    taskId: diagnosticText(result?.taskId, 80),
+    status: diagnosticText(result?.status, 80),
+    errorCode: diagnosticText(result?.errorCode || result?.code, 120),
+    errorMessage: diagnosticText(errorMessage),
+    failedReason: diagnosticText(failedReason),
+    promptTips: diagnosticText(result?.promptTips),
+    responseSummary: result && Object.keys(result).length ? "" : diagnosticText(raw)
+  };
+}
+
+function updateRunningHubDiagnostic(job, diagnostic) {
+  const previous = job.runningHub || {};
+  job.runningHub = { ...previous, ...diagnostic, updatedAt: Date.now() };
+  if (diagnostic.taskId) job.remoteTaskId = diagnostic.taskId;
+}
+
+function runningHubRequestError(stage, httpStatus, result, raw, fallback) {
+  const diagnostic = runningHubDiagnostic(stage, httpStatus, result, raw);
+  const detail = diagnostic.errorMessage || diagnostic.failedReason || diagnostic.responseSummary || fallback;
+  const meta = [diagnostic.httpStatus ? `HTTP ${diagnostic.httpStatus}` : "无 HTTP 状态", diagnostic.errorCode ? `错误码 ${diagnostic.errorCode}` : ""].filter(Boolean).join(" · ");
+  return gatewayError(httpStatus || 502, `RunningHub ${stage}失败（${meta}）：${detail}`, diagnostic);
 }
 
 function extensionForMime(mime = "") {
@@ -413,7 +458,7 @@ async function uploadRunningHubReference(apiKey, dataUrl, index) {
   let result;
   try { result = JSON.parse(raw); } catch { result = {}; }
   const fileName = String(result?.data?.fileName || "").trim();
-  if (!response.ok || Number(result?.code) !== 0 || !fileName) throw gatewayError(response.status || 502, result?.message || "RunningHub 视频参考图上传失败");
+  if (!response.ok || Number(result?.code) !== 0 || !fileName) throw runningHubRequestError("上传参考图", response.status, result, raw, "RunningHub 视频参考图上传失败");
   return fileName;
 }
 
@@ -426,7 +471,16 @@ async function requestRunningHubGeneration(job) {
     runningHubNodeInfo("14", "value", seconds)
   ];
   const referenceNodes = runningHubVideoReferenceNodes[normalizeRunningHubVideoMode(videoMode)];
-  const uploadedReferences = await Promise.all(references.slice(0, referenceNodes.length).map((reference, index) => uploadRunningHubReference(apiKey, reference, index)));
+  let uploadedReferences;
+  try {
+    uploadedReferences = await Promise.all(references.slice(0, referenceNodes.length).map((reference, index) => uploadRunningHubReference(apiKey, reference, index)));
+    updateRunningHubDiagnostic(job, { stage: "上传参考图", httpStatus: 200, referenceCount: uploadedReferences.length });
+  } catch (error) {
+    const diagnostic = { stage: "上传参考图", httpStatus: error?.diagnostic?.httpStatus || 0, errorCode: error?.code || "", errorMessage: diagnosticText(error?.message || "RunningHub 视频参考图上传失败") };
+    updateRunningHubDiagnostic(job, diagnostic);
+    error.diagnostic = diagnostic;
+    throw error;
+  }
   uploadedReferences.forEach((fileName, index) => nodeInfoList.push(runningHubNodeInfo(referenceNodes[index], "image", fileName)));
   const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
   const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${runningHubWorkflowId}`, {
@@ -438,7 +492,10 @@ async function requestRunningHubGeneration(job) {
   const submitRaw = await submitResponse.text();
   let submitted;
   try { submitted = JSON.parse(submitRaw); } catch { submitted = {}; }
-  if (!submitResponse.ok || !submitted?.taskId) throw gatewayError(submitResponse.status || 502, submitted?.errorMessage || submitted?.message || "RunningHub 工作流提交失败");
+  const submitDiagnostic = runningHubDiagnostic("提交工作流", submitResponse.status, submitted, submitRaw);
+  updateRunningHubDiagnostic(job, submitDiagnostic);
+  if (!submitResponse.ok || !submitted?.taskId) throw runningHubRequestError("提交工作流", submitResponse.status, submitted, submitRaw, "RunningHub 工作流提交失败");
+  await persistJobs();
   const startedAt = Date.now();
   let lastStatus = submitted;
   while (Date.now() - startedAt < 45 * 60_000) {
@@ -446,14 +503,20 @@ async function requestRunningHubGeneration(job) {
     const raw = await response.text();
     let status;
     try { status = JSON.parse(raw); } catch { status = {}; }
-    if (!response.ok) throw gatewayError(response.status, status?.errorMessage || status?.message || "RunningHub 任务查询失败");
+    const queryDiagnostic = runningHubDiagnostic("查询任务", response.status, status, raw);
+    updateRunningHubDiagnostic(job, queryDiagnostic);
+    if (!response.ok) throw runningHubRequestError("查询任务", response.status, status, raw, "RunningHub 任务查询失败");
     lastStatus = status;
     if (status.status === "SUCCESS") {
       const results = Array.isArray(status.results) ? status.results.filter(item => item?.url || item?.text) : [];
       if (!results.length) throw gatewayError(502, "RunningHub 任务成功但没有可下载结果");
       return { items: results, mode: "workflow", mediaType: "video", taskId: submitted.taskId, referencesUsed: uploadedReferences.length };
     }
-    if (status.status === "FAILED") throw gatewayError(502, status.errorMessage || status.failedReason?.message || `RunningHub 任务失败 (${status.errorCode || "UNKNOWN"})`);
+    if (status.status === "FAILED") {
+      const error = runningHubRequestError("执行工作流", 502, status, raw, `RunningHub 任务失败 (${status.errorCode || "UNKNOWN"})`);
+      updateRunningHubDiagnostic(job, error.diagnostic);
+      throw error;
+    }
     await new Promise(resolve => setTimeout(resolve, 5_000));
   }
   throw gatewayError(504, `RunningHub 任务等待超时 (${lastStatus?.taskId || submitted.taskId})`);
