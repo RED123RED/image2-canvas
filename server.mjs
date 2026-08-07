@@ -429,7 +429,7 @@ async function requestGeminiGeneration(job) {
 }
 
 function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
-  return { nodeId, fieldName, fieldValue: String(fieldValue ?? "") };
+  return { nodeId: String(nodeId), fieldName: String(fieldName), fieldValue: fieldValue ?? "" };
 }
 
 const runningHubVideoReferenceNodes = Object.freeze({
