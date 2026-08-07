@@ -19,15 +19,25 @@ const geminiBaseUrl = (process.env.GEMINI_MOYU_BASE_URL || "https://www.moyu.inf
 const runningHubBaseUrl = (process.env.RUNNINGHUB_BASE_URL || "https://www.runninghub.cn").replace(/\/$/, "");
 const runningHubVideoWorkflows = Object.freeze({
   "first-frame": Object.freeze({
-    id: "2085564954459066369",
-    referenceNodes: ["60"],
-    width: 1376,
-    height: 768,
-    minSeconds: 5,
-    maxSeconds: 15
+    standard: Object.freeze({
+      id: "2085564954459066369",
+      referenceNodes: ["60"],
+      width: 1376,
+      height: 768,
+      minSeconds: 5,
+      maxSeconds: 15
+    }),
+    clear: Object.freeze({
+      id: "2085580221075517441",
+      referenceNodes: ["60"],
+      width: 1920,
+      height: 1088,
+      minSeconds: 5,
+      maxSeconds: 15
+    })
   })
 });
-const runningHubWorkflowId = runningHubVideoWorkflows["first-frame"].id;
+const runningHubWorkflowId = runningHubVideoWorkflows["first-frame"].standard.id;
 const runningHubInstanceType = process.env.RUNNINGHUB_INSTANCE_TYPE === "default" ? "default" : "plus";
 const geminiImageModels = Object.freeze([
   "gemini-3-pro-image-preview",
@@ -442,8 +452,10 @@ function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
   return { nodeId: String(nodeId), fieldName: String(fieldName), fieldValue: fieldValue ?? "" };
 }
 
-function runningHubVideoWorkflowForMode(value) {
-  return runningHubVideoWorkflows[String(value || "")] || null;
+function runningHubVideoWorkflowForMode(value, quality) {
+  const profiles = runningHubVideoWorkflows[String(value || "")];
+  if (!profiles) return null;
+  return profiles[quality === "clear" ? "clear" : "standard"] || null;
 }
 
 function runningHubLengthExpression(seconds) {
@@ -609,7 +621,8 @@ async function createRunningHubJob(req, res, body) {
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
     const videoMode = String(body.videoMode || "first-frame");
-    const workflow = runningHubVideoWorkflowForMode(videoMode);
+    const videoQuality = String(body.videoQuality || "standard") === "clear" ? "clear" : "standard";
+    const workflow = runningHubVideoWorkflowForMode(videoMode, videoQuality);
     if (!workflow) return sendJson(res, 400, { error: "当前仅已接入首帧生视频，请先选择首帧生视频模式" });
     const requiredReferences = 1;
     const maxReferences = workflow.referenceNodes.length;
@@ -619,7 +632,7 @@ async function createRunningHubJob(req, res, body) {
     const height = Math.min(4096, Math.max(32, Number(body.height) || workflow.height));
     if (width !== workflow.width || height !== workflow.height) return sendJson(res, 400, { error: `当前首帧工作流固定为 ${workflow.width} × ${workflow.height}，其他比例与清晰度将在对应工作流接入后开放` });
     const seconds = Math.min(workflow.maxSeconds, Math.max(workflow.minSeconds, Math.round(Number(body.seconds) || workflow.minSeconds)));
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, request: { apiKey, prompt, seconds, workflowId: workflow.id, referenceNodes: workflow.referenceNodes, references } };
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, videoQuality, request: { apiKey, prompt, seconds, workflowId: workflow.id, referenceNodes: workflow.referenceNodes, references } };
     jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
   } catch (error) {
     const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
