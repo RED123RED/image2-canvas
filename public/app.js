@@ -29,20 +29,23 @@ const runningHubVideoQualityOptions = Object.freeze([
   { value: "standard", label: "标准", megapixels: 1.0 },
   { value: "clear", label: "清晰", megapixels: 2.0 }
 ]);
+const runningHubVideoWorkflowId = "2085564954459066369";
+const runningHubFirstFrameDimensions = Object.freeze({ width: 1376, height: 768 });
 const runningHubVideoProvider = Object.freeze({ label: "海螺 H3 视频", model: "RunningHub · API plus" });
 const runningHubVideoModes = Object.freeze([
-  { value: "text-to-video", label: "提示词生视频", inputs: [] },
-  { value: "first-frame", label: "首帧生视频", inputs: ["首帧"] },
-  { value: "last-frame", label: "尾帧生视频", inputs: ["尾帧"] },
-  { value: "first-last-frame", label: "首尾帧生视频", inputs: ["首帧", "尾帧"] },
-  { value: "reference", label: "全能参考生视频", inputs: ["参考图 1", "参考图 2", "参考图 3", "参考图 4"] }
+  { value: "text-to-video", label: "提示词生视频（待接入）", inputs: [], available: false },
+  { value: "first-frame", label: "首帧生视频", inputs: ["首帧"], available: true },
+  { value: "last-frame", label: "尾帧生视频（待接入）", inputs: ["尾帧"], available: false },
+  { value: "first-last-frame", label: "首尾帧生视频（待接入）", inputs: ["首帧", "尾帧"], available: false },
+  { value: "reference", label: "全能参考生视频（待接入）", inputs: ["参考图 1", "参考图 2", "参考图 3", "参考图 4"], available: false }
 ]);
 function runningHubVideoMode(node) {
   return runningHubVideoModes.find(item => item.value === node?.videoMode)
     || runningHubVideoModes.find(item => item.value === "reference");
 }
-function runningHubVideoQuality(node) { return runningHubVideoQualityOptions.find(item => item.value === node?.videoQuality) || runningHubVideoQualityOptions[1]; }
+function runningHubVideoQuality(node) { if (node?.videoMode === "first-frame") return runningHubVideoQualityOptions[1]; return runningHubVideoQualityOptions.find(item => item.value === node?.videoQuality) || runningHubVideoQualityOptions[1]; }
 function runningHubVideoDimensions(node) {
+  if (node?.videoMode === "first-frame") return runningHubFirstFrameDimensions;
   const quality = runningHubVideoQuality(node);
   const aspect = node?.videoAspect === "auto" ? "16:9" : (node?.videoAspect || "16:9");
   const [ratioWidth, ratioHeight] = aspect.split(":").map(Number);
@@ -56,7 +59,7 @@ function normalizeRunningHubVideo(node, connectedImageSlots = 0) {
   const mode = runningHubVideoMode(node);
   const inputSlots = !mode.inputs.length ? 0 : node?.videoInputSlotsInitialized ? Math.min(mode.inputs.length, Math.max(1, Number(node?.inputSlots) || 1)) : Math.max(1, Math.min(mode.inputs.length, connectedImageSlots || 1));
   const promptSlots = Math.min(6, Math.max(1, Number(node?.promptSlots) || 1));
-  const next = { ...node, mediaType: "video", provider: "runninghub-h3", x: Number.isFinite(Number(node?.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node?.y)) ? Number(node.y) : 0, videoMode: mode.value, videoAspect: runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9", videoQuality: runningHubVideoQualityOptions.some(item => item.value === node?.videoQuality) ? node.videoQuality : "standard", videoSeconds: Math.min(15, Math.max(3, Math.round(Number(node?.videoSeconds) || 6))), promptSlots, inputSlots, videoInputSlotsInitialized: true, width: Math.max(360, Number(node?.width) || 390) };
+  const next = { ...node, mediaType: "video", provider: "runninghub-h3", x: Number.isFinite(Number(node?.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node?.y)) ? Number(node.y) : 0, videoMode: mode.value, videoAspect: mode.value === "first-frame" ? "16:9" : (runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9"), videoQuality: mode.value === "first-frame" ? "standard" : (runningHubVideoQualityOptions.some(item => item.value === node?.videoQuality) ? node.videoQuality : "standard"), videoSeconds: Math.min(15, Math.max(mode.value === "first-frame" ? 5 : 3, Math.round(Number(node?.videoSeconds) || 6))), promptSlots, inputSlots, videoInputSlotsInitialized: true, width: Math.max(360, Number(node?.width) || 390) };
   next.height = Math.max(Number(node?.height) || 0, nodeHeight("video-generator", inputSlots, promptSlots));
   next.status = node?.activeJobId ? "running" : "idle";
   return next;
@@ -380,7 +383,7 @@ function createGeneratorNode(x, y) {
   return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createVideoNode(x, y) {
-  return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoMode: "reference", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 1, videoInputSlotsInitialized: true, width: 390, height: nodeHeight("video-generator", 1, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
+  return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoMode: "first-frame", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 1, videoInputSlotsInitialized: true, width: 390, height: nodeHeight("video-generator", 1, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createAnswerNode(x, y) {
   return { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, height: nodeHeight("answer", 4, 1), model: "gpt-5.6", status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
@@ -1811,18 +1814,19 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
   const dimensions = runningHubVideoDimensions(node);
   const quality = runningHubVideoQuality(node);
   const mode = runningHubVideoMode(node);
-  const modeNote = mode.value === "text-to-video"
-    ? "提示词生视频：仅提交已连接的提示词、比例、清晰度和时长。"
-    : `${mode.label}：连接的图片会上传至 RunningHub 并映射到工作流图片节点；首次运行建议先用 1 张图确认该工作流当前版本的分支效果。`;
+  const firstFrameReady = mode.value === "first-frame";
+  const modeNote = firstFrameReady
+    ? "首帧生视频：连接的首帧图会上传至 RunningHub 工作流 #60。当前副本固定 16:9、标准、1376 × 768，时长可选 5-15 秒。"
+    : `${mode.label}尚未接入对应 RunningHub 工作流，暂不可运行。`;
   const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, generatorPromptPortId(index)); const promptNode = findNode(edge?.source); const label = edge ? `${promptNode?.disabled ? "已禁用 · " : ""}${sourceLabelForEdge(edge)}` : "未连接"; return `<div class="input-slot${edge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>${index ? `Prompt ${index + 1}` : "Prompt"}</span><span>${escapeHtml(label)}</span></div>`; }).join("");
   const imageSlots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); return `<div class="input-slot${edge ? " is-connected" : ""}"><span>${escapeHtml(mode.inputs[index] || `参考图 ${index + 1}`)}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
   const statusLabel = node.status === "running" ? "生成中" : node.lastError ? "上次生成失败" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个视频` : "待运行";
   return `<article class="canvas-node generator-node video-generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", "", true, true)}<div class="node-body generator-body">
-    <div class="video-provider-badge"><span>${escapeHtml(runningHubVideoProvider.label)}</span><small>工作流 ${escapeHtml("2084196829952045057")} · plus</small></div>
-    <div class="node-field"><label>生成方式</label><select class="node-select node-interactive" data-video-field="mode" data-node-id="${node.id}" aria-label="视频生成方式">${runningHubVideoModes.map(option => `<option value="${option.value}"${node.videoMode === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select></div>
-    <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-video-field="aspect" data-node-id="${node.id}" aria-label="视频比例">${runningHubVideoAspects.map(value => `<option value="${value}"${node.videoAspect === value ? " selected" : ""}>${value === "auto" ? "自适应" : value}</option>`).join("")}</select></div>
-    <div class="node-field"><label>清晰度</label><select class="node-select node-interactive" data-video-field="quality" data-node-id="${node.id}" aria-label="视频清晰度">${runningHubVideoQualityOptions.map(option => `<option value="${option.value}"${node.videoQuality === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select></div></div>
-    <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: 13 }, (_, index) => index + 3).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field"><label>实例</label><div class="node-static-field">API plus · 48G</div></div></div>
+    <div class="video-provider-badge"><span>${escapeHtml(runningHubVideoProvider.label)}</span><small>工作流 ${escapeHtml(runningHubVideoWorkflowId)} · plus</small></div>
+    <div class="node-field"><label>生成方式</label><select class="node-select node-interactive" data-video-field="mode" data-node-id="${node.id}" aria-label="视频生成方式">${runningHubVideoModes.map(option => `<option value="${option.value}"${node.videoMode === option.value ? " selected" : ""}${option.available ? "" : " disabled"}>${option.label}</option>`).join("")}</select></div>
+    <div class="node-field-row"><div class="node-field"><label>比例</label>${firstFrameReady ? '<div class="node-static-field">16:9</div>' : `<select class="node-select node-interactive" data-video-field="aspect" data-node-id="${node.id}" aria-label="视频比例">${runningHubVideoAspects.map(value => `<option value="${value}"${node.videoAspect === value ? " selected" : ""}>${value === "auto" ? "自适应" : value}</option>`).join("")}</select>`}</div>
+    <div class="node-field"><label>清晰度</label>${firstFrameReady ? '<div class="node-static-field">标准</div>' : `<select class="node-select node-interactive" data-video-field="quality" data-node-id="${node.id}" aria-label="视频清晰度">${runningHubVideoQualityOptions.map(option => `<option value="${option.value}"${node.videoQuality === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`}</div></div>
+    <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: firstFrameReady ? 11 : 13 }, (_, index) => index + (firstFrameReady ? 5 : 3)).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field"><label>实例</label><div class="node-static-field">API plus · 48G</div></div></div>
     <div class="video-resolution-summary"><span>${escapeHtml(quality.label)}</span><strong>${dimensions.width} × ${dimensions.height}</strong></div>
     <div class="generator-inputs">${promptSlots}${imageSlots}</div>
     <div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-input="${node.id}"${node.inputSlots >= generatorReferenceLimit(node) ? " disabled" : ""}>${icon("image-plus")} 添加图片输入</button></div>
@@ -1866,8 +1870,8 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
   $$('[data-video-field]').forEach(control => control.addEventListener("change", event => {
     const node = findNode(control.dataset.nodeId); if (!node || node.mediaType !== "video") return;
     recordHistory(); const field = control.dataset.videoField;
-    if (field === "seconds") node.videoSeconds = Math.min(15, Math.max(3, Number(event.target.value) || 6));
-    else if (field === "mode") { node.videoMode = runningHubVideoMode({ videoMode: event.target.value }).value; const limit = generatorReferenceLimit(node); node.inputSlots = limit ? Math.min(limit, Math.max(node.videoMode === "first-last-frame" ? 2 : 1, Number(node.inputSlots) || 1)) : 0; state.edges = state.edges.filter(edge => edge.target !== node.id || edge.type !== "image" || Number(edge.targetPort.split("-")[1]) < node.inputSlots); node.height = nodeHeight("video-generator", node.inputSlots, node.promptSlots); }
+    if (field === "seconds") node.videoSeconds = Math.min(15, Math.max(node.videoMode === "first-frame" ? 5 : 3, Number(event.target.value) || 6));
+    else if (field === "mode") { node.videoMode = runningHubVideoMode({ videoMode: event.target.value }).value; if (node.videoMode === "first-frame") { node.videoAspect = "16:9"; node.videoQuality = "standard"; node.videoSeconds = Math.max(5, Number(node.videoSeconds) || 6); } const limit = generatorReferenceLimit(node); node.inputSlots = limit ? Math.min(limit, Math.max(node.videoMode === "first-last-frame" ? 2 : 1, Number(node.inputSlots) || 1)) : 0; state.edges = state.edges.filter(edge => edge.target !== node.id || edge.type !== "image" || Number(edge.targetPort.split("-")[1]) < node.inputSlots); node.height = nodeHeight("video-generator", node.inputSlots, node.promptSlots); }
     else if (field === "aspect") node.videoAspect = runningHubVideoAspects.includes(event.target.value) ? event.target.value : "16:9";
     else if (field === "quality") node.videoQuality = runningHubVideoQualityOptions.some(item => item.value === event.target.value) ? event.target.value : "standard";
     renderCanvas(); renderInspector(); scheduleSave();
@@ -2572,6 +2576,7 @@ async function runVideoGeneratorNode(generator) {
   if (!prompt) { selectNode(generator.id); return toast("请连接至少一个有内容且已启用的提示词模块", true); }
   const imageEdges = state.edges.filter(edge => edge.target === generator.id && edge.type === "image" && /^image-\d+$/.test(edge.targetPort)).sort((a, b) => Number(a.targetPort.split("-")[1]) - Number(b.targetPort.split("-")[1]));
   const mode = runningHubVideoMode(generator);
+  if (!mode.available) { selectNode(generator.id); return toast(`${mode.label}，请先选择首帧生视频`, true); }
   const requiredReferences = generator.videoMode === "first-last-frame" ? 2 : generator.videoMode === "text-to-video" ? 0 : 1;
   if (imageEdges.length < requiredReferences) { selectNode(generator.id); return toast(`${mode.label}至少需要连接 ${requiredReferences} 张参考图`, true); }
   if (!runningHubApiKey) {

@@ -17,7 +17,17 @@ const baseUrl = (process.env.IMAGE2_BASE_URL || "https://rehdasu.cn/v1").replace
 const model = process.env.IMAGE2_MODEL || "gpt-image-2";
 const geminiBaseUrl = (process.env.GEMINI_MOYU_BASE_URL || "https://www.moyu.info").replace(/\/$/, "");
 const runningHubBaseUrl = (process.env.RUNNINGHUB_BASE_URL || "https://www.runninghub.cn").replace(/\/$/, "");
-const runningHubWorkflowId = "2084196829952045057";
+const runningHubVideoWorkflows = Object.freeze({
+  "first-frame": Object.freeze({
+    id: "2085564954459066369",
+    referenceNodes: ["60"],
+    width: 1376,
+    height: 768,
+    minSeconds: 5,
+    maxSeconds: 15
+  })
+});
+const runningHubWorkflowId = runningHubVideoWorkflows["first-frame"].id;
 const runningHubInstanceType = process.env.RUNNINGHUB_INSTANCE_TYPE === "default" ? "default" : "plus";
 const geminiImageModels = Object.freeze([
   "gemini-3-pro-image-preview",
@@ -432,16 +442,13 @@ function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
   return { nodeId: String(nodeId), fieldName: String(fieldName), fieldValue: fieldValue ?? "" };
 }
 
-const runningHubVideoReferenceNodes = Object.freeze({
-  "text-to-video": [],
-  "first-frame": ["60"],
-  "last-frame": ["72"],
-  "first-last-frame": ["60", "72"],
-  "reference": ["60", "72", "128", "129"]
-});
+function runningHubVideoWorkflowForMode(value) {
+  return runningHubVideoWorkflows[String(value || "")] || null;
+}
 
-function normalizeRunningHubVideoMode(value) {
-  return Object.hasOwn(runningHubVideoReferenceNodes, value) ? value : "reference";
+function runningHubLengthExpression(seconds) {
+  const value = Math.min(15, Math.max(5, Math.round(Number(seconds) || 5)));
+  return `max(5, round(${value} * 24)) + (5 - (max(5, round(${value} * 24)) % 17)) % 17`;
 }
 
 async function uploadRunningHubReference(apiKey, dataUrl, index) {
@@ -463,14 +470,13 @@ async function uploadRunningHubReference(apiKey, dataUrl, index) {
 }
 
 async function requestRunningHubGeneration(job) {
-  const { apiKey, prompt, width, height, seconds, videoMode, references = [] } = job.request;
+  const { apiKey, prompt, seconds, workflowId, referenceNodes, references = [] } = job.request;
   const nodeInfoList = [
     runningHubNodeInfo("59", "value", prompt),
-    runningHubNodeInfo("46", "value", width),
-    runningHubNodeInfo("78", "value", height),
-    runningHubNodeInfo("14", "value", seconds)
+    // RunningHub serializes direct numeric overrides as strings. The workflow's
+    // expression field is string-safe and still produces the expected frame count.
+    runningHubNodeInfo("13", "expression", runningHubLengthExpression(seconds))
   ];
-  const referenceNodes = runningHubVideoReferenceNodes[normalizeRunningHubVideoMode(videoMode)];
   let uploadedReferences;
   try {
     uploadedReferences = await Promise.all(references.slice(0, referenceNodes.length).map((reference, index) => uploadRunningHubReference(apiKey, reference, index)));
@@ -483,7 +489,7 @@ async function requestRunningHubGeneration(job) {
   }
   uploadedReferences.forEach((fileName, index) => nodeInfoList.push(runningHubNodeInfo(referenceNodes[index], "image", fileName)));
   const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
-  const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${runningHubWorkflowId}`, {
+  const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${workflowId}`, {
     method: "POST",
     headers,
     body: JSON.stringify({ addMetadata: true, nodeInfoList, instanceType: runningHubInstanceType, usePersonalQueue: false }),
@@ -602,15 +608,18 @@ async function createRunningHubJob(req, res, body) {
     if (!apiKey) return sendJson(res, 401, { error: "未配置 RunningHub API Key，请在设置中保存密钥" });
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
-    const videoMode = normalizeRunningHubVideoMode(String(body.videoMode || "reference"));
-    const requiredReferences = videoMode === "first-last-frame" ? 2 : videoMode === "text-to-video" ? 0 : 1;
-    const maxReferences = runningHubVideoReferenceNodes[videoMode].length;
+    const videoMode = String(body.videoMode || "first-frame");
+    const workflow = runningHubVideoWorkflowForMode(videoMode);
+    if (!workflow) return sendJson(res, 400, { error: "当前仅已接入首帧生视频，请先选择首帧生视频模式" });
+    const requiredReferences = 1;
+    const maxReferences = workflow.referenceNodes.length;
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, maxReferences);
-    if (references.length < requiredReferences) return sendJson(res, 400, { error: `${videoMode === "first-frame" ? "首帧" : videoMode === "last-frame" ? "尾帧" : videoMode === "first-last-frame" ? "首尾帧" : "全能参考"}模式至少需要 ${requiredReferences} 张参考图` });
-    const width = Math.min(4096, Math.max(32, Number(body.width) || 1376));
-    const height = Math.min(4096, Math.max(32, Number(body.height) || 768));
-    const seconds = Math.min(15, Math.max(3, Math.round(Number(body.seconds) || 6)));
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${runningHubWorkflowId}`, mediaType: "video", imageCount: 1, videoMode, request: { apiKey, prompt, width, height, seconds, videoMode, references } };
+    if (references.length < requiredReferences) return sendJson(res, 400, { error: "首帧生视频至少需要连接 1 张参考图" });
+    const width = Math.min(4096, Math.max(32, Number(body.width) || workflow.width));
+    const height = Math.min(4096, Math.max(32, Number(body.height) || workflow.height));
+    if (width !== workflow.width || height !== workflow.height) return sendJson(res, 400, { error: `当前首帧工作流固定为 ${workflow.width} × ${workflow.height}，其他比例与清晰度将在对应工作流接入后开放` });
+    const seconds = Math.min(workflow.maxSeconds, Math.max(workflow.minSeconds, Math.round(Number(body.seconds) || workflow.minSeconds)));
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, request: { apiKey, prompt, seconds, workflowId: workflow.id, referenceNodes: workflow.referenceNodes, references } };
     jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
   } catch (error) {
     const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
