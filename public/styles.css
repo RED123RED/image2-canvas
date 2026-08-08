@@ -496,23 +496,27 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .video-editor-toolbar > div { display: inline-flex; align-items: baseline; gap: 7px; }
 .video-editor-toolbar strong { color: var(--ink); font-size: 10px; }
 .video-editor-toolbar span { color: var(--muted); font-size: 9px; }
-.video-editor-toolbar .add-input-button { flex: 0 0 auto; height: 26px; }
-.video-editor-timeline { display: flex; min-height: 116px; flex: 1 1 auto; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-soft); }
+.video-editor-toolbar-actions { display: inline-flex; align-items: center; gap: 5px; }
+.video-editor-toolbar .add-input-button { height: 26px; flex: 0 0 auto; }
+.video-editor-timeline { display: flex; min-height: 140px; flex: 1 1 auto; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-soft); }
 .video-editor-ruler { display: flex; height: 23px; align-items: center; justify-content: space-between; padding: 0 9px; border-bottom: 1px dashed var(--line); color: var(--muted); font-size: 8px; font-variant-numeric: tabular-nums; }
-.video-editor-clips { display: flex; min-height: 93px; gap: 7px; overflow-x: auto; padding: 7px; overscroll-behavior: contain; }
-.video-clip-card { display: grid; min-width: 210px; max-width: 250px; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 7px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-raised); cursor: default; }
-.video-clip-card:hover { border-color: color-mix(in srgb, var(--blue) 55%, var(--line)); }
-.video-clip-thumb { width: 56px; height: 58px; border-radius: 4px; background: #101512; object-fit: cover; }
+.video-editor-track-scroll { min-height: 116px; overflow-x: auto; overflow-y: hidden; }
+.video-editor-track { position: relative; min-height: 116px; }
+.video-editor-clips { display: flex; min-height: 116px; gap: 4px; padding: 9px 8px 14px; }
+.video-clip-card { display: block; min-width: 108px; flex: var(--clip-flex) 0 0; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-raised); cursor: grab; overflow: hidden; }
+.video-clip-card:hover, .video-clip-card.is-active { border-color: var(--blue); box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 18%, transparent); }
+.video-clip-card.is-dragging { opacity: .45; }
+.video-clip-card.drop-before { box-shadow: inset 3px 0 0 var(--blue); }
+.video-clip-card.drop-after { box-shadow: inset -3px 0 0 var(--blue); }
+.video-clip-segment { display: grid; height: 101px; grid-template-columns: 52px minmax(0, 1fr); gap: 7px; align-items: center; padding: 6px; }
+.video-clip-thumb { width: 52px; height: 56px; border-radius: 4px; background: #101512; object-fit: cover; pointer-events: none; }
 .video-clip-copy { min-width: 0; }
 .video-clip-copy strong, .video-clip-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .video-clip-copy strong { color: var(--ink); font-size: 9px; }
 .video-clip-copy small { margin-top: 3px; color: var(--muted); font-size: 8px; }
-.video-clip-trim { display: flex; gap: 4px; margin-top: 5px; }
-.video-clip-trim label { display: inline-flex; min-width: 0; align-items: center; gap: 2px; color: var(--muted); font-size: 8px; }
-.video-clip-trim input { width: 44px; height: 20px; min-width: 0; padding: 0 3px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink); background: var(--surface); font-size: 8px; }
-.video-clip-actions { display: flex; flex-direction: column; gap: 1px; }
-.video-clip-actions .icon-button { width: 22px; height: 19px; }
-.video-clip-actions .icon-button svg { width: 12px; height: 12px; }
+.video-clip-copy > span { display: block; margin-top: 4px; color: var(--muted); font-size: 8px; font-variant-numeric: tabular-nums; }
+.video-timeline-playhead { position: absolute; z-index: 4; top: 0; bottom: 0; width: 2px; padding: 0; transform: translateX(-1px); border: 0; background: #3e77e8; cursor: ew-resize; }
+.video-timeline-playhead span { position: absolute; top: -1px; left: 50%; width: 10px; height: 10px; transform: translateX(-50%); clip-path: polygon(0 0, 100% 0, 50% 100%); background: #3e77e8; }
 .video-editor-empty { display: grid; width: 100%; min-width: 260px; place-items: center; align-content: center; gap: 5px; color: var(--muted); font-size: 9px; text-align: center; }
 .video-editor-empty svg { width: 22px; height: 22px; color: #8748b8; }
 .video-preview-node .node-body { display: flex; min-height: 0; flex-direction: column; }
