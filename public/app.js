@@ -394,7 +394,7 @@ function createVideoNode(x, y) {
   return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoMode: "first-frame", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 1, videoInputSlotsInitialized: true, width: 390, height: nodeHeight("video-generator", 1, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createVideoEditorNode(x, y) {
-  return { id: uid("video-editor"), type: "video-editor", name: "视频剪辑", x, y, width: 680, height: nodeHeight("video-editor"), clips: [], inputSlots: 6, selectedClipId: "", timelinePlayhead: 0, status: "idle", outputSrc: "", outputType: "mp4", createdAt: Date.now() };
+  return { id: uid("video-editor"), type: "video-editor", name: "视频剪辑", x, y, width: 680, height: nodeHeight("video-editor"), clips: [], inputSlots: 6, selectedClipId: "", timelinePlayhead: 0, previewPlaying: false, status: "idle", outputSrc: "", outputType: "mp4", createdAt: Date.now() };
 }
 function createVideoPreviewNode(x, y) {
   return { id: uid("video-preview"), type: "video-preview", name: "成片预览", x, y, width: 360, height: nodeHeight("video-preview"), createdAt: Date.now() };
@@ -529,7 +529,7 @@ function normalizeProject(project) {
           const start = Math.max(0, Number(clip.start) || 0); const duration = Math.max(0, Number(clip.duration) || 0); const end = Math.max(0, Number(clip.end) || duration);
           return { id: String(clip.id || `clip-${index}`), name: String(clip.name || `视频片段 ${index + 1}`), src: clip.src, start, end: end > start ? end : duration, duration, origin: clip.origin === "linked" ? "linked" : "imported" };
         }) : [];
-        return { ...node, name: node.name || "视频剪辑", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(440, Number(node.width) || 680), height: Math.max(300, Number(node.height) || nodeHeight("video-editor")), inputSlots: 6, clips, selectedClipId: String(node.selectedClipId || ""), timelinePlayhead: Math.max(0, Number(node.timelinePlayhead) || 0), status: ["idle", "rendering", "ready", "error"].includes(node.status) ? node.status : "idle", outputSrc: String(node.outputSrc || ""), outputType: "mp4", lastError: String(node.lastError || "") };
+        return { ...node, name: node.name || "视频剪辑", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(440, Number(node.width) || 680), height: Math.max(300, Number(node.height) || nodeHeight("video-editor")), inputSlots: 6, clips, selectedClipId: String(node.selectedClipId || ""), timelinePlayhead: Math.max(0, Number(node.timelinePlayhead) || 0), previewPlaying: false, status: ["idle", "rendering", "ready", "error"].includes(node.status) ? node.status : "idle", outputSrc: String(node.outputSrc || ""), outputType: "mp4", lastError: String(node.lastError || "") };
       }
       if (node.type === "video-preview") return { ...node, name: node.name || "成片预览", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(280, Number(node.width) || 360), height: Math.max(280, Number(node.height) || nodeHeight("video-preview")), outputType: "mp4" };
       if (node.type === "answer") {
@@ -1715,7 +1715,7 @@ function renderScriptInspector() {
   if (selected.type === "ai-assistant") { const target = scriptAssistantTargetLabel(flow, selected.targetId); $("#inspectorTitle").textContent = "AI助手"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">工作状态</div><div class="summary-row"><span>处理模块</span><strong>${escapeHtml(target)}</strong></div><div class="summary-row"><span>模型</span><strong>${escapeHtml(selected.model === "gpt-5.5" ? "GPT-5.5" : "GPT-5.6")}</strong></div><div class="summary-row"><span>模块尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">选择目标模块、输入需求后，AI 会围绕该模块内容输出建议。右下角可自由调整大小。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteScriptAssistantButton" type="button">${icon("trash-2")} 删除 AI 助手</button></section>`; $("#deleteScriptAssistantButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); }  if (selected.type === "script-note") { $("#inspectorTitle").textContent = "便签"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">便签内容</div><div class="summary-row"><span>文本长度</span><strong data-script-note-length="${selected.id}">${(selected.content || "").length} 字</strong></div><div class="summary-row"><span>便签尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">直接在便签中记录内容；可自由移动、拉伸、复制粘贴，按 Delete 或 Backspace 删除。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteScriptNoteButton" type="button">${icon("trash-2")} 删除便签</button></section>`; $("#deleteScriptNoteButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); }  $("#inspectorTitle").textContent = "角色功能"; const links = flow.relationships.filter(link => link.source === selected.id || link.target === selected.id).length;
   inspectorContent.innerHTML = `<section class="script-character-summary ${selected.gender}">${scriptAvatarHtml(selected)}<div><strong>${escapeHtml(scriptCharacterLabel(selected))}</strong><span>${escapeHtml(selected.identity || (selected.gender === "female" ? "女性角色" : "男性角色"))} · ${links} 条关系</span></div></section><section class="control-section script-details">${scriptInspectorField("名称", "name", selected.name, "输入角色名称")}${scriptInspectorField("身份", "identity", selected.identity, "如：主角、恋人、反派")}${scriptInspectorField("年龄", "age", selected.age, "如：28 岁")}${scriptInspectorField("职业", "occupation", selected.occupation, "如：摄影师")}${scriptInspectorField("性格", "personality", selected.personality, "如：冷静、执着")}${scriptInspectorField("目标", "goal", selected.goal, "角色想实现的目标")}${scriptInspectorField("人物简介", "bio", selected.bio, "记录成长经历、动机与秘密", true)}${scriptInspectorField("标签", "tags", selected.tags.join("，"), "用逗号分隔，如：主角，坚韧")}</section><section class="control-section"><div class="action-list"><button class="action-row" type="button" id="duplicateScriptRoleButton">${icon("copy")}<strong>复制角色</strong><small>复制资料与标签</small></button><button class="action-row danger-action" type="button" id="deleteScriptRoleButton">${icon("trash-2")}<strong>删除角色</strong><small>同时删除关系线</small></button></div></section>`;
   $$('[data-script-detail]').forEach(input => input.addEventListener("input", event => { updateScriptCharacterField(selected.id, event.target.dataset.scriptDetail, event.target.value); if (["name", "identity"].includes(event.target.dataset.scriptDetail)) { renderScriptFlow(); renderLibrary(); } })); $("#duplicateScriptRoleButton")?.addEventListener("click", duplicateScriptCharacter); $("#deleteScriptRoleButton")?.addEventListener("click", deleteScriptSelection); refreshIcons();
-}function formatClipTime(value) { const seconds = Math.max(0, Number(value) || 0); const minutes = Math.floor(seconds / 60); return `${String(minutes).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}.${String(Math.round((seconds % 1) * 10)).padStart(1, "0")}`; }
+}function formatClipTime(value) { const seconds = Math.max(0, Number(value) || 0); const minutes = Math.floor(seconds / 60); return `${String(minutes).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}.${String(Math.round((seconds % 1) * 100)).padStart(2, "0")}`; }
 function videoTimelineEntries(node) {
   const clips = videoEditorClips(node); let cursor = 0;
   const entries = clips.map((clip, index) => {
@@ -1728,7 +1728,7 @@ function videoTimelineEntries(node) {
 function videoTimelinePoint(node, clientX, track) {
   const { total } = videoTimelineEntries(node); const rect = track.getBoundingClientRect();
   const ratio = rect.width ? Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) : 0;
-  return Math.round(ratio * total * 10) / 10;
+  return Math.round(ratio * total * 100) / 100;
 }
 function videoPreviewFrame(node) {
   const edge = incomingEdge(node?.id, "video"); const editor = findNode(edge?.source); if (!editor || editor.type !== "video-editor") return null;
@@ -1743,11 +1743,29 @@ function updateTimelinePlayheadDom(editor) {
   document.querySelectorAll(`[data-editor-node="${editor.id}"][data-video-clip]`).forEach(card => card.classList.toggle("is-active", card.dataset.videoClip === editor.selectedClipId));
   syncVideoPreviewPlayback(editor.id);
 }
+function videoPreviewElements(editorId) {
+  return state.nodes.filter(node => node.type === "video-preview" && incomingEdge(node.id, "video")?.source === editorId).map(node => document.querySelector(`[data-preview-composite="${node.id}"]`)).filter(Boolean);
+}
+function updateVideoPlayButtonDom(editor) {
+  document.querySelectorAll(`[data-video-play="${editor.id}"]`).forEach(button => { button.innerHTML = `${icon(editor.previewPlaying ? "pause" : "play")} ${editor.previewPlaying ? "暂停预览" : "播放预览"}`; button.setAttribute("aria-label", editor.previewPlaying ? "暂停预览" : "播放预览"); });
+  refreshIcons();
+}
+function stopVideoEditorPreview(editor) {
+  if (!editor) return;
+  editor.previewPlaying = false; videoPreviewElements(editor.id).forEach(video => video.pause()); updateVideoPlayButtonDom(editor);
+}
+function toggleVideoEditorPlayback(editorId) {
+  const editor = findNode(editorId); if (!editor || editor.type !== "video-editor") return;
+  const videos = videoPreviewElements(editor.id); if (!videos.length) return toast("请先把视频剪辑节点连接到成片预览节点", true);
+  if (editor.previewPlaying) return stopVideoEditorPreview(editor);
+  editor.previewPlaying = true; updateVideoPlayButtonDom(editor); syncVideoPreviewPlayback(editor.id, true);
+  videos.forEach(video => { void video.play().catch(() => { editor.previewPlaying = false; updateVideoPlayButtonDom(editor); toast("预览视频暂时无法播放", true); }); });
+}
 function syncVideoPreviewPlayback(editorId, autoplay = false) {
   const editor = findNode(editorId); if (!editor) return;
   state.nodes.filter(node => node.type === "video-preview" && incomingEdge(node.id, "video")?.source === editorId).forEach(node => {
     const video = document.querySelector(`[data-preview-composite="${node.id}"]`); const frame = videoPreviewFrame(node); if (!video || !frame) return;
-    const sourceChanged = video.dataset.previewClipId !== frame.entry.clip.id || video.src !== new URL(frame.source, window.location.href).href;
+    const sourceChanged = video.src !== new URL(frame.source, window.location.href).href;
     video.dataset.previewClipId = frame.entry.clip.id; video.dataset.previewEditor = editorId;
     if (sourceChanged) { video.src = frame.source; video.load(); video.addEventListener("loadedmetadata", () => { video.currentTime = frame.currentTime; if (autoplay) void video.play().catch(() => {}); }, { once: true }); }
     else if (Number.isFinite(frame.currentTime) && Math.abs(video.currentTime - frame.currentTime) > .2) video.currentTime = frame.currentTime;
@@ -1756,16 +1774,17 @@ function syncVideoPreviewPlayback(editorId, autoplay = false) {
 }
 function setVideoTimelinePlayhead(nodeId, time, clipId = "") {
   const node = findNode(nodeId); if (!node || node.type !== "video-editor") return;
+  stopVideoEditorPreview(node);
   const { total } = videoTimelineEntries(node); node.timelinePlayhead = Math.max(0, Math.min(total, Number(time) || 0)); node.selectedClipId = clipId || node.selectedClipId || "";
   updateTimelinePlayheadDom(node); renderInspector();
 }
 function splitVideoClipAtPlayhead(nodeId) {
   const editor = findNode(nodeId); if (!editor || editor.type !== "video-editor") return;
-  const { entries, total } = videoTimelineEntries(editor); const playhead = Math.max(0, Math.min(total, Number(editor.timelinePlayhead) || 0)); const entry = entries.find(item => playhead > item.timelineStart + .1 && playhead < item.timelineEnd - .1);
+  const { entries, total } = videoTimelineEntries(editor); const playhead = Math.max(0, Math.min(total, Number(editor.timelinePlayhead) || 0)); const entry = entries.find(item => playhead > item.timelineStart + .01 && playhead < item.timelineEnd - .01);
   if (!entry) return toast("请把播放指针放在视频片段中间再分割", true);
   const sourceTime = entry.sourceStart + (playhead - entry.timelineStart); const originalEnd = entry.sourceEnd;
-  if (sourceTime <= entry.sourceStart + .1 || sourceTime >= originalEnd - .1) return toast("当前位置不能分割", true);
-  recordHistory(); const first = entry.clip; first.end = Math.round(sourceTime * 10) / 10;
+  if (sourceTime <= entry.sourceStart + .01 || sourceTime >= originalEnd - .01) return toast("当前位置不能分割", true);
+  recordHistory(); const first = entry.clip; first.end = Math.round(sourceTime * 100) / 100;
   const second = { ...first, id: uid("clip"), start: first.end, end: originalEnd, name: `${first.name} · 后半段` };
   editor.clips.splice(entry.index + 1, 0, second); editor.selectedClipId = second.id; resetVideoEditorOutput(editor); renderWorkspace(); scheduleSave(); toast("已在播放指针处切开视频");
 }
@@ -1774,7 +1793,7 @@ function reorderVideoClip(nodeId, clipId, targetClipId, before = true) {
   const from = editor.clips.findIndex(clip => clip.id === clipId); let target = editor.clips.findIndex(clip => clip.id === targetClipId); if (from < 0 || target < 0) return;
   recordHistory(); const [clip] = editor.clips.splice(from, 1); if (from < target) target -= 1; editor.clips.splice(Math.max(0, target + (before ? 0 : 1)), 0, clip); editor.selectedClipId = clipId; resetVideoEditorOutput(editor); renderWorkspace(); scheduleSave();
 }
-function resetVideoEditorOutput(editor) { editor.status = "idle"; editor.outputSrc = ""; editor.lastError = ""; }
+function resetVideoEditorOutput(editor) { editor.status = "idle"; editor.outputSrc = ""; editor.lastError = ""; editor.previewPlaying = false; videoPreviewElements(editor.id).forEach(video => video.pause()); }
 function openVideoClipContextMenu(event, nodeId, clipId) {
   event.preventDefault(); event.stopPropagation(); closeConnectionMenu(); closeCanvasContextMenu();
   const menu = document.createElement("div"); menu.className = "canvas-context-menu video-clip-context-menu";
@@ -2005,11 +2024,11 @@ function renderVideoEditorNodeHtml(node, selected, style) {
   }).join("");
   const trackWidth = Math.max(560, clips.length * 150, timeline.total * 42);
   const playheadPercent = timeline.total ? (playhead / timeline.total) * 100 : 0;
-  return `<article class="canvas-node video-editor-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "scissors", "", true, true)}<div class="node-body video-editor-body"><div class="video-editor-toolbar"><div><strong>视频轨道</strong><span>${clips.length} 段 · ${formatClipTime(timeline.total)}</span></div><div class="video-editor-toolbar-actions"><button class="add-input-button node-interactive" type="button" data-video-split="${node.id}"${!clips.length ? " disabled" : ""}>${icon("scissors")} 分割</button><button class="add-input-button node-interactive" type="button" data-import-video="${node.id}">${icon("video")} 导入视频</button></div></div><div class="video-editor-timeline"><div class="video-editor-ruler" style="min-width:${trackWidth}px">${rulerLabels.map(label => `<span>${label}</span>`).join("")}</div><div class="video-editor-track-scroll"><div class="video-editor-track" data-video-timeline="${node.id}" style="width:${trackWidth}px"><div class="video-editor-clips">${clipHtml || `<div class="video-editor-empty">${icon("film")}<span>点击“导入视频”，或把画布的视频结果连接到左侧端口</span></div>`}</div><button class="video-timeline-playhead node-interactive" type="button" data-video-playhead="${node.id}" style="left:${playheadPercent}%" aria-label="播放指针"><span></span></button></div></div></div><div class="node-run-state"><span>拖动指针实时预览 · 右键片段删除</span><span class=""${node.lastError ? ` title="${escapeHtml(node.lastError)}"` : ""}>${escapeHtml(status)}</span></div></div></div>${resizeHandleHtml(node)}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `video-${index}`, "video", "input", `视频 ${index + 1}`, 104 + index * 28)).join("")}${portHtml(node, "video", "video", "output", "成片视频", 70)}</article>`;
+  return `<article class="canvas-node video-editor-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "scissors", "", true, true)}<div class="node-body video-editor-body"><div class="video-editor-toolbar"><div><strong>视频轨道</strong><span>${clips.length} 段 · ${formatClipTime(timeline.total)}</span></div><div class="video-editor-toolbar-actions"><button class="add-input-button node-interactive" type="button" data-video-play="${node.id}"${!clips.length ? " disabled" : ""}>${icon(node.previewPlaying ? "pause" : "play")} ${node.previewPlaying ? "暂停预览" : "播放预览"}</button><button class="add-input-button node-interactive" type="button" data-video-split="${node.id}"${!clips.length ? " disabled" : ""}>${icon("scissors")} 分割</button><button class="add-input-button node-interactive" type="button" data-import-video="${node.id}">${icon("video")} 导入视频</button></div></div><div class="video-editor-timeline"><div class="video-editor-ruler" style="min-width:${trackWidth}px">${rulerLabels.map(label => `<span>${label}</span>`).join("")}</div><div class="video-editor-track-scroll"><div class="video-editor-track" data-video-timeline="${node.id}" style="width:${trackWidth}px"><div class="video-editor-clips">${clipHtml || `<div class="video-editor-empty">${icon("film")}<span>点击“导入视频”，或把画布的视频结果连接到左侧端口</span></div>`}</div><button class="video-timeline-playhead node-interactive" type="button" data-video-playhead="${node.id}" style="left:${playheadPercent}%" aria-label="播放指针"><span></span></button></div></div></div><div class="node-run-state"><span>播放控制在此处 · 右键片段删除</span><span class=""${node.lastError ? ` title="${escapeHtml(node.lastError)}"` : ""}>${escapeHtml(status)}</span></div></div></div>${resizeHandleHtml(node)}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `video-${index}`, "video", "input", `视频 ${index + 1}`, 104 + index * 28)).join("")}${portHtml(node, "video", "video", "output", "成片视频", 70)}</article>`;
 }
 function renderVideoPreviewNodeHtml(node, selected, style) {
   const frame = videoPreviewFrame(node); const source = videoPreviewSource(node); const connected = Boolean(incomingEdge(node.id, "video")); const actions = frame ? `<button class="icon-button node-interactive" type="button" data-export-preview="${node.id}" aria-label="导出下载视频" data-tooltip="导出下载视频">${icon("download")}</button>` : "";
-  const preview = frame ? `<video class="video-preview node-interactive" data-preview-composite="${node.id}" data-preview-editor="${frame.editor.id}" data-preview-clip-id="${escapeHtml(frame.entry.clip.id)}" src="${escapeHtml(frame.source)}" controls playsinline preload="metadata"></video>` : `<div class="video-preview-empty">${icon("monitor-play")}<strong>${connected ? "等待视频片段" : "等待视频连接"}</strong><span>${connected ? "剪辑节点还没有可预览的片段" : "连接视频剪辑节点后，这里会实时预览时间轴"}</span></div>`;
+  const preview = frame ? `<video class="video-preview node-interactive" data-preview-composite="${node.id}" data-preview-editor="${frame.editor.id}" data-preview-clip-id="${escapeHtml(frame.entry.clip.id)}" src="${escapeHtml(frame.source)}" playsinline preload="metadata"></video>` : `<div class="video-preview-empty">${icon("monitor-play")}<strong>${connected ? "等待视频片段" : "等待视频连接"}</strong><span>${connected ? "剪辑节点还没有可预览的片段" : "连接视频剪辑节点后，这里会实时预览时间轴"}</span></div>`;
   return `<article class="canvas-node video-preview-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "monitor-play", actions)}<div class="node-body">${preview}<div class="image-node-meta"><strong>实时成片预览</strong><span>${source ? "已导出 · 可下载" : frame ? "跟随时间轴" : connected ? "等待片段" : "未连接"}</span></div></div></div>${resizeHandleHtml(node)}${portHtml(node, "video", "video", "input", "成片视频", 70)}</article>`;
 }
 function renderVideoGeneratorNodeHtml(node, selected, style) {
@@ -2060,6 +2079,7 @@ function bindNodeEvents() {
   $$('[data-import-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoImportNodeId = button.dataset.importVideo; videoFileInput.value = ""; videoFileInput.click(); }));
   $$('[data-compose-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); composeVideoEditor(button.dataset.composeVideo); }));
   $$('[data-clip-field]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("change", event => updateVideoClip(input.dataset.editorNode, input.dataset.clipId, input.dataset.clipField, event.target.value)); });
+  $$('[data-video-play]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); toggleVideoEditorPlayback(button.dataset.videoPlay); }));
   $$('[data-video-split]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); splitVideoClipAtPlayhead(button.dataset.videoSplit); }));
   $$('[data-video-timeline]').forEach(track => track.addEventListener("click", event => {
     if (event.target.closest("[data-video-playhead]")) return;
@@ -2068,7 +2088,7 @@ function bindNodeEvents() {
     setVideoTimelinePlayhead(node.id, time, entry?.clip.id || "");
   }));
   $$('[data-video-playhead]').forEach(handle => handle.addEventListener("pointerdown", event => {
-    event.preventDefault(); event.stopPropagation(); const node = findNode(handle.dataset.videoPlayhead); const track = handle.closest("[data-video-timeline]"); if (!node || !track) return;
+    event.preventDefault(); event.stopPropagation(); const node = findNode(handle.dataset.videoPlayhead); const track = handle.closest("[data-video-timeline]"); if (!node || !track) return; stopVideoEditorPreview(node);
     const update = moveEvent => { const time = videoTimelinePoint(node, moveEvent.clientX, track); node.timelinePlayhead = time; const entry = videoTimelineEntries(node).entries.find(item => time >= item.timelineStart && time <= item.timelineEnd); node.selectedClipId = entry?.clip.id || node.selectedClipId || ""; updateTimelinePlayheadDom(node); };
     const finish = moveEvent => { update(moveEvent); document.removeEventListener("pointermove", update); document.removeEventListener("pointerup", finish); renderCanvas(); renderInspector(); scheduleSave(); };
     document.addEventListener("pointermove", update); document.addEventListener("pointerup", finish, { once: true });
@@ -2086,8 +2106,7 @@ function bindNodeEvents() {
   $$('[data-preview-composite]').forEach(video => {
     video.addEventListener("loadedmetadata", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (frame) video.currentTime = frame.currentTime; });
     video.addEventListener("timeupdate", () => handleVideoPreviewTimeUpdate(video));
-    video.addEventListener("ended", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (frame && frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor); });
-    video.addEventListener("dblclick", event => { event.stopPropagation(); const node = findNode(video.dataset.previewComposite); if (node) openVideoPreview(node); });
+    video.addEventListener("ended", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (!frame) return; if (frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor); else { frame.editor.previewPlaying = false; updateVideoPlayButtonDom(frame.editor); } });
   });
   $$('[data-export-preview]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void exportVideoPreview(button.dataset.exportPreview); }));
 
@@ -2525,7 +2544,7 @@ function handleVideoPreviewTimeUpdate(video) {
   if (video.currentTime >= frame.entry.sourceEnd - .08 && frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor);
 }
 function advanceVideoPreview(video, editor) {
-  const timeline = videoTimelineEntries(editor); const next = timeline.entries.find(entry => entry.index === timeline.entries.find(current => current.clip.id === editor.selectedClipId)?.index + 1); if (!next) return;
+  const timeline = videoTimelineEntries(editor); const currentIndex = timeline.entries.findIndex(entry => entry.clip.id === editor.selectedClipId); const next = currentIndex >= 0 ? timeline.entries[currentIndex + 1] : null; if (!next) return;
   editor.timelinePlayhead = next.timelineStart; editor.selectedClipId = next.clip.id; syncVideoPreviewPlayback(editor.id, true); updateTimelinePlayheadDom(editor);
 }
 async function exportVideoPreview(nodeId) {
