@@ -123,6 +123,8 @@
         <button class="tool-button node-tool image-tool" id="toolUploadButton" type="button" aria-label="添加图片模块" data-tooltip="图片模块"><i data-lucide="image-plus"></i></button>
         <button class="tool-button node-tool generator-tool" type="button" data-add-node="generator" aria-label="添加生图模块" data-tooltip="生图模块"><i data-lucide="sparkles"></i></button>
         <button class="tool-button node-tool video-tool" type="button" data-add-node="video" aria-label="添加视频模块" data-tooltip="视频模块"><i data-lucide="clapperboard"></i></button>
+        <button class="tool-button node-tool video-edit-tool" type="button" data-add-node="video-editor" aria-label="添加视频剪辑模块" data-tooltip="视频剪辑"><i data-lucide="scissors"></i></button>
+        <button class="tool-button node-tool video-preview-tool" type="button" data-add-node="video-preview" aria-label="添加成片预览模块" data-tooltip="成片预览"><i data-lucide="monitor-play"></i></button>
         <button class="tool-button node-tool answer-tool" type="button" data-add-node="answer" aria-label="添加模型回答模块" data-tooltip="模型回答"><i data-lucide="message-square-text"></i></button>
         <button class="tool-button note-tool" type="button" data-add-node="note" aria-label="添加便签" data-tooltip="便签"><i data-lucide="sticky-note"></i></button>
         <button class="tool-button" id="addFrameButton" type="button" aria-label="新建分组画板" data-tooltip="分组画板 (F)"><i data-lucide="frame"></i></button>
@@ -147,6 +149,7 @@
   </div>
 
   <input id="imageFileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+  <input id="videoFileInput" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" multiple hidden>
   <input id="projectFileInput" type="file" accept="application/json" hidden>
 
   <dialog class="settings-dialog" id="newProjectDialog">
@@ -238,7 +241,7 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
   <script src="/vendor/lucide.min.js?v=20260724-8"></script>
-  <script type="module" src="/app.js?v=20260807-13"></script>
+  <script type="module" src="/app.js?v=20260808-1"></script>
 </body>
 </html>
 

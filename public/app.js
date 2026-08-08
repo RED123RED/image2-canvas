@@ -91,7 +91,7 @@ function generatorModelLabel(modelId, fallback = "Image2") {
     || fallback;
 }
 function generatorReferenceLimit(node) { if (node?.mediaType === "video") return runningHubVideoMode(node).inputs.length; if (node?.provider === "moyu") return 6; if (node?.provider === "gemini") return 14; return 8; }
-const nodeLabels = { prompt: "提示词", composition: "参数控制", image: "图像", video: "视频", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
+const nodeLabels = { prompt: "提示词", composition: "参数控制", image: "图像", video: "视频", "video-editor": "视频剪辑", "video-preview": "成片预览", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
 const scriptRoleTypes = [
   { id: "male-1", gender: "male", label: "男性 1" },
   { id: "male-2", gender: "male", label: "男性 2" },
@@ -122,6 +122,7 @@ const edgeLayer = $("#edgeLayer");
 const libraryContent = $("#libraryContent");
 const inspectorContent = $("#inspectorContent");
 const imageFileInput = $("#imageFileInput");
+const videoFileInput = $("#videoFileInput");
 const projectFileInput = $("#projectFileInput");
 const settingsDialog = $("#settingsDialog");
 const newProjectDialog = $("#newProjectDialog");
@@ -158,6 +159,7 @@ function clearWorkflowInteractionState() {
   if (selectionRect) selectionRect.hidden = true;
 }
 let pendingImageUploadNodeId = null;
+let pendingVideoImportNodeId = null;
 let cropSession = null;
 let compositionDragSession = null;
 let promptLayoutResizeSession = null;
@@ -256,6 +258,8 @@ function nodeHeight(type, slots = 4, promptSlots = 1) {
   if (type === "composition") return 470;
   if (type === "image" || type === "loading") return 322;
   if (type === "video-generator") return 470 + Math.max(0, Number(slots) || 0) * 30 + Math.max(0, Number(promptSlots) - 1) * 30;
+  if (type === "video-editor") return 390;
+  if (type === "video-preview") return 322;
   if (type === "generator") return 316 + slots * 30 + Math.max(0, promptSlots - 1) * 30;
   if (type === "answer") return 344 + slots * 30 + Math.max(0, promptSlots - 1) * 30;
   return 420;
@@ -389,6 +393,12 @@ function createGeneratorNode(x, y) {
 function createVideoNode(x, y) {
   return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoMode: "first-frame", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 1, videoInputSlotsInitialized: true, width: 390, height: nodeHeight("video-generator", 1, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
+function createVideoEditorNode(x, y) {
+  return { id: uid("video-editor"), type: "video-editor", name: "视频剪辑", x, y, width: 680, height: nodeHeight("video-editor"), clips: [], inputSlots: 6, status: "idle", outputSrc: "", outputType: "mp4", createdAt: Date.now() };
+}
+function createVideoPreviewNode(x, y) {
+  return { id: uid("video-preview"), type: "video-preview", name: "成片预览", x, y, width: 360, height: nodeHeight("video-preview"), createdAt: Date.now() };
+}
 function createAnswerNode(x, y) {
   return { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, height: nodeHeight("answer", 4, 1), model: "gpt-5.6", status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
 }
@@ -514,6 +524,14 @@ function normalizeProject(project) {
         generatorNormalized.outputSize = normalizeGeneratorOutputSize(generatorNormalized);
         return generatorNormalized;
       }
+      if (node.type === "video-editor") {
+        const clips = Array.isArray(node.clips) ? node.clips.filter(clip => clip && typeof clip.src === "string" && clip.src).slice(0, 24).map((clip, index) => {
+          const start = Math.max(0, Number(clip.start) || 0); const duration = Math.max(0, Number(clip.duration) || 0); const end = Math.max(0, Number(clip.end) || duration);
+          return { id: String(clip.id || `clip-${index}`), name: String(clip.name || `视频片段 ${index + 1}`), src: clip.src, start, end: end > start ? end : duration, duration, origin: clip.origin === "linked" ? "linked" : "imported" };
+        }) : [];
+        return { ...node, name: node.name || "视频剪辑", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(440, Number(node.width) || 680), height: Math.max(300, Number(node.height) || nodeHeight("video-editor")), inputSlots: 6, clips, status: ["idle", "rendering", "ready", "error"].includes(node.status) ? node.status : "idle", outputSrc: String(node.outputSrc || ""), outputType: "mp4", lastError: String(node.lastError || "") };
+      }
+      if (node.type === "video-preview") return { ...node, name: node.name || "成片预览", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(280, Number(node.width) || 360), height: Math.max(280, Number(node.height) || nodeHeight("video-preview")), outputType: "mp4" };
       if (node.type === "answer") {
         const slots = Math.min(4, Math.max(1, Number(node.inputSlots) || 4));
         return { ...node, name: node.name || "模型回答", width: Math.max(320, Number(node.width) || 380), promptSlots: 1, inputSlots: slots, height: Math.max(Number(node.height) || 0, nodeHeight("answer", slots, 1)), model: ["gpt-5.5", "gpt-5.6"].includes(node.model) ? node.model : "gpt-5.6", status: node.status === "running" ? "running" : "idle", answer: String(node.answer || ""), error: String(node.error || "") };
@@ -835,12 +853,15 @@ function connectionChoicesForDraft(draft) {
   if (!source) return [];
   const generatorChoice = { kind: "generator", title: "新建生图节点", subtitle: "默认 Image2，可切换 Gemini", icon: "sparkles" };
   const videoChoice = { kind: "video", title: "新建视频节点", subtitle: "海螺 H3 · RunningHub", icon: "clapperboard" };
+  const videoEditorChoice = { kind: "video-editor", title: "新建视频剪辑节点", subtitle: "导入、裁切并调整多条视频顺序", icon: "scissors" };
+  const videoPreviewChoice = { kind: "video-preview", title: "新建成片预览节点", subtitle: "播放和下载合成后的 MP4", icon: "monitor-play" };
   const answerChoice = { kind: "answer", title: "新建模型回答节点", subtitle: "自动连接并用于文本回答", icon: "message-square-text" };
   const compositionChoice = { kind: "composition", title: "新建参数控制节点", subtitle: "自动写入已连接的提示词", icon: "sliders-horizontal" };
   if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, videoChoice, answerChoice];
   if (source.type === "prompt" && draft.direction === "input" && draft.dataType === "composition") return [compositionChoice];
   if (source.type === "composition" && draft.direction === "output" && draft.dataType === "composition") return [{ kind: "prompt", title: "新建提示词节点", subtitle: "自动接收构图指令", icon: "text-cursor-input" }];
   if ((source.type === "image" || source.type === "loading") && draft.direction === "output" && draft.dataType === "image") return [generatorChoice, videoChoice, answerChoice];
+  if ((source.type === "video" || source.type === "video-editor") && draft.direction === "output" && draft.dataType === "video") return source.type === "video-editor" ? [videoPreviewChoice] : [videoEditorChoice, videoPreviewChoice];
   if ((source.type === "generator" || source.type === "answer") && draft.direction === "input" && draft.dataType === "prompt") return [{ kind: "prompt", title: "新建提示词节点", subtitle: "自动连接到此提示词输入", icon: "text-cursor-input" }];
   if ((source.type === "generator" || source.type === "answer") && draft.direction === "input" && draft.dataType === "image") return [{ kind: "reference", title: "新建参考图节点", subtitle: "连接到参考图输入，随后手动上传", icon: "image-plus" }];
   return [];
@@ -851,6 +872,8 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   let node = null;
   if (kind === "generator") node = createGeneratorNode(Math.round(screenToScene(clientX, clientY).x - 180), Math.round(screenToScene(clientX, clientY).y - 180));
   if (kind === "video") node = createVideoNode(Math.round(screenToScene(clientX, clientY).x - 195), Math.round(screenToScene(clientX, clientY).y - 235));
+  if (kind === "video-editor") node = createVideoEditorNode(Math.round(screenToScene(clientX, clientY).x - 340), Math.round(screenToScene(clientX, clientY).y - 195));
+  if (kind === "video-preview") node = createVideoPreviewNode(Math.round(screenToScene(clientX, clientY).x - 180), Math.round(screenToScene(clientX, clientY).y - 160));
   if (kind === "answer") node = createAnswerNode(Math.round(screenToScene(clientX, clientY).x - 190), Math.round(screenToScene(clientX, clientY).y - 185));
   if (kind === "prompt") node = createPromptNode(Math.round(screenToScene(clientX, clientY).x - 160), Math.round(screenToScene(clientX, clientY).y - 145), "");
   if (kind === "composition") node = createCompositionNode(Math.round(screenToScene(clientX, clientY).x - 175), Math.round(screenToScene(clientX, clientY).y - 145));
@@ -858,10 +881,10 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   if (!node) return;
   state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null;
   if (draft.direction === "output") {
-    const targetPort = (kind === "generator" || kind === "video" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
+    const targetPort = (kind === "generator" || kind === "video" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "video-editor" && draft.dataType === "video" ? "video-0" : kind === "video-preview" && draft.dataType === "video" ? "video" : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
     if (targetPort) connectPorts(draft, { nodeId: node.id, portId: targetPort, dataType: draft.dataType, direction: "input" }, false);
   } else {
-    const outputPort = kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : kind === "video" ? "video" : "image";
+    const outputPort = kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : kind === "video" || kind === "video-editor" ? "video" : "image";
     connectPorts({ nodeId: node.id, portId: outputPort, dataType: draft.dataType, direction: "output" }, draft, false);
   }
   renderCanvas(); renderInspector(); scheduleSave();
@@ -892,6 +915,8 @@ function createCanvasElementAt(kind, clientX, clientY) {
   if (kind === "reference") node = createReferenceNode(Math.round(point.x - 135), Math.round(point.y - 160));
   if (kind === "generator") node = createGeneratorNode(Math.round(point.x - 180), Math.round(point.y - 180));
   if (kind === "video") node = createVideoNode(Math.round(point.x - 195), Math.round(point.y - 235));
+  if (kind === "video-editor") node = createVideoEditorNode(Math.round(point.x - 340), Math.round(point.y - 195));
+  if (kind === "video-preview") node = createVideoPreviewNode(Math.round(point.x - 180), Math.round(point.y - 160));
   if (kind === "answer") node = createAnswerNode(Math.round(point.x - 190), Math.round(point.y - 185));
   if (kind === "note") node = createNote(Math.round(point.x - 130), Math.round(point.y - 95));
   if (kind === "frame") node = { id: uid("frame"), type: "frame", name: `工作流分组 ${state.frameCounter++}`, x: Math.round(point.x - 260), y: Math.round(point.y - 170), width: 520, height: 340, createdAt: Date.now() };
@@ -907,6 +932,8 @@ function showCanvasContextMenu(event) {
     { kind: "reference", title: "参考图", icon: "image-plus" },
     { kind: "generator", title: "生图", icon: "sparkles" },
     { kind: "video", title: "视频", icon: "clapperboard" },
+    { kind: "video-editor", title: "视频剪辑", icon: "scissors" },
+    { kind: "video-preview", title: "成片预览", icon: "monitor-play" },
     { kind: "answer", title: "模型回答", icon: "message-square-text" },
     { kind: "note", title: "便签", icon: "sticky-note" },
     { kind: "frame", title: "分组画板", icon: "frame" }
@@ -1688,11 +1715,36 @@ function renderScriptInspector() {
   if (selected.type === "ai-assistant") { const target = scriptAssistantTargetLabel(flow, selected.targetId); $("#inspectorTitle").textContent = "AI助手"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">工作状态</div><div class="summary-row"><span>处理模块</span><strong>${escapeHtml(target)}</strong></div><div class="summary-row"><span>模型</span><strong>${escapeHtml(selected.model === "gpt-5.5" ? "GPT-5.5" : "GPT-5.6")}</strong></div><div class="summary-row"><span>模块尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">选择目标模块、输入需求后，AI 会围绕该模块内容输出建议。右下角可自由调整大小。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteScriptAssistantButton" type="button">${icon("trash-2")} 删除 AI 助手</button></section>`; $("#deleteScriptAssistantButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); }  if (selected.type === "script-note") { $("#inspectorTitle").textContent = "便签"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">便签内容</div><div class="summary-row"><span>文本长度</span><strong data-script-note-length="${selected.id}">${(selected.content || "").length} 字</strong></div><div class="summary-row"><span>便签尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">直接在便签中记录内容；可自由移动、拉伸、复制粘贴，按 Delete 或 Backspace 删除。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteScriptNoteButton" type="button">${icon("trash-2")} 删除便签</button></section>`; $("#deleteScriptNoteButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); }  $("#inspectorTitle").textContent = "角色功能"; const links = flow.relationships.filter(link => link.source === selected.id || link.target === selected.id).length;
   inspectorContent.innerHTML = `<section class="script-character-summary ${selected.gender}">${scriptAvatarHtml(selected)}<div><strong>${escapeHtml(scriptCharacterLabel(selected))}</strong><span>${escapeHtml(selected.identity || (selected.gender === "female" ? "女性角色" : "男性角色"))} · ${links} 条关系</span></div></section><section class="control-section script-details">${scriptInspectorField("名称", "name", selected.name, "输入角色名称")}${scriptInspectorField("身份", "identity", selected.identity, "如：主角、恋人、反派")}${scriptInspectorField("年龄", "age", selected.age, "如：28 岁")}${scriptInspectorField("职业", "occupation", selected.occupation, "如：摄影师")}${scriptInspectorField("性格", "personality", selected.personality, "如：冷静、执着")}${scriptInspectorField("目标", "goal", selected.goal, "角色想实现的目标")}${scriptInspectorField("人物简介", "bio", selected.bio, "记录成长经历、动机与秘密", true)}${scriptInspectorField("标签", "tags", selected.tags.join("，"), "用逗号分隔，如：主角，坚韧")}</section><section class="control-section"><div class="action-list"><button class="action-row" type="button" id="duplicateScriptRoleButton">${icon("copy")}<strong>复制角色</strong><small>复制资料与标签</small></button><button class="action-row danger-action" type="button" id="deleteScriptRoleButton">${icon("trash-2")}<strong>删除角色</strong><small>同时删除关系线</small></button></div></section>`;
   $$('[data-script-detail]').forEach(input => input.addEventListener("input", event => { updateScriptCharacterField(selected.id, event.target.dataset.scriptDetail, event.target.value); if (["name", "identity"].includes(event.target.dataset.scriptDetail)) { renderScriptFlow(); renderLibrary(); } })); $("#duplicateScriptRoleButton")?.addEventListener("click", duplicateScriptCharacter); $("#deleteScriptRoleButton")?.addEventListener("click", deleteScriptSelection); refreshIcons();
-}function portPoint(node, portId) {
+}function formatClipTime(value) { const seconds = Math.max(0, Number(value) || 0); const minutes = Math.floor(seconds / 60); return `${String(minutes).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}.${String(Math.round((seconds % 1) * 10)).padStart(1, "0")}`; }
+function videoEditorConnectedClips(node) {
+  const edges = state.edges.filter(edge => edge.target === node.id && edge.type === "video" && /^video-\d+$/.test(edge.targetPort));
+  return edges.map((edge, index) => {
+    const source = findNode(edge.source); const src = source?.originalSrc || source?.src || "";
+    return { id: `edge-${edge.id}`, name: source?.name || `连接视频 ${index + 1}`, src, start: 0, end: Number(source?.duration) || 0, duration: Number(source?.duration) || 0, origin: "linked" };
+  }).filter(clip => clip.src);
+}
+function syncVideoEditorClips(node) {
+  if (!node || node.type !== "video-editor") return [];
+  const linked = videoEditorConnectedClips(node); const byId = new Map((node.clips || []).map(clip => [clip.id, clip]));
+  const linkedById = new Map(linked.map(clip => [clip.id, clip]));
+  const existing = (node.clips || []).filter(clip => clip.origin !== "linked" || linkedById.has(clip.id)).map(clip => clip.origin === "linked" ? { ...clip, ...linkedById.get(clip.id), start: Number(clip.start) || 0, end: Number(clip.end) || Number(linkedById.get(clip.id)?.end) || 0 } : clip);
+  const known = new Set(existing.map(clip => clip.id));
+  node.clips = [...existing, ...linked.filter(clip => !known.has(clip.id)).map(clip => ({ ...clip, ...(byId.get(clip.id) || {}) }))];
+  return node.clips;
+}
+function syncAllVideoEditorClips() { state?.nodes.filter(node => node.type === "video-editor").forEach(syncVideoEditorClips); }
+function videoEditorClips(node) { return (node?.clips || []).filter(clip => clip?.src); }
+function videoPreviewSource(node) { const edge = incomingEdge(node?.id, "video"); const editor = findNode(edge?.source); return editor?.type === "video-editor" ? editor.outputSrc || "" : ""; }
+function portPoint(node, portId) {
   if (!node) return { x: 0, y: 0 };
   if (node.type === "prompt") return portId === "composition" ? { x: node.x, y: node.y + 104 } : { x: node.x + node.width, y: node.y + 72 };
   if (node.type === "composition") return { x: node.x + node.width, y: node.y + 72 };
   if (node.type === "image" || node.type === "loading" || node.type === "video") return portId === "result" ? { x: node.x, y: node.y + 70 } : { x: node.x + node.width, y: node.y + 70 };
+  if (node.type === "video-editor") {
+    if (portId === "video") return { x: node.x + node.width, y: node.y + 70 };
+    const index = Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + 104 + index * 28 };
+  }
+  if (node.type === "video-preview") return { x: node.x, y: node.y + 70 };
   if (node.type === "generator") {
     if (portId === "image" || portId === "video") return { x: node.x + node.width, y: node.y + 76 };
     if (node.mediaType === "video") {
@@ -1747,6 +1799,7 @@ function renderEdges() {
   } else draft?.remove();
 }
 function renderCanvas() {
+  syncAllVideoEditorClips();
   const nodes = [...state.nodes].sort((a, b) => { if (a.type === "frame" && b.type !== "frame") return -1; if (b.type === "frame" && a.type !== "frame") return 1; return (a.createdAt || 0) - (b.createdAt || 0); });
   nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
 }
@@ -1768,6 +1821,8 @@ function renderNodeHtml(node) {
     if (node.type === "composition") return renderCompositionNodeHtml(node, selected, style);
   if (node.type === "note") return renderNoteHtml(node, selected, style);
   if (node.type === "video") return renderVideoNodeHtml(node, selected, style);
+  if (node.type === "video-editor") return renderVideoEditorNodeHtml(node, selected, style);
+  if (node.type === "video-preview") return renderVideoPreviewNodeHtml(node, selected, style);
   if (node.type === "generator") return renderGeneratorNodeHtml(node, selected, style);
   if (node.type === "answer") return renderAnswerNodeHtml(node, selected, style);
   return renderImageNodeHtml(node, selected, style);
@@ -1869,6 +1924,20 @@ function renderVideoNodeHtml(node, selected, style) {
     : `<span>${escapeHtml(node.outputType || "mp4")}${profileLabel ? ` · ${escapeHtml(profileLabel)}` : ""}</span>`;
   return `<article class="canvas-node image-node video-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", actions)}<div class="node-body">${preview}<div class="image-node-meta"><strong>${escapeHtml(node.source || "海螺 H3 视频")}</strong>${resultMeta}</div></div></div>${resizeHandleHtml(node)}${portHtml(node, "result", "video", "input", "Result", 70)}${portHtml(node, "video", "video", "output", "Video", 70)}</article>`;
 }
+function renderVideoEditorNodeHtml(node, selected, style) {
+  const clips = videoEditorClips(node);
+  const status = node.status === "rendering" ? "正在合成预览" : node.status === "ready" ? "合成预览已就绪" : node.lastError ? "上次合成失败" : clips.length ? `${clips.length} 条视频片段` : "导入或连接视频";
+  const clipHtml = clips.map((clip, index) => {
+    const end = Number(clip.end) > Number(clip.start) ? Number(clip.end) : Number(clip.duration) || 0;
+    return `<article class="video-clip-card node-interactive" data-video-clip="${escapeHtml(clip.id)}" draggable="false"><video class="video-clip-thumb" src="${escapeHtml(clip.src)}" muted playsinline preload="metadata" data-clip-probe-node="${node.id}" data-clip-probe="${escapeHtml(clip.id)}"></video><div class="video-clip-copy"><strong title="${escapeHtml(clip.name)}">${escapeHtml(clip.name)}</strong><small>${clip.origin === "linked" ? "画布视频" : "本地导入"} · ${formatClipTime(Math.max(0, end - Number(clip.start || 0)))}</small><div class="video-clip-trim"><label>起<input class="node-interactive" type="number" min="0" step="0.1" value="${Number(clip.start || 0)}" data-clip-field="start" data-editor-node="${node.id}" data-clip-id="${escapeHtml(clip.id)}"></label><label>终<input class="node-interactive" type="number" min="0" step="0.1" value="${end}" data-clip-field="end" data-editor-node="${node.id}" data-clip-id="${escapeHtml(clip.id)}"></label></div></div><div class="video-clip-actions"><button class="icon-button node-interactive" type="button" data-clip-move="left" data-editor-node="${node.id}" data-clip-id="${escapeHtml(clip.id)}" aria-label="向左移动片段" data-tooltip="向左移动">${icon("arrow-left")}</button><button class="icon-button node-interactive" type="button" data-clip-move="right" data-editor-node="${node.id}" data-clip-id="${escapeHtml(clip.id)}" aria-label="向右移动片段" data-tooltip="向右移动">${icon("arrow-right")}</button><button class="icon-button node-interactive" type="button" data-clip-remove data-editor-node="${node.id}" data-clip-id="${escapeHtml(clip.id)}" aria-label="从剪辑中移除" data-tooltip="移除片段">${icon("trash-2")}</button></div></article>`;
+  }).join("");
+  return `<article class="canvas-node video-editor-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "scissors", "", true, true)}<div class="node-body video-editor-body"><div class="video-editor-toolbar"><div><strong>视频轨道</strong><span>${clips.length} 段</span></div><button class="add-input-button node-interactive" type="button" data-import-video="${node.id}">${icon("video")} 导入视频</button></div><div class="video-editor-timeline"><div class="video-editor-ruler"><span>00:00</span><span>00:10</span><span>00:20</span><span>00:30</span></div><div class="video-editor-clips">${clipHtml || `<div class="video-editor-empty">${icon("film")}<span>点击“导入视频”，或把画布的视频结果连接到左侧端口</span></div>`}</div></div><button class="run-node-button node-interactive" type="button" data-compose-video="${node.id}"${!clips.length || node.status === "rendering" ? " disabled" : ""}>${icon(node.status === "rendering" ? "loader-circle" : "monitor-play")} ${node.status === "rendering" ? "正在合成预览" : "合成预览视频"}</button><div class="node-run-state"><span>本地剪辑 · E 盘保存</span><span class="${node.status === "ready" ? "is-ready" : ""}"${node.lastError ? ` title="${escapeHtml(node.lastError)}"` : ""}>${escapeHtml(status)}</span></div></div></div>${resizeHandleHtml(node)}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `video-${index}`, "video", "input", `视频 ${index + 1}`, 104 + index * 28)).join("")}${portHtml(node, "video", "video", "output", "成片视频", 70)}</article>`;
+}
+function renderVideoPreviewNodeHtml(node, selected, style) {
+  const source = videoPreviewSource(node); const actions = source ? `<button class="icon-button node-interactive" type="button" data-download-preview="${node.id}" aria-label="下载成片视频" data-tooltip="下载成片视频">${icon("download")}</button>` : "";
+  const preview = source ? `<video class="video-preview node-interactive" data-preview-composite="${node.id}" src="${escapeHtml(source)}" controls playsinline preload="${selected.includes("is-selected") ? "metadata" : "none"}"></video>` : `<div class="video-preview-empty">${icon("monitor-play")}<strong>等待合成视频</strong><span>连接视频剪辑节点，完成合成后可播放和下载</span></div>`;
+  return `<article class="canvas-node video-preview-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "monitor-play", actions)}<div class="node-body">${preview}<div class="image-node-meta"><strong>成片预览</strong><span>${source ? "MP4 · 可下载" : "未连接"}</span></div></div></div>${resizeHandleHtml(node)}${portHtml(node, "video", "video", "input", "成片视频", 70)}</article>`;
+}
 function renderVideoGeneratorNodeHtml(node, selected, style) {
   const dimensions = runningHubVideoDimensions(node);
   const quality = runningHubVideoQuality(node);
@@ -1914,6 +1983,14 @@ function bindNodeEvents() {
   $$('[data-node-resize]').forEach(handle => handle.addEventListener("pointerdown", startResize));
   $$('[data-download-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.downloadNode); if (node) downloadNode(node); }));
   $$('[data-crop-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); openCropDialog(button.dataset.cropNode); }));
+  $$('[data-import-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoImportNodeId = button.dataset.importVideo; videoFileInput.value = ""; videoFileInput.click(); }));
+  $$('[data-compose-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); composeVideoEditor(button.dataset.composeVideo); }));
+  $$('[data-clip-field]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("change", event => updateVideoClip(input.dataset.editorNode, input.dataset.clipId, input.dataset.clipField, event.target.value)); });
+  $$('[data-clip-move]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); moveVideoClip(button.dataset.editorNode, button.dataset.clipId, button.dataset.clipMove); }));
+  $$('[data-clip-remove]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); removeVideoClip(button.dataset.editorNode, button.dataset.clipId); }));
+  $$('[data-clip-probe]').forEach(video => video.addEventListener("loadedmetadata", () => probeVideoClip(video.dataset.clipProbeNode, video.dataset.clipProbe, video.duration)));
+  $$('[data-preview-composite]').forEach(video => video.addEventListener("dblclick", event => { event.stopPropagation(); const node = findNode(video.dataset.previewComposite); if (node) openVideoPreview(node); }));
+  $$('[data-download-preview]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.downloadPreview); if (node) downloadNode(node); }));
 
   $$('[data-node-menu]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); selectNode(button.dataset.nodeMenu); }));
   $$('[data-toggle-prompt]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.togglePrompt); if (!node || node.type !== "prompt") return; recordHistory(); node.disabled = !node.disabled; renderCanvas(); renderInspector(); scheduleSave(); toast(node.disabled ? "提示词节点已禁用" : "提示词节点已启用"); }));
@@ -2060,6 +2137,8 @@ function startNodeDrag(event, nodeId) {
 function resizeMinimum(node) {
   if (node.type === "frame") return { width: 320, height: 220 };
   if (node.type === "generator") return { width: 300, height: 250 };
+  if (node.type === "video-editor") return { width: 440, height: 300 };
+  if (node.type === "video-preview") return { width: 280, height: 280 };
   if (node.type === "answer") return { width: 320, height: 400 };
   if (node.type === "prompt") return { width: 240, height: 180 };
   if (node.type === "composition") return { width: 300, height: 365 };
@@ -2084,7 +2163,7 @@ function finishConnection(event) {
   const draft = connectionDraft;
   const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(".node-port");
   connectionDraft = null; $$(".node-port-wrap").forEach(wrap => wrap.classList.remove("is-compatible")); renderEdges();
-  if (target) { connectPorts(draft, { nodeId: target.dataset.nodeId, portId: target.dataset.portId, dataType: target.dataset.dataType, direction: target.dataset.direction }); renderCanvas(); return; }
+  if (target) { connectPorts(draft, { nodeId: target.dataset.nodeId, portId: target.dataset.portId, dataType: target.dataset.dataType, direction: target.dataset.direction }); renderCanvas(); renderInspector(); return; }
   showConnectionMenu(event.clientX, event.clientY, draft);
 }
 function connectPorts(first, second, trackHistory = true) {
@@ -2092,7 +2171,7 @@ function connectPorts(first, second, trackHistory = true) {
   const output = first.direction === "output" ? first : second; const input = first.direction === "input" ? first : second;
   if (state.edges.some(edge => edge.source === output.nodeId && edge.sourcePort === output.portId && edge.target === input.nodeId && edge.targetPort === input.portId)) return;
   if (trackHistory) recordHistory(); state.edges = state.edges.filter(edge => !(edge.target === input.nodeId && edge.targetPort === input.portId));
-  state.edges.push({ id: uid("edge"), source: output.nodeId, sourcePort: output.portId, target: input.nodeId, targetPort: input.portId, type: output.dataType }); if (output.dataType === "composition") applyCompositionToLinkedPrompts(output.nodeId); selectedEdgeId = null; scheduleSave();
+  state.edges.push({ id: uid("edge"), source: output.nodeId, sourcePort: output.portId, target: input.nodeId, targetPort: input.portId, type: output.dataType }); if (output.dataType === "composition") applyCompositionToLinkedPrompts(output.nodeId); syncAllVideoEditorClips(); selectedEdgeId = null; scheduleSave();
 }
 function handlePointerMove(event) {
   if (handleScriptPointerMove(event)) return;
@@ -2170,6 +2249,8 @@ function fitContent() {
   if (type === "prompt") node = createPromptNode(Math.round(center.x - 160), Math.round(center.y - 145));
   if (type === "generator") node = createGeneratorNode(Math.round(center.x - 180), Math.round(center.y - 180));
   if (type === "video") node = createVideoNode(Math.round(center.x - 195), Math.round(center.y - 235));
+  if (type === "video-editor") node = createVideoEditorNode(Math.round(center.x - 340), Math.round(center.y - 195));
+  if (type === "video-preview") node = createVideoPreviewNode(Math.round(center.x - 180), Math.round(center.y - 160));
   if (type === "answer") node = createAnswerNode(Math.round(center.x - 190), Math.round(center.y - 185));
   if (type === "composition") node = createCompositionNode(Math.round(center.x - 175), Math.round(center.y - 145));
   if (type === "note") node = createNote(Math.round(center.x - 130), Math.round(center.y - 95));
@@ -2198,6 +2279,8 @@ function renderLibrary() {
     <button class="module-item" type="button" data-library-image><span class="module-icon image">${icon("image-plus")}</span><span class="module-copy"><strong>参考图</strong><small>输出 Image 图像</small></span></button>
     <button class="module-item" type="button" data-library-add="generator"><span class="module-icon generator">${icon("sparkles")}</span><span class="module-copy"><strong>生图</strong><small>Image2 / Gemini · 最多 8 张图</small></span></button>
     <button class="module-item" type="button" data-library-add="video"><span class="module-icon video">${icon("clapperboard")}</span><span class="module-copy"><strong>视频</strong><small>海螺 H3 · API plus · MP4</small></span></button>
+    <button class="module-item" type="button" data-library-add="video-editor"><span class="module-icon video">${icon("scissors")}</span><span class="module-copy"><strong>视频剪辑</strong><small>多段裁切、排序与合成预览</small></span></button>
+    <button class="module-item" type="button" data-library-add="video-preview"><span class="module-icon video">${icon("monitor-play")}</span><span class="module-copy"><strong>成片预览</strong><small>播放并下载合成视频</small></span></button>
     <button class="module-item" type="button" data-library-add="answer"><span class="module-icon answer">${icon("message-square-text")}</span><span class="module-copy"><strong>模型回答</strong><small>最多 6 条提示词 · 8 张参考图</small></span></button>
     </div><div class="section-label"><span>当前结构</span><span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词模块</span><strong>${counts("prompt")}</strong></div><div class="summary-row"><span>参数控制</span><strong>${counts("composition")}</strong></div><div class="summary-row"><span>图像模块</span><strong>${counts("image")}</strong></div><div class="summary-row"><span>生图模块</span><strong>${counts("generator")}</strong></div><div class="summary-row"><span>模型回答</span><strong>${counts("answer")}</strong></div>`;
   $$('[data-library-add]').forEach(button => button.addEventListener("click", () => addNode(button.dataset.libraryAdd))); $("[data-library-image]")?.addEventListener("click", () => imageFileInput.click()); refreshIcons();
@@ -2227,17 +2310,19 @@ function renderEdgeInspector() {
   $("#deleteEdgeButton").addEventListener("click", deleteSelection); refreshIcons();
 }
 function renderNodeInspector(node) {
-  $("#inspectorEyebrow").textContent = node.mediaType === "video" ? "VIDEO" : node.type.toUpperCase(); $("#inspectorTitle").textContent = `${nodeLabels[node.type] || "模块"}属性`;
+  $("#inspectorEyebrow").textContent = node.type === "video-editor" ? "VIDEO EDIT" : node.type === "video-preview" ? "VIDEO PREVIEW" : node.mediaType === "video" ? "VIDEO" : node.type.toUpperCase(); $("#inspectorTitle").textContent = `${nodeLabels[node.type] || "模块"}属性`;
   const incoming = state.edges.filter(edge => edge.target === node.id).length; const outgoing = state.edges.filter(edge => edge.source === node.id).length; let specific = "";
   if (node.type === "image") specific = `${node.src ? `<img class="image-preview" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}" loading="lazy" decoding="async">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`}<div class="summary-row"><span>输入连接</span><strong>${incoming}</strong></div><div class="summary-row"><span>输出连接</span><strong>${outgoing}</strong></div>`;
   if (node.type === "prompt") specific = `<div class="summary-row"><span>字符数</span><strong>${(node.content || "").length}</strong></div><div class="summary-row"><span>输出连接</span><strong>${outgoing}</strong></div>`;
+  if (node.type === "video-editor") specific = `<div class="summary-row"><span>视频片段</span><strong>${videoEditorClips(node).length} 段</strong></div><div class="summary-row"><span>输入连接</span><strong>${incoming}</strong></div><div class="summary-row"><span>成片输出</span><strong>${node.outputSrc ? "已就绪" : "未生成"}</strong></div><p class="field-note">导入视频或连接画布视频结果后，可裁切、调整顺序并合成预览。</p>`;
+  if (node.type === "video-preview") specific = `<div class="summary-row"><span>输入连接</span><strong>${incoming}</strong></div><div class="summary-row"><span>成片状态</span><strong>${videoPreviewSource(node) ? "可播放" : "等待合成"}</strong></div>`;
   if (node.type === "generator" && node.mediaType !== "video") { const imageInputs = state.edges.filter(edge => edge.target === node.id && edge.type === "image").length; const provider = generatorProviderForNode(node); specific = `<div class="summary-row"><span>模型</span><strong>${provider.model}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>参考图</span><strong>${imageInputs}/${node.inputSlots}</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>`; }
   if (node.mediaType === "video") { const dimensions = runningHubVideoDimensions(node); specific = `<div class="summary-row"><span>模型</span><strong>${runningHubVideoProvider.model}</strong></div><div class="summary-row"><span>生成方式</span><strong>${runningHubVideoMode(node).label}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>清晰度</span><strong>${runningHubVideoQuality(node).label}</strong></div><div class="summary-row"><span>尺寸</span><strong>${dimensions.width} × ${dimensions.height}</strong></div><div class="summary-row"><span>时长</span><strong>${node.videoSeconds} 秒</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>${node.lastError ? `<div class="summary-row"><span>最近错误</span><strong>${escapeHtml(node.lastError)}</strong></div>` : ""}`; }
   if (node.type === "frame") { const contained = frameContainedNodes(node).length; specific = `<div class="summary-row"><span>包含节点</span><strong>${contained}</strong></div><div class="summary-row"><span>画板尺寸</span><strong>${Math.round(node.width)} × ${Math.round(node.height)}</strong></div><p class="field-note">把节点拖入虚线范围后，拖动画板边框即可整体移动这些节点。右下角手柄可以调整画板大小。</p>`; }
-  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">名称</div><input class="text-input" id="nodeNameInput" value="${escapeHtml(node.name)}"></section><section class="control-section">${specific}</section><section class="control-section"><div class="action-list">${node.type === "generator" ? `<button class="action-row" type="button" data-inspector-action="run">${icon("play")}<strong>运行此节点</strong><small>${node.mediaType === "video" ? "MP4 视频" : `${node.batch} 张`}</small></button>` : ""}${node.type === "image" ? (node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载图片</strong><small>原始文件</small></button>` : `<button class="action-row" type="button" data-inspector-action="upload">${icon("image-plus")}<strong>上传图像</strong><small>本地参考图</small></button>`) : ""}${node.type === "video" && node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载视频</strong><small>${escapeHtml(node.outputType || "mp4")}</small></button>` : ""}<button class="action-row" type="button" data-inspector-action="duplicate">${icon("copy")}<strong>复制模块</strong><small>保留当前参数</small></button><button class="action-row danger-action" type="button" data-inspector-action="delete">${icon("trash-2")}<strong>删除模块</strong><small>同时删除连接</small></button></div></section>`;
+  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">名称</div><input class="text-input" id="nodeNameInput" value="${escapeHtml(node.name)}"></section><section class="control-section">${specific}</section><section class="control-section"><div class="action-list">${node.type === "generator" ? `<button class="action-row" type="button" data-inspector-action="run">${icon("play")}<strong>运行此节点</strong><small>${node.mediaType === "video" ? "MP4 视频" : `${node.batch} 张`}</small></button>` : ""}${node.type === "video-editor" ? `<button class="action-row" type="button" data-inspector-action="import-video">${icon("video")}<strong>导入视频</strong><small>保存到本机 E 盘</small></button><button class="action-row" type="button" data-inspector-action="compose">${icon("monitor-play")}<strong>合成预览视频</strong><small>生成新的 MP4</small></button>` : ""}${node.type === "image" ? (node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载图片</strong><small>原始文件</small></button>` : `<button class="action-row" type="button" data-inspector-action="upload">${icon("image-plus")}<strong>上传图像</strong><small>本地参考图</small></button>`) : ""}${(node.type === "video" && node.src) || (node.type === "video-preview" && videoPreviewSource(node)) ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载视频</strong><small>${escapeHtml(node.outputType || "mp4")}</small></button>` : ""}<button class="action-row" type="button" data-inspector-action="duplicate">${icon("copy")}<strong>复制模块</strong><small>保留当前参数</small></button><button class="action-row danger-action" type="button" data-inspector-action="delete">${icon("trash-2")}<strong>删除模块</strong><small>同时删除连接</small></button></div></section>`;
   $("#nodeNameInput").addEventListener("change", event => { const value = event.target.value.trim(); if (!value || value === node.name) return; recordHistory(); node.name = value; renderCanvas(); renderLibrary(); scheduleSave(); });
   $$("#inspectorContent [data-upload-node]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); triggerReferenceUpload(button.dataset.uploadNode); }));
-  $$('[data-inspector-action]').forEach(button => button.addEventListener("click", () => { const action = button.dataset.inspectorAction; if (action === "run") runGeneratorNode(node.id); if (action === "upload") triggerReferenceUpload(node.id); if (action === "download") downloadNode(node); if (action === "duplicate") duplicateSelected(); if (action === "delete") deleteSelection(); }));
+  $$('[data-inspector-action]').forEach(button => button.addEventListener("click", () => { const action = button.dataset.inspectorAction; if (action === "run") runGeneratorNode(node.id); if (action === "upload") triggerReferenceUpload(node.id); if (action === "import-video") { pendingVideoImportNodeId = node.id; videoFileInput.value = ""; videoFileInput.click(); } if (action === "compose") composeVideoEditor(node.id); if (action === "download") downloadNode(node); if (action === "duplicate") duplicateSelected(); if (action === "delete") deleteSelection(); }));
   refreshIcons();
 }
 async function handleCanvasPaste(event) {
@@ -2287,6 +2372,53 @@ async function uploadImageIntoNode(nodeId, file) {
   renderWorkspace();
   scheduleSave();
   toast("参考图已上传");
+}
+async function importVideosIntoEditor(nodeId, files) {
+  const editor = findNode(nodeId);
+  const accepted = [...files].filter(file => /^video\/(mp4|webm|quicktime)$/i.test(file.type) || /\.(mp4|webm|mov)$/i.test(file.name || ""));
+  if (!editor || editor.type !== "video-editor" || !accepted.length) return;
+  try {
+    const imported = [];
+    for (const file of accepted.slice(0, 24)) {
+      const result = await requestJson("/api/video-assets", { method: "POST", headers: { "Content-Type": file.type || "video/mp4", "x-file-name": encodeURIComponent(file.name || "导入视频.mp4") }, body: file }, 10 * 60_000);
+      imported.push({ id: uid("clip"), name: (file.name || "导入视频").replace(/\.[^.]+$/, ""), src: result.url, start: 0, end: 0, duration: 0, origin: "imported" });
+    }
+    if (!imported.length) return;
+    recordHistory(); editor.clips.push(...imported); editor.status = "idle"; editor.outputSrc = ""; editor.lastError = ""; state.selectedIds = [editor.id];
+    renderWorkspace(); scheduleSave(); toast(`已导入 ${imported.length} 条视频`);
+  } catch (error) { toast(error?.message || "视频导入失败", true); }
+}
+function updateVideoClip(nodeId, clipId, field, value) {
+  const editor = findNode(nodeId); const clip = editor?.clips?.find(item => item.id === clipId); if (!editor || !clip || !["start", "end"].includes(field)) return;
+  const next = Math.max(0, Math.round((Number(value) || 0) * 10) / 10); const other = Number(field === "start" ? clip.end : clip.start) || 0;
+  if (field === "start" && other && next >= other) return toast("开始时间需要小于结束时间", true);
+  if (field === "end" && next && next <= other) return toast("结束时间需要大于开始时间", true);
+  recordHistory(); clip[field] = next; editor.status = "idle"; editor.outputSrc = ""; editor.lastError = ""; renderCanvas(); renderInspector(); scheduleSave();
+}
+function moveVideoClip(nodeId, clipId, direction) {
+  const editor = findNode(nodeId); if (!editor || editor.type !== "video-editor") return;
+  const index = editor.clips.findIndex(item => item.id === clipId); const next = direction === "left" ? index - 1 : index + 1;
+  if (index < 0 || next < 0 || next >= editor.clips.length) return;
+  recordHistory(); [editor.clips[index], editor.clips[next]] = [editor.clips[next], editor.clips[index]]; editor.status = "idle"; editor.outputSrc = ""; editor.lastError = ""; renderCanvas(); renderInspector(); scheduleSave();
+}
+function removeVideoClip(nodeId, clipId) {
+  const editor = findNode(nodeId); if (!editor || editor.type !== "video-editor") return;
+  const linked = clipId.startsWith("edge-");
+  recordHistory(); editor.clips = editor.clips.filter(clip => clip.id !== clipId); if (linked) { const edgeId = clipId.slice("edge-".length); state.edges = state.edges.filter(edge => edge.id !== edgeId); }
+  editor.status = "idle"; editor.outputSrc = ""; editor.lastError = ""; renderWorkspace(); scheduleSave();
+}
+function probeVideoClip(nodeId, clipId, duration) {
+  const editor = findNode(nodeId); const clip = editor?.clips?.find(item => item.id === clipId); const next = Math.round((Number(duration) || 0) * 10) / 10;
+  if (!editor || !clip || !next || Math.abs((Number(clip.duration) || 0) - next) < .05) return;
+  clip.duration = next; if (!Number(clip.end) || Number(clip.end) > next) clip.end = next; scheduleSave();
+}
+async function composeVideoEditor(nodeId) {
+  const editor = findNode(nodeId); const clips = videoEditorClips(editor); if (!editor || !clips.length || editor.status === "rendering") return;
+  editor.status = "rendering"; editor.lastError = ""; renderCanvas(); renderInspector();
+  try {
+    const response = await requestJson("/api/video-compose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clips: clips.map(clip => ({ src: clip.src, start: Number(clip.start) || 0, end: Number(clip.end) || 0 })) }) }, 30 * 60_000);
+    recordHistory(); editor.outputSrc = response.url; editor.outputType = "mp4"; editor.status = "ready"; editor.lastError = ""; renderWorkspace(); scheduleSave(); toast("成片预览已生成");
+  } catch (error) { editor.status = "error"; editor.lastError = error?.message || "视频合成失败"; renderCanvas(); renderInspector(); toast(editor.lastError, true); }
 }
 function fileToDataUrl(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
 function createPreviewDataUrl(source, maxSize = 720) {
@@ -2571,11 +2703,11 @@ async function confirmCrop() {
 }
 
 function openPreview(node) { const source = node?.originalSrc || node?.src; if (!source) return; $("#previewImage").hidden = false; previewVideo.hidden = true; previewVideo.pause(); previewVideo.removeAttribute("src"); $("#previewImage").src = source; previewDialog.showModal(); }
-function openVideoPreview(node) { const source = node?.originalSrc || node?.src; if (!source) return; $("#previewImage").hidden = true; previewVideo.hidden = false; previewVideo.src = source; previewVideo.load(); previewDialog.showModal(); }
+function openVideoPreview(node) { const source = node?.type === "video-preview" ? videoPreviewSource(node) : node?.originalSrc || node?.src; if (!source) return; $("#previewImage").hidden = true; previewVideo.hidden = false; previewVideo.src = source; previewVideo.load(); previewDialog.showModal(); }
 async function downloadNode(node) {
   try {
-    const source = node?.originalSrc || node?.src;
-    const isVideo = node?.type === "video";
+    const source = node?.type === "video-preview" ? videoPreviewSource(node) : node?.originalSrc || node?.src;
+    const isVideo = node?.type === "video" || node?.type === "video-preview";
     if (!source) throw new Error(`${isVideo ? "视频" : "图片"}地址为空`);
     let href = source;
     let objectUrl = "";
@@ -2732,6 +2864,7 @@ function bindStaticEvents() {
   $("#toolUploadButton").addEventListener("click", () => imageFileInput.click());
   $("#importButton").addEventListener("click", () => imageFileInput.click());
   imageFileInput.addEventListener("change", async event => { const files = [...event.target.files || []]; const pending = pendingImageUploadNodeId; pendingImageUploadNodeId = null; if (pending) { if (files[0]) await uploadImageIntoNode(pending, files[0]); event.target.value = ""; return; } await importImages(event.target.files); event.target.value = ""; });
+  videoFileInput.addEventListener("change", async event => { const nodeId = pendingVideoImportNodeId; pendingVideoImportNodeId = null; if (nodeId && event.target.files?.length) await importVideosIntoEditor(nodeId, event.target.files); event.target.value = ""; });
   $$(".library-tabs .tab").forEach(tab => tab.addEventListener("click", () => { state.libraryTab = tab.dataset.libraryTab; renderLibrary(); scheduleSave(); }));
 
   $("#exportProjectButton").addEventListener("click", exportProject);

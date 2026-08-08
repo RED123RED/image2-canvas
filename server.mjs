@@ -1,4 +1,5 @@
 import http from "node:http";
+import fsNative from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -10,6 +11,12 @@ const publicDir = path.join(__dirname, "public");
 const outputDir = path.join(__dirname, "output");
 const generatedDir = path.join(outputDir, "generated");
 const assetsDir = path.join(outputDir, "assets");
+const videoAssetsDir = path.join(outputDir, "video-assets");
+const editedVideoDir = path.join(outputDir, "video-edited");
+const videoTempDir = path.join(outputDir, "video-temp");
+const localFfmpegPath = path.join(__dirname, "tools", "ffmpeg", "bin", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+const localFfprobePath = path.join(__dirname, "tools", "ffmpeg", "bin", process.platform === "win32" ? "ffprobe.exe" : "ffprobe");
+const maxVideoUploadBytes = 2 * 1024 * 1024 * 1024;
 const jobsPath = path.join(outputDir, "image2-generation-jobs.json");
 const generationLogPath = path.join(outputDir, "image2-generation.log");
 const port = Number(process.env.PORT || 45173);
@@ -124,7 +131,13 @@ async function writeJobLog(job, event) {
 }
 
 async function initializeJobs() {
-  await Promise.all([fs.mkdir(generatedDir, { recursive: true }), fs.mkdir(assetsDir, { recursive: true })]);
+  await Promise.all([
+    fs.mkdir(generatedDir, { recursive: true }),
+    fs.mkdir(assetsDir, { recursive: true }),
+    fs.mkdir(videoAssetsDir, { recursive: true }),
+    fs.mkdir(editedVideoDir, { recursive: true }),
+    fs.mkdir(videoTempDir, { recursive: true })
+  ]);
   try {
     const saved = JSON.parse(await fs.readFile(jobsPath, "utf8"));
     for (const item of Array.isArray(saved) ? saved : []) {
@@ -153,6 +166,148 @@ async function readJson(req, limit = 48 * 1024 * 1024) {
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+}
+
+function safeVideoName(value, fallback = "video") {
+  const decoded = (() => { try { return decodeURIComponent(String(value || "")); } catch { return String(value || ""); } })();
+  const base = path.basename(decoded).replace(/[\\/:*?"<>|\x00-\x1f]/g, "-").replace(/\s+/g, " ").trim();
+  return base || fallback;
+}
+
+function videoExtension(filename, mime = "") {
+  const extension = path.extname(filename).toLowerCase();
+  if ([".mp4", ".webm", ".mov"].includes(extension)) return extension.slice(1);
+  if (/webm/i.test(mime)) return "webm";
+  if (/quicktime/i.test(mime)) return "mov";
+  return "mp4";
+}
+
+async function storeVideoUpload(req, res) {
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  const originalName = safeVideoName(req.headers["x-file-name"], "导入视频.mp4");
+  const extension = videoExtension(originalName, contentType);
+  if (!/^video\/(mp4|webm|quicktime)$/i.test(contentType) && !/\.(mp4|webm|mov)$/i.test(originalName)) return sendJson(res, 400, { error: "仅支持 MP4、WebM 或 MOV 视频" });
+  await fs.mkdir(videoAssetsDir, { recursive: true });
+  const identifier = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const filename = `${identifier}-${safeVideoName(originalName.replace(/\.[^.]+$/, ""), "video")}.${extension}`;
+  const temporary = path.join(videoAssetsDir, `${filename}.uploading`);
+  const target = path.join(videoAssetsDir, filename);
+  let handle;
+  let size = 0;
+  try {
+    handle = await fs.open(temporary, "wx");
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > maxVideoUploadBytes) throw new Error("视频超过 2 GB，本地剪辑模块暂不接收");
+      await handle.write(chunk);
+    }
+    await handle.close(); handle = null;
+    if (!size) throw new Error("上传的视频为空");
+    await fs.rename(temporary, target);
+    return sendJson(res, 201, { filename, name: originalName, size, url: `/api/video-assets/${encodeURIComponent(filename)}` });
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    await fs.rm(temporary, { force: true }).catch(() => undefined);
+    return sendJson(res, 400, { error: error?.message || "视频导入失败" });
+  }
+}
+
+async function localVideoTools() {
+  const ffmpeg = process.env.FFMPEG_PATH || localFfmpegPath;
+  try { await fs.access(ffmpeg); }
+  catch { return null; }
+  const ffprobe = process.env.FFPROBE_PATH || localFfprobePath;
+  try { await fs.access(ffprobe); return { ffmpeg, ffprobe }; }
+  catch { return { ffmpeg, ffprobe: "" }; }
+}
+
+function runVideoTool(executable, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { windowsHide: true });
+    let stdout = ""; let stderr = ""; let startupError = null;
+    child.stdout?.on("data", chunk => { if (stdout.length < 64 * 1024) stdout += chunk.toString(); });
+    child.stderr?.on("data", chunk => { if (stderr.length < 64 * 1024) stderr += chunk.toString(); });
+    child.on("error", error => { startupError = error; });
+    child.on("close", code => {
+      if (!startupError && code === 0) return resolve({ stdout, stderr });
+      const error = startupError || new Error(stderr.trim().split("\n").at(-1) || `视频处理失败 (${code ?? "未知"})`);
+      reject(error);
+    });
+  });
+}
+
+async function localVideoPath(source) {
+  const pathname = decodeURIComponent(new URL(String(source || ""), "http://127.0.0.1").pathname);
+  const locations = [
+    ["/api/generated/", generatedDir],
+    ["/api/video-assets/", videoAssetsDir],
+    ["/api/video-edited/", editedVideoDir]
+  ];
+  const matched = locations.find(([prefix]) => pathname.startsWith(prefix));
+  if (!matched) throw new Error("剪辑模块只能使用本机画布中的视频");
+  const filename = pathname.slice(matched[0].length);
+  if (!filename || path.basename(filename) !== filename) throw new Error("视频地址无效");
+  const filePath = path.join(matched[1], filename);
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile()) throw new Error("视频文件不存在");
+  return filePath;
+}
+
+function validClipSecond(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 && number <= 86_400 ? Math.round(number * 1000) / 1000 : fallback;
+}
+
+async function sourceHasAudio(tools, source) {
+  if (!tools.ffprobe) return false;
+  try {
+    const result = await runVideoTool(tools.ffprobe, ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", source]);
+    return /audio/i.test(result.stdout);
+  } catch { return false; }
+}
+
+function concatListPath(filePath) { return path.resolve(filePath).replace(/\\/g, "/").replace(/'/g, "'\\\\''"); }
+
+async function composeVideo(req, res) {
+  const temporaryPaths = [];
+  try {
+    const body = await readJson(req, 256 * 1024);
+    const requested = Array.isArray(body.clips) ? body.clips.slice(0, 24) : [];
+    if (!requested.length) return sendJson(res, 400, { error: "请先导入或连接至少一条视频" });
+    const tools = await localVideoTools();
+    if (!tools) return sendJson(res, 503, { error: "未找到本地 FFmpeg。请将 ffmpeg.exe 放入 tools\\ffmpeg\\bin，或设置 FFMPEG_PATH 后重启软件。" });
+    const clips = await Promise.all(requested.map(async item => {
+      const start = validClipSecond(item?.start, 0);
+      const end = validClipSecond(item?.end, 0);
+      if (end && end <= start) throw new Error("每条视频的结束时间必须大于开始时间");
+      return { source: await localVideoPath(item?.src), start, end };
+    }));
+    await Promise.all([fs.mkdir(videoTempDir, { recursive: true }), fs.mkdir(editedVideoDir, { recursive: true })]);
+    const identifier = `edit-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const allHaveAudio = (await Promise.all(clips.map(clip => sourceHasAudio(tools, clip.source)))).every(Boolean);
+    for (let index = 0; index < clips.length; index += 1) {
+      const clip = clips[index]; const segment = path.join(videoTempDir, `${identifier}-${index}.mp4`); temporaryPaths.push(segment);
+      const duration = clip.end ? clip.end - clip.start : 0;
+      const args = ["-hide_banner", "-y", "-i", clip.source, "-ss", String(clip.start)];
+      if (duration) args.push("-t", String(duration));
+      args.push("-map", "0:v:0", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p");
+      if (allHaveAudio) args.push("-map", "0:a:0", "-c:a", "aac", "-ar", "48000", "-ac", "2"); else args.push("-an");
+      args.push("-movflags", "+faststart", segment);
+      await runVideoTool(tools.ffmpeg, args);
+    }
+    const listFile = path.join(videoTempDir, `${identifier}.txt`); temporaryPaths.push(listFile);
+    await fs.writeFile(listFile, clips.map((_, index) => `file '${concatListPath(temporaryPaths[index])}'`).join("\n"), "utf8");
+    const filename = `${identifier}.mp4`; const output = path.join(editedVideoDir, filename); const outputTemp = `${output}.building`; temporaryPaths.push(outputTemp);
+    await runVideoTool(tools.ffmpeg, ["-hide_banner", "-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-movflags", "+faststart", outputTemp]);
+    await fs.rename(outputTemp, output);
+    temporaryPaths.pop();
+    const stat = await fs.stat(output);
+    return sendJson(res, 201, { filename, size: stat.size, hasAudio: allHaveAudio, url: `/api/video-edited/${encodeURIComponent(filename)}` });
+  } catch (error) {
+    return sendJson(res, 500, { error: error?.message || "视频合成失败" });
+  } finally {
+    await Promise.all(temporaryPaths.map(file => fs.rm(file, { force: true }).catch(() => undefined)));
+  }
 }
 
 function findKey(value, seen = new Set()) {
@@ -719,20 +874,36 @@ async function restartLocalService(req, res) {
     server.close(() => { clearTimeout(forceCloseTimer); startReplacement(); });
   }, 120);
 }
-async function serveStoredImage(res, directory, filename) {
+async function serveStoredMedia(req, res, directory, filename) {
   const safeName = path.basename(filename);
   if (!safeName || safeName !== filename) return sendJson(res, 403, { error: "禁止访问" });
   try {
     const filePath = path.join(directory, safeName);
-    const data = await fs.readFile(filePath);
-    res.writeHead(200, { "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "image/png", "Cache-Control": "private, max-age=3600" });
-    res.end(data);
+    const stat = await fs.stat(filePath);
+    const mime = mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream";
+    const isVideo = mime.startsWith("video/");
+    const baseHeaders = { "Content-Type": mime, "Accept-Ranges": "bytes", "Cache-Control": isVideo ? "no-store" : "private, max-age=3600" };
+    const range = isVideo ? String(req.headers.range || "") : "";
+    const match = range.match(/^bytes=(\d*)-(\d*)$/);
+    if (match) {
+      const start = Math.min(stat.size - 1, Math.max(0, Number(match[1] || 0)));
+      const end = Math.min(stat.size - 1, Math.max(start, match[2] ? Number(match[2]) : stat.size - 1));
+      res.writeHead(206, { ...baseHeaders, "Content-Length": end - start + 1, "Content-Range": `bytes ${start}-${end}/${stat.size}` });
+      if (req.method === "HEAD") return res.end();
+      fsNative.createReadStream(filePath, { start, end }).pipe(res);
+      return;
+    }
+    res.writeHead(200, { ...baseHeaders, "Content-Length": stat.size });
+    if (req.method === "HEAD") return res.end();
+    fsNative.createReadStream(filePath).pipe(res);
   } catch {
     sendJson(res, 404, { error: "媒体文件不存在" });
   }
 }
-async function serveGenerated(res, filename) { return serveStoredImage(res, generatedDir, filename); }
-async function serveAsset(res, filename) { return serveStoredImage(res, assetsDir, filename); }
+async function serveGenerated(req, res, filename) { return serveStoredMedia(req, res, generatedDir, filename); }
+async function serveAsset(req, res, filename) { return serveStoredMedia(req, res, assetsDir, filename); }
+async function serveVideoAsset(req, res, filename) { return serveStoredMedia(req, res, videoAssetsDir, filename); }
+async function serveEditedVideo(req, res, filename) { return serveStoredMedia(req, res, editedVideoDir, filename); }
 
 function responseTextFrom(result) {
   const content = result?.choices?.[0]?.message?.content;
@@ -798,14 +969,18 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/providers/runninghub") return saveRunningHubProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/restart") return restartLocalService(req, res);
   if (req.method === "POST" && url.pathname === "/api/assets") return storeAsset(req, res);
+  if (req.method === "POST" && url.pathname === "/api/video-assets") return storeVideoUpload(req, res);
+  if (req.method === "POST" && url.pathname === "/api/video-compose") return composeVideo(req, res);
   if (req.method === "POST" && url.pathname === "/api/generate") return createJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/respond") return createResponse(req, res);
   if (req.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
     const job = jobs.get(decodeURIComponent(url.pathname.slice("/api/jobs/".length)));
     return job ? sendJson(res, 200, { job: jobView(job) }) : sendJson(res, 404, { error: "生成任务不存在，可能已被清理" });
   }
-  if (req.method === "GET" && url.pathname.startsWith("/api/generated/")) return serveGenerated(res, decodeURIComponent(url.pathname.slice("/api/generated/".length)));
-  if (req.method === "GET" && url.pathname.startsWith("/api/assets/")) return serveAsset(res, decodeURIComponent(url.pathname.slice("/api/assets/".length)));
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/generated/")) return serveGenerated(req, res, decodeURIComponent(url.pathname.slice("/api/generated/".length)));
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/assets/")) return serveAsset(req, res, decodeURIComponent(url.pathname.slice("/api/assets/".length)));
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/video-assets/")) return serveVideoAsset(req, res, decodeURIComponent(url.pathname.slice("/api/video-assets/".length)));
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/video-edited/")) return serveEditedVideo(req, res, decodeURIComponent(url.pathname.slice("/api/video-edited/".length)));
   if (req.method === "GET" || req.method === "HEAD") return serveStatic(req, res, decodeURIComponent(url.pathname));
   sendJson(res, 405, { error: "不支持的请求方法" });
 });

@@ -10,6 +10,10 @@ runtime-stderr.log
 output/
 .playwright-cli/
 
+# Optional local FFmpeg download archives (never commit binaries or partial downloads)
+tools/*.zip
+tools/*.7z
+
 # Operating system and editor files
 .DS_Store
 Thumbs.db
