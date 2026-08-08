@@ -2128,7 +2128,7 @@ function bindNodeEvents() {
   $$('[data-video-playhead]').forEach(handle => handle.addEventListener("pointerdown", event => {
     event.preventDefault(); event.stopPropagation(); const node = findNode(handle.dataset.videoPlayhead); const track = handle.closest("[data-video-timeline]"); if (!node || !track) return; stopVideoEditorPreview(node); holdVideoPreviewFrame(node.id);
     const update = moveEvent => { const time = videoTimelinePoint(node, moveEvent.clientX, track); node.timelinePlayhead = time; const entry = videoTimelineEntries(node).entries.find(item => time >= item.timelineStart && time <= item.timelineEnd); node.selectedClipId = entry?.clip.id || node.selectedClipId || ""; updateTimelinePlayheadDom(node); };
-    const finish = moveEvent => { update(moveEvent); document.removeEventListener("pointermove", update); document.removeEventListener("pointerup", finish); renderCanvas(); renderInspector(); scheduleSave(); };
+    const finish = moveEvent => { update(moveEvent); document.removeEventListener("pointermove", update); document.removeEventListener("pointerup", finish); renderInspector(); scheduleSave(); };
     document.addEventListener("pointermove", update); document.addEventListener("pointerup", finish, { once: true });
   }));
   $$('[data-video-clip]').forEach(card => {
