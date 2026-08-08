@@ -1756,10 +1756,22 @@ function stopVideoEditorPreview(editor) {
   videoPreviewElements(editor.id).forEach(video => { video.pause(); video.dataset.previewAutoplay = "0"; });
   updateVideoPlayButtonDom(editor);
 }
+function finishVideoEditorPlayback(editor) {
+  if (!editor) return;
+  const timeline = videoTimelineEntries(editor); const last = timeline.entries[timeline.entries.length - 1];
+  stopVideoEditorPreview(editor);
+  if (last) { editor.timelinePlayhead = timeline.total; editor.selectedClipId = last.clip.id; }
+  videoPreviewElements(editor.id).forEach(video => {
+    video.pause(); video.dataset.previewAutoplay = "0";
+    if (last && Number.isFinite(video.duration)) video.currentTime = Math.min(last.sourceEnd, video.duration);
+  });
+  updateTimelinePlayheadDom(editor, false); renderInspector();
+}
 function toggleVideoEditorPlayback(editorId) {
   const editor = findNode(editorId); if (!editor || editor.type !== "video-editor") return;
   const videos = videoPreviewElements(editor.id); if (!videos.length) return toast("请先把视频剪辑节点连接到成片预览节点", true);
   if (editor.previewPlaying) return stopVideoEditorPreview(editor);
+  const timeline = videoTimelineEntries(editor); if ((Number(editor.timelinePlayhead) || 0) >= timeline.total - .01 && timeline.entries.length) { editor.timelinePlayhead = 0; editor.selectedClipId = timeline.entries[0].clip.id; updateTimelinePlayheadDom(editor, false); }
   editor.previewPlaying = true; updateVideoPlayButtonDom(editor); syncVideoPreviewPlayback(editor.id, true);
 }
 function syncVideoPreviewPlayback(editorId, autoplay = false) {
@@ -1767,8 +1779,10 @@ function syncVideoPreviewPlayback(editorId, autoplay = false) {
   state.nodes.filter(node => node.type === "video-preview" && incomingEdge(node.id, "video")?.source === editorId).forEach(node => {
     const video = document.querySelector(`[data-preview-composite="${node.id}"]`); const frame = videoPreviewFrame(node); if (!video || !frame) return;
     const sourceUrl = new URL(frame.source, window.location.href).href;
-    const sourceChanged = video.dataset.previewSource !== sourceUrl;
+    const currentSource = video.dataset.previewSource || video.currentSrc || video.src;
+    const sourceChanged = currentSource !== sourceUrl;
     video.dataset.previewClipId = frame.entry.clip.id; video.dataset.previewEditor = editorId;
+    video.dataset.previewSource = sourceUrl;
     if (sourceChanged) {
       video.pause(); video.dataset.previewSource = sourceUrl; video.dataset.previewAutoplay = autoplay ? "1" : "0"; video.src = sourceUrl; video.load();
       if (autoplay) video.addEventListener("loadedmetadata", () => { const currentFrame = videoPreviewFrame(node); if (!currentFrame || video.dataset.previewSource !== sourceUrl) return; video.currentTime = currentFrame.currentTime; if (editor.previewPlaying && video.dataset.previewAutoplay === "1") void video.play().catch(() => {}); }, { once: true });
@@ -2112,7 +2126,7 @@ function bindNodeEvents() {
   $$('[data-preview-composite]').forEach(video => {
     video.addEventListener("loadedmetadata", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (frame) video.currentTime = frame.currentTime; });
     video.addEventListener("timeupdate", () => handleVideoPreviewTimeUpdate(video));
-    video.addEventListener("ended", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (!frame || !frame.editor.previewPlaying) return; if (frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor); else { frame.editor.previewPlaying = false; updateVideoPlayButtonDom(frame.editor); } });
+    video.addEventListener("ended", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (!frame || !frame.editor.previewPlaying) return; if (frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor); else finishVideoEditorPlayback(frame.editor); });
   });
   $$('[data-export-preview]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void exportVideoPreview(button.dataset.exportPreview); }));
 
@@ -2548,7 +2562,7 @@ function handleVideoPreviewTimeUpdate(video) {
   const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (!frame) return;
   if (video.dataset.previewClipId !== frame.entry.clip.id) return;
   const local = Math.max(0, Math.min(frame.entry.duration, video.currentTime - frame.entry.sourceStart)); frame.editor.timelinePlayhead = frame.entry.timelineStart + local; frame.editor.selectedClipId = frame.entry.clip.id; updateTimelinePlayheadDom(frame.editor, false);
-  if (frame.editor.previewPlaying && video.currentTime >= frame.entry.sourceEnd - .08 && frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor);
+  if (frame.editor.previewPlaying && video.currentTime >= frame.entry.sourceEnd - .08) { if (frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor); else finishVideoEditorPlayback(frame.editor); }
 }
 function advanceVideoPreview(video, editor) {
   if (!editor.previewPlaying) return;
