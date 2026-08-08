@@ -1732,16 +1732,16 @@ function videoTimelinePoint(node, clientX, track) {
 }
 function videoPreviewFrame(node) {
   const edge = incomingEdge(node?.id, "video"); const editor = findNode(edge?.source); if (!editor || editor.type !== "video-editor") return null;
-  const timeline = videoTimelineEntries(editor); const playhead = Math.max(0, Math.min(timeline.total, Number(editor.timelinePlayhead) || 0)); const entry = timeline.entries.find(item => playhead >= item.timelineStart && playhead <= item.timelineEnd + .001) || timeline.entries[timeline.entries.length - 1];
+  const timeline = videoTimelineEntries(editor); const playhead = Math.max(0, Math.min(timeline.total, Number(editor.timelinePlayhead) || 0)); const candidates = timeline.entries.filter(item => playhead >= item.timelineStart && playhead <= item.timelineEnd + .001); const entry = candidates.find(item => item.clip.id === editor.selectedClipId) || candidates[0] || timeline.entries[timeline.entries.length - 1];
   if (!entry) return null;
   return { editor, entry, source: entry.clip.src, currentTime: Math.max(0, Math.min(entry.sourceEnd, entry.sourceStart + playhead - entry.timelineStart)), playhead };
 }
-function updateTimelinePlayheadDom(editor) {
+function updateTimelinePlayheadDom(editor, syncPreview = true) {
   if (!editor) return;
   const timeline = videoTimelineEntries(editor); const percent = timeline.total ? Math.max(0, Math.min(100, (Number(editor.timelinePlayhead) || 0) / timeline.total * 100)) : 0;
   document.querySelectorAll(`[data-video-playhead="${editor.id}"]`).forEach(handle => { handle.style.left = `${percent}%`; });
   document.querySelectorAll(`[data-editor-node="${editor.id}"][data-video-clip]`).forEach(card => card.classList.toggle("is-active", card.dataset.videoClip === editor.selectedClipId));
-  syncVideoPreviewPlayback(editor.id);
+  if (syncPreview) syncVideoPreviewPlayback(editor.id);
 }
 function videoPreviewElements(editorId) {
   return state.nodes.filter(node => node.type === "video-preview" && incomingEdge(node.id, "video")?.source === editorId).map(node => document.querySelector(`[data-preview-composite="${node.id}"]`)).filter(Boolean);
@@ -1752,24 +1752,29 @@ function updateVideoPlayButtonDom(editor) {
 }
 function stopVideoEditorPreview(editor) {
   if (!editor) return;
-  editor.previewPlaying = false; videoPreviewElements(editor.id).forEach(video => video.pause()); updateVideoPlayButtonDom(editor);
+  editor.previewPlaying = false;
+  videoPreviewElements(editor.id).forEach(video => { video.pause(); video.dataset.previewAutoplay = "0"; });
+  updateVideoPlayButtonDom(editor);
 }
 function toggleVideoEditorPlayback(editorId) {
   const editor = findNode(editorId); if (!editor || editor.type !== "video-editor") return;
   const videos = videoPreviewElements(editor.id); if (!videos.length) return toast("请先把视频剪辑节点连接到成片预览节点", true);
   if (editor.previewPlaying) return stopVideoEditorPreview(editor);
   editor.previewPlaying = true; updateVideoPlayButtonDom(editor); syncVideoPreviewPlayback(editor.id, true);
-  videos.forEach(video => { void video.play().catch(() => { editor.previewPlaying = false; updateVideoPlayButtonDom(editor); toast("预览视频暂时无法播放", true); }); });
 }
 function syncVideoPreviewPlayback(editorId, autoplay = false) {
   const editor = findNode(editorId); if (!editor) return;
   state.nodes.filter(node => node.type === "video-preview" && incomingEdge(node.id, "video")?.source === editorId).forEach(node => {
     const video = document.querySelector(`[data-preview-composite="${node.id}"]`); const frame = videoPreviewFrame(node); if (!video || !frame) return;
-    const sourceChanged = video.src !== new URL(frame.source, window.location.href).href;
+    const sourceUrl = new URL(frame.source, window.location.href).href;
+    const sourceChanged = video.dataset.previewSource !== sourceUrl;
     video.dataset.previewClipId = frame.entry.clip.id; video.dataset.previewEditor = editorId;
-    if (sourceChanged) { video.src = frame.source; video.load(); video.addEventListener("loadedmetadata", () => { video.currentTime = frame.currentTime; if (autoplay) void video.play().catch(() => {}); }, { once: true }); }
+    if (sourceChanged) {
+      video.pause(); video.dataset.previewSource = sourceUrl; video.dataset.previewAutoplay = autoplay ? "1" : "0"; video.src = sourceUrl; video.load();
+      if (autoplay) video.addEventListener("loadedmetadata", () => { const currentFrame = videoPreviewFrame(node); if (!currentFrame || video.dataset.previewSource !== sourceUrl) return; video.currentTime = currentFrame.currentTime; if (editor.previewPlaying && video.dataset.previewAutoplay === "1") void video.play().catch(() => {}); }, { once: true });
+    }
     else if (Number.isFinite(frame.currentTime) && Math.abs(video.currentTime - frame.currentTime) > .2) video.currentTime = frame.currentTime;
-    if (!sourceChanged && autoplay) void video.play().catch(() => {});
+    if (!sourceChanged && autoplay) { video.dataset.previewAutoplay = "1"; void video.play().catch(() => { if (editor.previewPlaying) { editor.previewPlaying = false; updateVideoPlayButtonDom(editor); toast("预览视频暂时无法播放", true); } }); }
   });
 }
 function setVideoTimelinePlayhead(nodeId, time, clipId = "") {
@@ -1780,6 +1785,7 @@ function setVideoTimelinePlayhead(nodeId, time, clipId = "") {
 }
 function splitVideoClipAtPlayhead(nodeId) {
   const editor = findNode(nodeId); if (!editor || editor.type !== "video-editor") return;
+  stopVideoEditorPreview(editor);
   const { entries, total } = videoTimelineEntries(editor); const playhead = Math.max(0, Math.min(total, Number(editor.timelinePlayhead) || 0)); const entry = entries.find(item => playhead > item.timelineStart + .01 && playhead < item.timelineEnd - .01);
   if (!entry) return toast("请把播放指针放在视频片段中间再分割", true);
   const sourceTime = entry.sourceStart + (playhead - entry.timelineStart); const originalEnd = entry.sourceEnd;
@@ -2106,7 +2112,7 @@ function bindNodeEvents() {
   $$('[data-preview-composite]').forEach(video => {
     video.addEventListener("loadedmetadata", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (frame) video.currentTime = frame.currentTime; });
     video.addEventListener("timeupdate", () => handleVideoPreviewTimeUpdate(video));
-    video.addEventListener("ended", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (!frame) return; if (frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor); else { frame.editor.previewPlaying = false; updateVideoPlayButtonDom(frame.editor); } });
+    video.addEventListener("ended", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (!frame || !frame.editor.previewPlaying) return; if (frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor); else { frame.editor.previewPlaying = false; updateVideoPlayButtonDom(frame.editor); } });
   });
   $$('[data-export-preview]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void exportVideoPreview(button.dataset.exportPreview); }));
 
@@ -2540,12 +2546,14 @@ async function composeVideoEditor(nodeId) {
 }
 function handleVideoPreviewTimeUpdate(video) {
   const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (!frame) return;
-  const local = Math.max(0, Math.min(frame.entry.duration, video.currentTime - frame.entry.sourceStart)); frame.editor.timelinePlayhead = frame.entry.timelineStart + local; frame.editor.selectedClipId = frame.entry.clip.id; updateTimelinePlayheadDom(frame.editor);
-  if (video.currentTime >= frame.entry.sourceEnd - .08 && frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor);
+  if (video.dataset.previewClipId !== frame.entry.clip.id) return;
+  const local = Math.max(0, Math.min(frame.entry.duration, video.currentTime - frame.entry.sourceStart)); frame.editor.timelinePlayhead = frame.entry.timelineStart + local; frame.editor.selectedClipId = frame.entry.clip.id; updateTimelinePlayheadDom(frame.editor, false);
+  if (frame.editor.previewPlaying && video.currentTime >= frame.entry.sourceEnd - .08 && frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor);
 }
 function advanceVideoPreview(video, editor) {
+  if (!editor.previewPlaying) return;
   const timeline = videoTimelineEntries(editor); const currentIndex = timeline.entries.findIndex(entry => entry.clip.id === editor.selectedClipId); const next = currentIndex >= 0 ? timeline.entries[currentIndex + 1] : null; if (!next) return;
-  editor.timelinePlayhead = next.timelineStart; editor.selectedClipId = next.clip.id; syncVideoPreviewPlayback(editor.id, true); updateTimelinePlayheadDom(editor);
+  editor.timelinePlayhead = next.timelineStart; editor.selectedClipId = next.clip.id; updateTimelinePlayheadDom(editor, false); syncVideoPreviewPlayback(editor.id, true);
 }
 async function exportVideoPreview(nodeId) {
   const preview = findNode(nodeId); const frame = videoPreviewFrame(preview); if (!frame) return toast("请先连接视频剪辑节点", true);
