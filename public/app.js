@@ -1746,6 +1746,21 @@ function updateTimelinePlayheadDom(editor, syncPreview = true) {
 function videoPreviewElements(editorId) {
   return state.nodes.filter(node => node.type === "video-preview" && incomingEdge(node.id, "video")?.source === editorId).map(node => document.querySelector(`[data-preview-composite="${node.id}"]`)).filter(Boolean);
 }
+function captureVideoPreviewFrame(video) {
+  if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return "";
+  try {
+    const maxSize = 960; const ratio = Math.min(1, maxSize / Math.max(video.videoWidth, video.videoHeight)); const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * ratio)); canvas.height = Math.max(1, Math.round(video.videoHeight * ratio));
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height); return canvas.toDataURL("image/jpeg", .78);
+  } catch { return ""; }
+}
+function holdVideoPreviewFrame(editorId) {
+  videoPreviewElements(editorId).forEach(video => { const frame = captureVideoPreviewFrame(video); if (frame) { video.poster = frame; video.dataset.previewHold = "1"; } });
+}
+function revealVideoPreviewFrame(video) {
+  if (!video || video.dataset.previewHold !== "1" || video.readyState < 2) return;
+  video.poster = ""; delete video.dataset.previewHold;
+}
 function updateVideoPlayButtonDom(editor) {
   document.querySelectorAll(`[data-video-play="${editor.id}"]`).forEach(button => { button.innerHTML = `${icon(editor.previewPlaying ? "pause" : "play")} ${editor.previewPlaying ? "暂停预览" : "播放预览"}`; button.setAttribute("aria-label", editor.previewPlaying ? "暂停预览" : "播放预览"); });
   refreshIcons();
@@ -1784,16 +1799,19 @@ function syncVideoPreviewPlayback(editorId, autoplay = false) {
     video.dataset.previewClipId = frame.entry.clip.id; video.dataset.previewEditor = editorId;
     video.dataset.previewSource = sourceUrl;
     if (sourceChanged) {
+      const heldFrame = captureVideoPreviewFrame(video) || video.poster;
+      if (heldFrame) { video.poster = heldFrame; video.dataset.previewHold = "1"; }
       video.pause(); video.dataset.previewSource = sourceUrl; video.dataset.previewAutoplay = autoplay ? "1" : "0"; video.src = sourceUrl; video.load();
       if (autoplay) video.addEventListener("loadedmetadata", () => { const currentFrame = videoPreviewFrame(node); if (!currentFrame || video.dataset.previewSource !== sourceUrl) return; video.currentTime = currentFrame.currentTime; if (editor.previewPlaying && video.dataset.previewAutoplay === "1") void video.play().catch(() => {}); }, { once: true });
     }
     else if (Number.isFinite(frame.currentTime) && Math.abs(video.currentTime - frame.currentTime) > .2) video.currentTime = frame.currentTime;
     if (!sourceChanged && autoplay) { video.dataset.previewAutoplay = "1"; void video.play().catch(() => { if (editor.previewPlaying) { editor.previewPlaying = false; updateVideoPlayButtonDom(editor); toast("预览视频暂时无法播放", true); } }); }
+    if (!sourceChanged && Number.isFinite(frame.currentTime) && Math.abs(video.currentTime - frame.currentTime) <= .2) revealVideoPreviewFrame(video);
   });
 }
 function setVideoTimelinePlayhead(nodeId, time, clipId = "") {
   const node = findNode(nodeId); if (!node || node.type !== "video-editor") return;
-  stopVideoEditorPreview(node);
+  stopVideoEditorPreview(node); holdVideoPreviewFrame(node.id);
   const { total } = videoTimelineEntries(node); node.timelinePlayhead = Math.max(0, Math.min(total, Number(time) || 0)); node.selectedClipId = clipId || node.selectedClipId || "";
   updateTimelinePlayheadDom(node); renderInspector();
 }
@@ -2108,7 +2126,7 @@ function bindNodeEvents() {
     setVideoTimelinePlayhead(node.id, time, entry?.clip.id || "");
   }));
   $$('[data-video-playhead]').forEach(handle => handle.addEventListener("pointerdown", event => {
-    event.preventDefault(); event.stopPropagation(); const node = findNode(handle.dataset.videoPlayhead); const track = handle.closest("[data-video-timeline]"); if (!node || !track) return; stopVideoEditorPreview(node);
+    event.preventDefault(); event.stopPropagation(); const node = findNode(handle.dataset.videoPlayhead); const track = handle.closest("[data-video-timeline]"); if (!node || !track) return; stopVideoEditorPreview(node); holdVideoPreviewFrame(node.id);
     const update = moveEvent => { const time = videoTimelinePoint(node, moveEvent.clientX, track); node.timelinePlayhead = time; const entry = videoTimelineEntries(node).entries.find(item => time >= item.timelineStart && time <= item.timelineEnd); node.selectedClipId = entry?.clip.id || node.selectedClipId || ""; updateTimelinePlayheadDom(node); };
     const finish = moveEvent => { update(moveEvent); document.removeEventListener("pointermove", update); document.removeEventListener("pointerup", finish); renderCanvas(); renderInspector(); scheduleSave(); };
     document.addEventListener("pointermove", update); document.addEventListener("pointerup", finish, { once: true });
@@ -2124,7 +2142,8 @@ function bindNodeEvents() {
   });
   $$('[data-clip-probe]').forEach(video => video.addEventListener("loadedmetadata", () => probeVideoClip(video.dataset.clipProbeNode, video.dataset.clipProbe, video.duration)));
   $$('[data-preview-composite]').forEach(video => {
-    video.addEventListener("loadedmetadata", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (frame) video.currentTime = frame.currentTime; });
+    video.addEventListener("loadedmetadata", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (!frame) return; video.currentTime = frame.currentTime; if (frame.currentTime <= .01) revealVideoPreviewFrame(video); });
+    video.addEventListener("seeked", () => revealVideoPreviewFrame(video));
     video.addEventListener("timeupdate", () => handleVideoPreviewTimeUpdate(video));
     video.addEventListener("ended", () => { const node = findNode(video.dataset.previewComposite); const frame = videoPreviewFrame(node); if (!frame || !frame.editor.previewPlaying) return; if (frame.entry.index < videoTimelineEntries(frame.editor).entries.length - 1) advanceVideoPreview(video, frame.editor); else finishVideoEditorPlayback(frame.editor); });
   });
