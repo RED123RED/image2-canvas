@@ -297,7 +297,7 @@ async function composeVideo(req, res) {
     }
     const listFile = path.join(videoTempDir, `${identifier}.txt`); temporaryPaths.push(listFile);
     await fs.writeFile(listFile, clips.map((_, index) => `file '${concatListPath(temporaryPaths[index])}'`).join("\n"), "utf8");
-    const filename = `${identifier}.mp4`; const output = path.join(editedVideoDir, filename); const outputTemp = `${output}.building`; temporaryPaths.push(outputTemp);
+    const filename = `${identifier}.mp4`; const output = path.join(editedVideoDir, filename); const outputTemp = path.join(editedVideoDir, `${identifier}.building.mp4`); temporaryPaths.push(outputTemp);
     await runVideoTool(tools.ffmpeg, ["-hide_banner", "-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-movflags", "+faststart", outputTemp]);
     await fs.rename(outputTemp, output);
     temporaryPaths.pop();
