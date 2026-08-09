@@ -1730,9 +1730,16 @@ function videoTimelinePoint(node, clientX, track) {
   const ratio = rect.width ? Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) : 0;
   return Math.round(ratio * total * 100) / 100;
 }
+function videoTimelineEntryAt(node, time, preferredClipId = "") {
+  const { entries, total } = videoTimelineEntries(node); if (!entries.length) return null;
+  const playhead = Math.max(0, Math.min(total, Number(time) || 0));
+  const preferred = entries.find(item => item.clip.id === preferredClipId);
+  if (preferred && playhead >= preferred.timelineStart - .001 && playhead <= preferred.timelineEnd + .001) return preferred;
+  return entries.find((item, index) => playhead >= item.timelineStart && (playhead < item.timelineEnd - .001 || index === entries.length - 1)) || entries[entries.length - 1];
+}
 function videoPreviewFrame(node) {
   const edge = incomingEdge(node?.id, "video"); const editor = findNode(edge?.source); if (!editor || editor.type !== "video-editor") return null;
-  const timeline = videoTimelineEntries(editor); const playhead = Math.max(0, Math.min(timeline.total, Number(editor.timelinePlayhead) || 0)); const candidates = timeline.entries.filter(item => playhead >= item.timelineStart && playhead <= item.timelineEnd + .001); const entry = candidates.find(item => item.clip.id === editor.selectedClipId) || candidates[0] || timeline.entries[timeline.entries.length - 1];
+  const timeline = videoTimelineEntries(editor); const playhead = Math.max(0, Math.min(timeline.total, Number(editor.timelinePlayhead) || 0)); const entry = videoTimelineEntryAt(editor, playhead, editor.selectedClipId);
   if (!entry) return null;
   return { editor, entry, source: entry.clip.src, currentTime: Math.max(0, Math.min(entry.sourceEnd, entry.sourceStart + playhead - entry.timelineStart)), playhead };
 }
@@ -1960,7 +1967,8 @@ function nodeHeaderHtml(node, iconName, actions = "", showMenu = true, dragHandl
   return `<header class="node-header${dragHandle ? " node-drag-handle" : ""}"${dragHandle ? ` data-node-drag-handle="${node.id}" data-node-id="${node.id}"` : ""}><div class="node-header-title"><span class="node-type-icon">${icon(iconName)}</span><strong>${escapeHtml(node.name)}</strong></div><div class="node-header-actions">${actions}${menu}</div></header>`;
 }
 function portHtml(node, portId, dataType, direction, label, top) {
-  return `<span class="node-port-wrap ${direction}" style="top:${top}px"><button class="node-port ${dataType}" type="button" data-node-id="${node.id}" data-port-id="${portId}" data-data-type="${dataType}" data-direction="${direction}" aria-label="${escapeHtml(label)}"></button></span>`;
+  const connected = direction === "input" && incomingEdge(node.id, portId);
+  return `<span class="node-port-wrap ${direction}${connected ? " is-connected" : ""}" style="top:${top}px"><button class="node-port ${dataType}" type="button" data-node-id="${node.id}" data-port-id="${portId}" data-data-type="${dataType}" data-direction="${direction}" aria-label="${escapeHtml(label)}"></button></span>`;
 }
 function compositionChoiceButtons(node, field, labels, current) {
   return Object.entries(labels).map(entry => '<button class="composition-camera-option node-interactive' + (entry[0] === current ? ' is-active' : '') + '" type="button" data-composition-field="' + field + '" data-composition-value="' + entry[0] + '" data-composition-node="' + node.id + '">' + entry[1] + '</button>').join("");
@@ -2122,12 +2130,12 @@ function bindNodeEvents() {
   $$('[data-video-timeline]').forEach(track => track.addEventListener("click", event => {
     if (event.target.closest("[data-video-playhead]")) return;
     const node = findNode(track.dataset.videoTimeline); if (!node) return;
-    const time = videoTimelinePoint(node, event.clientX, track); const entry = videoTimelineEntries(node).entries.find(item => time >= item.timelineStart && time <= item.timelineEnd);
+    const time = videoTimelinePoint(node, event.clientX, track); const entry = videoTimelineEntryAt(node, time);
     setVideoTimelinePlayhead(node.id, time, entry?.clip.id || "");
   }));
   $$('[data-video-playhead]').forEach(handle => handle.addEventListener("pointerdown", event => {
     event.preventDefault(); event.stopPropagation(); const node = findNode(handle.dataset.videoPlayhead); const track = handle.closest("[data-video-timeline]"); if (!node || !track) return; stopVideoEditorPreview(node); holdVideoPreviewFrame(node.id);
-    const update = moveEvent => { const time = videoTimelinePoint(node, moveEvent.clientX, track); node.timelinePlayhead = time; const entry = videoTimelineEntries(node).entries.find(item => time >= item.timelineStart && time <= item.timelineEnd); node.selectedClipId = entry?.clip.id || node.selectedClipId || ""; updateTimelinePlayheadDom(node); };
+    const update = moveEvent => { const time = videoTimelinePoint(node, moveEvent.clientX, track); node.timelinePlayhead = time; const entry = videoTimelineEntryAt(node, time); node.selectedClipId = entry?.clip.id || node.selectedClipId || ""; updateTimelinePlayheadDom(node); };
     const finish = moveEvent => { update(moveEvent); document.removeEventListener("pointermove", update); document.removeEventListener("pointerup", finish); renderInspector(); scheduleSave(); };
     document.addEventListener("pointermove", update); document.addEventListener("pointerup", finish, { once: true });
   }));
