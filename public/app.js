@@ -137,6 +137,7 @@ const selectionRect = $("#selectionRect");
 const scriptFlowStage = $("#scriptFlowStage");
 const scriptEdgeLayer = $("#scriptEdgeLayer");
 const scriptNodeLayer = $("#scriptNodeLayer");
+const activeProjectSessionKey = "image2-canvas-active-project";
 
 let state = null;
 let projectMetas = [];
@@ -173,6 +174,45 @@ let scriptStoryResizeSession = null;
 let scriptEmotionPointSession = null;
 let scriptEmotionBoardDragSession = null;
 let scriptEmotionResizeSession = null;
+
+function workspaceSessionSnapshot() {
+  if (!state?.id) return null;
+  const scriptViewport = state.scriptFlow?.viewport;
+  return {
+    projectId: state.id,
+    flowMode: state.flowMode === "script" ? "script" : "workflow",
+    viewport: state.viewport,
+    scriptViewport: scriptViewport && {
+      x: Number(scriptViewport.x) || 0,
+      y: Number(scriptViewport.y) || 0,
+      scale: Number(scriptViewport.scale) || 1
+    }
+  };
+}
+function rememberActiveProject() {
+  const snapshot = workspaceSessionSnapshot();
+  if (!snapshot) return;
+  try { sessionStorage.setItem(activeProjectSessionKey, JSON.stringify(snapshot)); } catch { /* Session storage may be unavailable in private browser profiles. */ }
+}
+function readActiveProjectSession() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(activeProjectSessionKey) || "null");
+    return saved?.projectId ? saved : null;
+  } catch { return null; }
+}
+function clearActiveProjectSession() {
+  try { sessionStorage.removeItem(activeProjectSessionKey); } catch { /* Ignore unavailable session storage. */ }
+}
+function restoreWorkspaceSession(nextState, saved) {
+  if (!saved || saved.projectId !== nextState.id) return;
+  if (saved.flowMode === "script" || saved.flowMode === "workflow") nextState.flowMode = saved.flowMode;
+  const restoreViewport = (target, source, min, max) => {
+    if (!target || !source || !Number.isFinite(Number(source.x)) || !Number.isFinite(Number(source.y)) || !Number.isFinite(Number(source.scale))) return;
+    target.x = Number(source.x); target.y = Number(source.y); target.scale = Math.min(max, Math.max(min, Number(source.scale)));
+  };
+  restoreViewport(nextState.viewport, saved.viewport, WORKFLOW_ZOOM_MIN, WORKFLOW_ZOOM_MAX);
+  restoreViewport(nextState.scriptFlow?.viewport, saved.scriptViewport, SCRIPT_ZOOM_MIN, SCRIPT_ZOOM_MAX);
+}
 let scriptFrameResizeSession = null;
 let scriptCharacterArcPointSession = null;
 let scriptCharacterArcResizeSession = null;
@@ -668,7 +708,7 @@ async function saveProjectNow() {
     if (state?.id === projectId && revision === saveRevision) { $("#saveState").innerHTML = `${icon("cloud-off")} 保存失败`; refreshIcons(); }
   }
 }
-function scheduleSave() { if (!state) return; saveRevision += 1; clearTimeout(saveTimer); $("#saveState").innerHTML = `${icon("cloud-upload")} 保存中`; refreshIcons(); saveTimer = setTimeout(() => { void saveProjectNow(); }, 500); }
+function scheduleSave() { if (!state) return; rememberActiveProject(); saveRevision += 1; clearTimeout(saveTimer); $("#saveState").innerHTML = `${icon("cloud-upload")} 保存中`; refreshIcons(); saveTimer = setTimeout(() => { void saveProjectNow(); }, 500); }
 async function loadProjectMetas() {
   const [projects, storedMetas] = await Promise.all([dbGetAll("projects"), dbGetAll("project-meta")]);
   const projectsById = new Map(projects.filter(Boolean).map(project => [project.id, project]));
@@ -787,13 +827,16 @@ async function openProject(id) {
     if (!project) throw new Error("项目索引存在，但项目内容已缺失");
     const nextState = normalizeProject(project);
     if (!nextState?.id || !Array.isArray(nextState.nodes) || !Array.isArray(nextState.edges)) throw new Error("项目数据格式异常");
+    restoreWorkspaceSession(nextState, readActiveProjectSession());
     clearWorkflowInteractionState(); state = nextState; selectedEdgeId = null; undoStack = []; redoStack = [];
+    rememberActiveProject();
     $("#homeView").hidden = true; $("#workspaceView").hidden = false;
     applyTheme(state.theme); renderWorkspace();
     checkApiStatus();
     resumeGenerationJobs();
   } catch (error) {
     console.error("打开项目失败", error);
+    if (readActiveProjectSession()?.projectId === id) clearActiveProjectSession();
     state = null;
     $("#homeView").hidden = false; $("#workspaceView").hidden = true;
     toast(`打开项目失败：${error?.message || "未知错误"}`, true);
@@ -802,7 +845,7 @@ async function openProject(id) {
     card?.removeAttribute("aria-busy");
   }
 }
-async function goHome() { stopAllGenerationPolling(); clearWorkflowInteractionState(); if (state) await saveProjectNow(); state = null; selectedEdgeId = null; await loadProjectMetas(); renderHome(); }
+async function goHome() { stopAllGenerationPolling(); clearWorkflowInteractionState(); if (state) await saveProjectNow(); state = null; selectedEdgeId = null; clearActiveProjectSession(); await loadProjectMetas(); renderHome(); }
 async function createProject(name, theme) {
   const project = createStarterProject(name, theme); await dbPutBoth(project); projectMetas.unshift(projectMeta(project));
   newProjectDialog.close(); $("#newProjectForm").reset(); await openProject(project.id); requestAnimationFrame(fitContent);
@@ -815,7 +858,7 @@ async function duplicateProject(id) {
 async function deleteProject(id) {
   const meta = projectMetas.find(item => item.id === id);
   if (!meta || !window.confirm(`删除项目“${meta.projectName}”？此操作无法撤销。`)) return;
-  await dbDeleteProject(id); projectMetas = projectMetas.filter(item => item.id !== id); renderHome(); toast("项目已删除");
+  await dbDeleteProject(id); projectMetas = projectMetas.filter(item => item.id !== id); if (readActiveProjectSession()?.projectId === id) clearActiveProjectSession(); renderHome(); toast("项目已删除");
 }
 function renderWorkspace() {
   if (!state) return;
@@ -3144,7 +3187,14 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   $("#inspectorResizer").addEventListener("pointerdown", event => startPanelResize(event, "inspector"));
   scriptFlowStage.addEventListener("pointerdown", event => { if (!state || state.flowMode !== "script") return; if (event.target.closest(".script-character-node, .script-note-card, .flow-switch, .canvas-status")) return; if (event.button === 2) return; if (event.shiftKey && state.tool !== "hand" && !spacePressed && event.button === 0) return startScriptSelection(event); if (state.tool === "hand" || spacePressed || [0, 1].includes(event.button)) return startScriptPan(event); });
 }
-async function init() { bindStaticEvents(); await loadProjectMetas(); renderHome(); await checkApiStatus(); }
+async function init() {
+  bindStaticEvents();
+  await loadProjectMetas();
+  const savedSession = readActiveProjectSession();
+  if (savedSession?.projectId && projectMetas.some(meta => meta.id === savedSession.projectId)) await openProject(savedSession.projectId);
+  else { if (savedSession) clearActiveProjectSession(); renderHome(); }
+  await checkApiStatus();
+}
 init();
 
 
