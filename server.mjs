@@ -911,6 +911,21 @@ function responseTextFrom(result) {
   return String(content || "").trim();
 }
 
+function h3PromptSystemInstruction(mode, durationSeconds) {
+  const duration = `${Number(durationSeconds).toFixed(2)} seconds`;
+  const alignment = {
+    t2va: "Do not add a picture-alignment line.",
+    i2va: "The first line must be: For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.",
+    l2va: `The first line must be: How the reference pictures align with the target video - <Picture 1> (from [Shot 1]) aligns with the ${duration}-second mark of the target video.`,
+    fl2va: `The first line must be: How the reference pictures align with the target video - Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the ${duration}-second mark of the target video.`,
+    ref2va: "Use the six full-reference sections instead of a keyframe-alignment line."
+  }[mode] || "Do not add a picture-alignment line.";
+  const baseStructure = mode === "ref2va"
+    ? "Output exactly these six English sections in order: subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music. Use consistent <Subject N> and <Picture N> labels for the connected images. In retention_analysis use only fully_preserved, partially_preserved, attribute_transfer, or weak_reference."
+    : "After the alignment line when required, output exactly these three English sections in order: integrated_multimodal_description, overall_soundscape, non_diegetic_music.";
+  return `You are the MiniMax H3 video-prompt generator. Transform the user's request and the connected reference images into one production-ready H3 prompt. Output the final prompt only, without commentary, explanations, Markdown fences, or a title.\n\nSelected input mode: ${mode.toUpperCase()}. Target video duration: ${duration}. ${alignment}\n\n${baseStructure}\n\nWrite every descriptive section in English. Preserve dialogue, lyrics, and visible on-screen text in their original language; wrap spoken dialogue as <d>[Language] exact words</d>. Describe concrete composition, subject identity and placement, environment, lighting, actions, camera motion, sound, and the reference image's actual role. Keep reference labels stable. Use [Shot 1] for the opening; later shots use strictly increasing cut times within the target duration. For keyframe modes, make the motion path visibly reach the required first or last reference frame. overall_soundscape contains only ambience, physical sounds, and non-verbal human sounds. non_diegetic_music describes only audience-only music, or N/A. Do not invent unsupported claims about the reference images.`;
+}
+
 async function createResponse(req, res) {
   try {
     const apiKey = await resolveApiKey(req);
@@ -920,12 +935,15 @@ async function createResponse(req, res) {
     if (!prompt) return sendJson(res, 400, { error: "请连接并填写至少一个提示词节点" });
     const textModel = ["gpt-5.5", "gpt-5.6"].includes(body.model) ? body.model : "gpt-5.6";
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, 8);
+    const usingH3Skill = body.skill === "minimax-h3";
+    const h3Mode = ["t2va", "i2va", "l2va", "fl2va", "ref2va"].includes(body.h3Mode) ? body.h3Mode : "t2va";
+    const durationSeconds = Math.min(15, Math.max(3, Math.round(Number(body.durationSeconds) || 6)));
     const content = [{ type: "text", text: prompt }];
     references.forEach(url => content.push({ type: "image_url", image_url: { url, detail: "auto" } }));
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ model: textModel, messages: [{ role: "user", content }] }),
+      body: JSON.stringify({ model: textModel, messages: usingH3Skill ? [{ role: "system", content: h3PromptSystemInstruction(h3Mode, durationSeconds) }, { role: "user", content }] : [{ role: "user", content }] }),
       signal: AbortSignal.timeout(150_000)
     });
     const raw = await response.text();
@@ -934,7 +952,7 @@ async function createResponse(req, res) {
     if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || `模型回答失败 (${response.status})`);
     const answer = responseTextFrom(result);
     if (!answer) throw gatewayError(502, "接口没有返回可显示的文本回答");
-    return sendJson(res, 200, { answer, model: textModel, references: references.length });
+    return sendJson(res, 200, { answer, model: textModel, references: references.length, skill: usingH3Skill ? "minimax-h3" : "none", h3Mode: usingH3Skill ? h3Mode : undefined });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, failure.code === "REQUEST" ? 400 : 502, { error: failure.message, code: failure.code });

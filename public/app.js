@@ -35,6 +35,22 @@ const runningHubFirstFrameProfiles = Object.freeze({
 });
 function runningHubFirstFrameProfile(node) { return node?.videoQuality === "clear" ? runningHubFirstFrameProfiles.clear : runningHubFirstFrameProfiles.standard; }
 const runningHubVideoProvider = Object.freeze({ label: "海螺 H3 视频", model: "RunningHub · API plus" });
+const answerSkillOptions = Object.freeze([
+  { value: "none", label: "普通模型问答" },
+  { value: "minimax-h3", label: "MiniMax H3 提示词生成器" }
+]);
+const h3AnswerModeOptions = Object.freeze([
+  { value: "auto", label: "自动识别" },
+  { value: "t2va", label: "文生视频 · T2VA" },
+  { value: "i2va", label: "首帧生视频 · I2VA" },
+  { value: "l2va", label: "尾帧生视频 · L2VA" },
+  { value: "fl2va", label: "首尾帧生视频 · FL2VA" },
+  { value: "ref2va", label: "全能多参考 · Ref2VA" }
+]);
+function answerNodeHeight(node) { return nodeHeight("answer", node?.inputSlots || 4, 1) + (node?.answerSkill === "minimax-h3" ? 112 : 0); }
+function normalizedAnswerSkill(value) { return answerSkillOptions.some(item => item.value === value) ? value : "none"; }
+function normalizedH3AnswerMode(value) { return h3AnswerModeOptions.some(item => item.value === value) ? value : "auto"; }
+function normalizedH3Duration(value) { return Math.min(15, Math.max(3, Math.round(Number(value) || 6))); }
 const runningHubVideoModes = Object.freeze([
   { value: "text-to-video", label: "提示词生视频（待接入）", inputs: [], available: false },
   { value: "first-frame", label: "首帧生视频", inputs: ["首帧"], available: true },
@@ -440,7 +456,9 @@ function createVideoPreviewNode(x, y) {
   return { id: uid("video-preview"), type: "video-preview", name: "成片预览", x, y, width: 360, height: nodeHeight("video-preview"), createdAt: Date.now() };
 }
 function createAnswerNode(x, y) {
-  return { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, height: nodeHeight("answer", 4, 1), model: "gpt-5.6", status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
+  const node = { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, model: "gpt-5.6", answerSkill: "none", h3Mode: "auto", h3Duration: 6, status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
+  node.height = answerNodeHeight(node);
+  return node;
 }
 function createReferenceNode(x, y) {
   return { id: uid("ref"), type: "image", name: "参考图", x, y, width: 270, height: nodeHeight("image"), src: "", source: "参考图", ratio: "未上传", createdAt: Date.now() };
@@ -573,8 +591,11 @@ function normalizeProject(project) {
       }
       if (node.type === "video-preview") return { ...node, name: node.name || "成片预览", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(280, Number(node.width) || 360), height: Math.max(280, Number(node.height) || nodeHeight("video-preview")), outputType: "mp4" };
       if (node.type === "answer") {
-        const slots = Math.min(4, Math.max(1, Number(node.inputSlots) || 4));
-        return { ...node, name: node.name || "模型回答", width: Math.max(320, Number(node.width) || 380), promptSlots: 1, inputSlots: slots, height: Math.max(Number(node.height) || 0, nodeHeight("answer", slots, 1)), model: ["gpt-5.5", "gpt-5.6"].includes(node.model) ? node.model : "gpt-5.6", status: node.status === "running" ? "running" : "idle", answer: String(node.answer || ""), error: String(node.error || "") };
+        const slots = Math.min(8, Math.max(1, Number(node.inputSlots) || 4));
+        const answerSkill = normalizedAnswerSkill(node.answerSkill);
+        const next = { ...node, name: node.name || "模型回答", width: Math.max(320, Number(node.width) || 380), promptSlots: 1, inputSlots: slots, model: ["gpt-5.5", "gpt-5.6"].includes(node.model) ? node.model : "gpt-5.6", answerSkill, h3Mode: normalizedH3AnswerMode(node.h3Mode), h3Duration: normalizedH3Duration(node.h3Duration), status: node.status === "running" ? "running" : "idle", answer: String(node.answer || ""), error: String(node.error || "") };
+        next.height = Math.max(Number(node.height) || 0, answerNodeHeight(next));
+        return next;
       }
   if (node.type === "image") return { ...node, x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: node.width || 270, height: node.height || nodeHeight("image") };
   if (node.type === "video") return { ...node, mediaType: "video", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || 322), outputType: node.outputType || "mp4", status: "idle" };
@@ -2152,10 +2173,12 @@ function answerImagePortTop(node, index) { return 148 + (node.promptSlots - 1) *
 function renderAnswerNodeHtml(node, selected, style) {
   const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, answerPromptPortId(index)); const promptNode = findNode(edge?.source); const label = edge ? `${promptNode?.disabled ? "已禁用 · " : ""}${sourceLabelForEdge(edge)}` : "未连接"; return `<div class="input-slot${edge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>${index ? `Prompt ${index + 1}` : "Prompt"}</span><span>${escapeHtml(label)}</span></div>`; }).join("");
   const imageSlots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); return `<div class="input-slot${edge ? " is-connected" : ""}"><span>Image ${index + 1}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
-  const answerText = node.status === "running" ? "模型正在回答…" : node.error ? node.error : node.answer || "连接提示词后，模型回答会显示在这里。";
+  const usingH3Skill = node.answerSkill === "minimax-h3";
+  const h3Settings = usingH3Skill ? `<div class="node-field answer-skill-field"><label>提示词 Skill</label><select class="node-select node-interactive" data-answer-skill="${node.id}" aria-label="回答 Skill">${answerSkillOptions.map(item => `<option value="${item.value}"${node.answerSkill === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div><div class="node-field-row answer-h3-settings"><div class="node-field"><label>H3 模式</label><select class="node-select node-interactive" data-answer-h3-mode="${node.id}" aria-label="MiniMax H3 模式">${h3AnswerModeOptions.map(item => `<option value="${item.value}"${node.h3Mode === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div><div class="node-field"><label>视频时长</label><select class="node-select node-interactive" data-answer-h3-duration="${node.id}" aria-label="MiniMax H3 视频时长">${Array.from({ length: 13 }, (_, index) => index + 3).map(seconds => `<option value="${seconds}"${node.h3Duration === seconds ? " selected" : ""}>${seconds} 秒</option>`).join("")}</select></div></div><p class="field-note">自动识别：无图为文生视频，1 图为首帧，2 图为首尾帧，3 图及以上为全能多参考。</p>` : `<div class="node-field answer-skill-field"><label>提示词 Skill</label><select class="node-select node-interactive" data-answer-skill="${node.id}" aria-label="回答 Skill">${answerSkillOptions.map(item => `<option value="${item.value}"${node.answerSkill === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div>`;
+  const answerText = node.status === "running" ? (usingH3Skill ? "正在生成 MiniMax H3 提示词…" : "模型正在回答…") : node.error ? node.error : node.answer || (usingH3Skill ? "连接提示词和参考图后，将输出可直接用于 MiniMax H3 的视频提示词。" : "连接提示词后，模型回答会显示在这里。");
   const responseClass = node.error ? " is-error" : node.answer ? " is-ready" : "";
   const expandLabel = node.answerExpanded ? "收起回答" : "展开回答";
-  return `<article class="canvas-node answer-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "message-square-text")}<div class="node-body answer-body"><div class="node-field answer-model-field"><label>模型</label><select class="node-select node-interactive" data-answer-model="${node.id}" aria-label="回答模型"><option value="gpt-5.5"${node.model === "gpt-5.5" ? " selected" : ""}>GPT-5.5 系列</option><option value="gpt-5.6"${node.model === "gpt-5.6" ? " selected" : ""}>GPT-5.6 系列</option></select></div><div class="answer-inputs">${promptSlots}${imageSlots}</div><div class="answer-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-answer-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-answer-image-input="${node.id}"${node.inputSlots >= 8 ? " disabled" : ""}>${icon("image-plus")} 添加参考图输入</button></div><button class="run-node-button node-interactive" type="button" data-run-answer="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "send-horizontal")} ${node.status === "running" ? "回答中" : "请求回答"}</button><div class="answer-response-wrap${node.answerExpanded ? " is-expanded" : ""}"><div class="answer-response-heading"><span>回答内容</span><span class="answer-response-actions"><button class="answer-response-toggle node-interactive" type="button" data-copy-answer="${node.id}" aria-label="复制回答" data-tooltip="复制回答">${icon("copy")}</button><button class="answer-response-toggle node-interactive" type="button" data-toggle-answer-response="${node.id}" aria-label="${expandLabel}">${icon(node.answerExpanded ? "chevron-up" : "chevron-down")} ${expandLabel}</button></span></div><div class="answer-response node-interactive${responseClass}" data-answer-selectable="${node.id}">${escapeHtml(answerText)}</div></div></div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, answerPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", answerPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", `Image ${index + 1}`, answerImagePortTop(node, index))).join("")}</article>`;
+  return `<article class="canvas-node answer-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "message-square-text")}<div class="node-body answer-body"><div class="node-field answer-model-field"><label>模型</label><select class="node-select node-interactive" data-answer-model="${node.id}" aria-label="回答模型"><option value="gpt-5.5"${node.model === "gpt-5.5" ? " selected" : ""}>GPT-5.5 系列</option><option value="gpt-5.6"${node.model === "gpt-5.6" ? " selected" : ""}>GPT-5.6 系列</option></select></div><div class="answer-inputs">${promptSlots}${imageSlots}</div>${h3Settings}<div class="answer-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-answer-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-answer-image-input="${node.id}"${node.inputSlots >= 8 ? " disabled" : ""}>${icon("image-plus")} 添加参考图输入</button></div><button class="run-node-button node-interactive" type="button" data-run-answer="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "send-horizontal")} ${node.status === "running" ? (usingH3Skill ? "生成中" : "回答中") : (usingH3Skill ? "生成 H3 提示词" : "请求回答")}</button><div class="answer-response-wrap${node.answerExpanded ? " is-expanded" : ""}"><div class="answer-response-heading"><span>回答内容</span><span class="answer-response-actions"><button class="answer-response-toggle node-interactive" type="button" data-copy-answer="${node.id}" aria-label="复制回答" data-tooltip="复制回答">${icon("copy")}</button><button class="answer-response-toggle node-interactive" type="button" data-toggle-answer-response="${node.id}" aria-label="${expandLabel}">${icon(node.answerExpanded ? "chevron-up" : "chevron-down")} ${expandLabel}</button></span></div><div class="answer-response node-interactive${responseClass}" data-answer-selectable="${node.id}">${escapeHtml(answerText)}</div></div></div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, answerPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", answerPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", `Image ${index + 1}`, answerImagePortTop(node, index))).join("")}</article>`;
 }
 
 function bindNodeEvents() {
@@ -2252,7 +2275,7 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
   }));
   $$('[data-add-answer-image-input]').forEach(button => button.addEventListener("click", event => {
     event.stopPropagation(); const node = findNode(button.dataset.addAnswerImageInput); if (!node || node.type !== "answer" || node.inputSlots >= 8) return;
-    recordHistory(); node.inputSlots += 1; node.height = nodeHeight("answer", node.inputSlots, node.promptSlots); renderCanvas(); renderInspector(); scheduleSave();
+    recordHistory(); node.inputSlots += 1; node.height = Math.max(Number(node.height) || 0, answerNodeHeight(node)); renderCanvas(); renderInspector(); scheduleSave();
   }));
   $$('[data-copy-answer]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); copyAnswerText(button.dataset.copyAnswer); }));
   $$('[data-toggle-answer-response]').forEach(button => button.addEventListener("click", event => {
@@ -2261,6 +2284,18 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
   }));
   $$("[data-run-answer]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); runAnswerNode(button.dataset.runAnswer); }));
   $$("[data-answer-model]").forEach(control => control.addEventListener("change", event => { const node = findNode(control.dataset.answerModel); if (!node || node.type !== "answer") return; recordHistory(); node.model = event.target.value; renderInspector(); scheduleSave(); }));
+  $$("[data-answer-skill]").forEach(control => control.addEventListener("change", event => {
+    event.stopPropagation(); const node = findNode(control.dataset.answerSkill); if (!node || node.type !== "answer") return;
+    recordHistory(); const previous = node.answerSkill === "minimax-h3"; node.answerSkill = normalizedAnswerSkill(event.target.value); node.height = Math.max(answerNodeHeight(node), (Number(node.height) || answerNodeHeight(node)) + (node.answerSkill === "minimax-h3" && !previous ? 112 : node.answerSkill === "none" && previous ? -112 : 0)); renderCanvas(); renderInspector(); scheduleSave();
+  }));
+  $$("[data-answer-h3-mode]").forEach(control => control.addEventListener("change", event => {
+    event.stopPropagation(); const node = findNode(control.dataset.answerH3Mode); if (!node || node.type !== "answer") return;
+    recordHistory(); node.h3Mode = normalizedH3AnswerMode(event.target.value); renderCanvas(); renderInspector(); scheduleSave();
+  }));
+  $$("[data-answer-h3-duration]").forEach(control => control.addEventListener("change", event => {
+    event.stopPropagation(); const node = findNode(control.dataset.answerH3Duration); if (!node || node.type !== "answer") return;
+    recordHistory(); node.h3Duration = normalizedH3Duration(event.target.value); renderCanvas(); renderInspector(); scheduleSave();
+  }));
   $$("[data-upload-node]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); triggerReferenceUpload(button.dataset.uploadNode); }));
   $$(".node-port").forEach(port => port.addEventListener("pointerdown", startConnection));
   refreshIcons();
@@ -2865,6 +2900,14 @@ async function copyAnswerText(nodeId) {
   toast(copied ? "模型回答已复制" : "复制失败，请手动选择文本复制", !copied);
 }
 
+function resolveH3AnswerMode(node, referenceCount) {
+  const selected = normalizedH3AnswerMode(node?.h3Mode);
+  if (selected !== "auto") return selected;
+  if (!referenceCount) return "t2va";
+  if (referenceCount === 1) return "i2va";
+  if (referenceCount === 2) return "fl2va";
+  return "ref2va";
+}
 async function runAnswerNode(nodeId) {
   const node = findNode(nodeId);
   if (!node || node.type !== "answer" || node.status === "running") return;
@@ -2877,7 +2920,8 @@ async function runAnswerNode(nodeId) {
   recordHistory(); node.status = "running"; node.error = ""; renderCanvas(); renderInspector();
   try {
     const references = await Promise.all(sources.map(sourceToDataUrl));
-    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt, model: node.model, references }) }, 165_000);
+    const h3Enabled = node.answerSkill === "minimax-h3";
+    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt, model: node.model, references, skill: h3Enabled ? "minimax-h3" : "none", h3Mode: h3Enabled ? resolveH3AnswerMode(node, references.length) : undefined, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined }) }, 165_000);
     node.answer = String(result.answer || ""); node.model = result.model || node.model; node.status = "idle";
     toast("模型回答已完成");
   } catch (error) {
