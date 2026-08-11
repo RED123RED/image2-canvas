@@ -673,6 +673,37 @@ async function dbDeleteProject(id) {
   try { await new Promise((resolve, reject) => { const transaction = db.transaction(["projects", "project-meta"], "readwrite"); transaction.objectStore("projects").delete(id); transaction.objectStore("project-meta").delete(id); transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); }); }
   finally { db.close(); }
 }
+function generatedImageFilename(source) {
+  try {
+    const url = new URL(String(source || ""), window.location.origin);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/api/generated/")) return "";
+    const filename = decodeURIComponent(url.pathname.slice("/api/generated/".length));
+    return /^job-[a-z0-9-]+-\d+\.(?:png|jpe?g|webp)$/i.test(filename) ? filename : "";
+  } catch {
+    return "";
+  }
+}
+function generatedImageFilesForProject(project) {
+  const files = new Set();
+  (project?.nodes || []).filter(node => node?.type === "image").forEach(node => {
+    [node.src, node.originalSrc, node.previewSrc].forEach(source => {
+      const filename = generatedImageFilename(source);
+      if (filename) files.add(filename);
+    });
+  });
+  return files;
+}
+async function generatedImageFilesUsedByOtherProjects(projectId) {
+  const projects = await dbGetAll("projects");
+  const used = new Set();
+  projects.filter(project => project?.id && project.id !== projectId).forEach(project => generatedImageFilesForProject(project).forEach(file => used.add(file)));
+  return used;
+}
+async function removeGeneratedImageFiles(filenames) {
+  const unique = [...new Set((filenames || []).filter(Boolean))];
+  if (!unique.length) return { deleted: 0, missing: 0 };
+  return requestJson("/api/generated/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filenames: unique }) }, 60_000);
+}
 function cleanProjectForSave() {
   if (!state) return null;
   const stableNodes = state.nodes.filter(node => node.type !== "loading").map(node => node.type === "generator" ? { ...node, status: node.activeJobId ? "running" : "idle" } : node);
@@ -882,8 +913,21 @@ async function duplicateProject(id) {
 }
 async function deleteProject(id) {
   const meta = projectMetas.find(item => item.id === id);
-  if (!meta || !window.confirm(`删除项目“${meta.projectName}”？此操作无法撤销。`)) return;
-  await dbDeleteProject(id); projectMetas = projectMetas.filter(item => item.id !== id); if (readActiveProjectSession()?.projectId === id) clearActiveProjectSession(); renderHome(); toast("项目已删除");
+  if (!meta) return;
+  const project = await dbGet("projects", id);
+  const projectFiles = generatedImageFilesForProject(project);
+  const sharedFiles = await generatedImageFilesUsedByOtherProjects(id);
+  const removableFiles = [...projectFiles].filter(file => !sharedFiles.has(file));
+  const cleanupNote = removableFiles.length ? `\n同时清理 ${removableFiles.length} 张仅属于该项目的本地生成图片。` : "";
+  if (!window.confirm(`删除项目“${meta.projectName}”？此操作无法撤销。${cleanupNote}`)) return;
+  await dbDeleteProject(id); projectMetas = projectMetas.filter(item => item.id !== id); if (readActiveProjectSession()?.projectId === id) clearActiveProjectSession(); renderHome();
+  try {
+    const cleanup = await removeGeneratedImageFiles(removableFiles);
+    const sharedNote = projectFiles.size > removableFiles.length ? "；共享图片已保留" : "";
+    toast(`项目已删除${cleanup.deleted ? `，已清理 ${cleanup.deleted} 张本地生成图片` : ""}${sharedNote}`);
+  } catch (error) {
+    toast(`项目已删除，但本地图片清理失败：${error.message || "未知错误"}`, true);
+  }
 }
 function renderWorkspace() {
   if (!state) return;
@@ -2515,6 +2559,23 @@ function addFrame() {
   const center = sceneCenter(); recordHistory(); const node = { id: uid("frame"), type: "frame", name: `工作流分组 ${state.frameCounter++}`, x: Math.round(center.x - 350), y: Math.round(center.y - 240), width: 700, height: 480, createdAt: Date.now() };
   state.nodes.push(node); state.selectedIds = [node.id]; renderWorkspace(); scheduleSave();
 }
+async function deleteGeneratedImageNodeWithFile(nodeId) {
+  const node = findNode(nodeId); const filename = node?.type === "image" ? generatedImageFilename(node.src) : "";
+  if (!node || !filename) return toast("该节点不是本地生成图片，普通删除不会清理磁盘文件", true);
+  const sameProjectFiles = generatedImageFilesForProject({ nodes: state.nodes.filter(item => item.id !== nodeId) });
+  const sharedFiles = await generatedImageFilesUsedByOtherProjects(state.id);
+  const canDeleteFile = !sameProjectFiles.has(filename) && !sharedFiles.has(filename);
+  const fileNote = canDeleteFile ? "并删除对应的本地生成图片。此操作不可撤销。" : "。该图片仍被当前项目或其他项目使用，磁盘文件会保留。";
+  if (!window.confirm(`删除画布节点“${node.name}”${fileNote}`)) return;
+  if (canDeleteFile) {
+    try { await removeGeneratedImageFiles([filename]); }
+    catch (error) { return toast(`本地图片删除失败，已保留画布节点：${error.message || "未知错误"}`, true); }
+  }
+  state.nodes = state.nodes.filter(item => item.id !== nodeId); state.edges = state.edges.filter(edge => edge.source !== nodeId && edge.target !== nodeId); state.recentIds = state.recentIds.filter(id => id !== nodeId); state.selectedIds = []; selectedEdgeId = null;
+  // Restoring the node without its deleted file would create a broken image reference.
+  undoStack = []; redoStack = []; updateHistoryButtons(); renderWorkspace(); scheduleSave();
+  toast(canDeleteFile ? "已同步删除画布节点和本地生成图片" : "已删除画布节点；共享本地图片已保留");
+}
 function deleteSelection() {
   if (selectedEdgeId) { recordHistory(); state.edges = state.edges.filter(edge => edge.id !== selectedEdgeId); selectedEdgeId = null; renderCanvas(); renderInspector(); scheduleSave(); return; }
   if (!state.selectedIds.length) return; recordHistory(); const ids = new Set(state.selectedIds);
@@ -2574,10 +2635,10 @@ function renderNodeInspector(node) {
   if (node.type === "generator" && node.mediaType !== "video") { const imageInputs = state.edges.filter(edge => edge.target === node.id && edge.type === "image").length; const provider = generatorProviderForNode(node); specific = `<div class="summary-row"><span>模型</span><strong>${provider.model}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>参考图</span><strong>${imageInputs}/${node.inputSlots}</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>`; }
   if (node.mediaType === "video") { const dimensions = runningHubVideoDimensions(node); specific = `<div class="summary-row"><span>模型</span><strong>${runningHubVideoProvider.model}</strong></div><div class="summary-row"><span>生成方式</span><strong>${runningHubVideoMode(node).label}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>清晰度</span><strong>${runningHubVideoQuality(node).label}</strong></div><div class="summary-row"><span>尺寸</span><strong>${dimensions.width} × ${dimensions.height}</strong></div><div class="summary-row"><span>时长</span><strong>${node.videoSeconds} 秒</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>${node.lastError ? `<div class="summary-row"><span>最近错误</span><strong>${escapeHtml(node.lastError)}</strong></div>` : ""}`; }
   if (node.type === "frame") { const contained = frameContainedNodes(node).length; specific = `<div class="summary-row"><span>包含节点</span><strong>${contained}</strong></div><div class="summary-row"><span>画板尺寸</span><strong>${Math.round(node.width)} × ${Math.round(node.height)}</strong></div><p class="field-note">把节点拖入虚线范围后，拖动画板边框即可整体移动这些节点。右下角手柄可以调整画板大小。</p>`; }
-  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">名称</div><input class="text-input" id="nodeNameInput" value="${escapeHtml(node.name)}"></section><section class="control-section">${specific}</section><section class="control-section"><div class="action-list">${node.type === "generator" ? `<button class="action-row" type="button" data-inspector-action="run">${icon("play")}<strong>运行此节点</strong><small>${node.mediaType === "video" ? "MP4 视频" : `${node.batch} 张`}</small></button>` : ""}${node.type === "video-editor" ? `<button class="action-row" type="button" data-inspector-action="import-video">${icon("video")}<strong>导入视频</strong><small>保存到本机 E 盘</small></button>` : ""}${node.type === "image" ? (node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载图片</strong><small>原始文件</small></button>` : `<button class="action-row" type="button" data-inspector-action="upload">${icon("image-plus")}<strong>上传图像</strong><small>本地参考图</small></button>`) : ""}${(node.type === "video" && node.src) || (node.type === "video-preview" && videoPreviewFrame(node)) ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>${node.type === "video-preview" ? "导出并下载视频" : "下载视频"}</strong><small>${node.type === "video-preview" ? "按需生成 MP4" : escapeHtml(node.outputType || "mp4")}</small></button>` : ""}<button class="action-row" type="button" data-inspector-action="duplicate">${icon("copy")}<strong>复制模块</strong><small>保留当前参数</small></button><button class="action-row danger-action" type="button" data-inspector-action="delete">${icon("trash-2")}<strong>删除模块</strong><small>同时删除连接</small></button></div></section>`;
+  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">名称</div><input class="text-input" id="nodeNameInput" value="${escapeHtml(node.name)}"></section><section class="control-section">${specific}</section><section class="control-section"><div class="action-list">${node.type === "generator" ? `<button class="action-row" type="button" data-inspector-action="run">${icon("play")}<strong>运行此节点</strong><small>${node.mediaType === "video" ? "MP4 视频" : `${node.batch} 张`}</small></button>` : ""}${node.type === "video-editor" ? `<button class="action-row" type="button" data-inspector-action="import-video">${icon("video")}<strong>导入视频</strong><small>保存到本机 E 盘</small></button>` : ""}${node.type === "image" ? (node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载图片</strong><small>原始文件</small></button>` : `<button class="action-row" type="button" data-inspector-action="upload">${icon("image-plus")}<strong>上传图像</strong><small>本地参考图</small></button>`) : ""}${(node.type === "video" && node.src) || (node.type === "video-preview" && videoPreviewFrame(node)) ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>${node.type === "video-preview" ? "导出并下载视频" : "下载视频"}</strong><small>${node.type === "video-preview" ? "按需生成 MP4" : escapeHtml(node.outputType || "mp4")}</small></button>` : ""}${node.type === "image" && generatedImageFilename(node.src) ? `<button class="action-row danger-action" type="button" data-inspector-action="delete-generated-file">${icon("trash-2")}<strong>同步删除生成文件</strong><small>删除画布节点与本地图片，不可撤销</small></button>` : ""}<button class="action-row" type="button" data-inspector-action="duplicate">${icon("copy")}<strong>复制模块</strong><small>保留当前参数</small></button><button class="action-row danger-action" type="button" data-inspector-action="delete">${icon("trash-2")}<strong>删除模块</strong><small>仅删除画布节点，保留本地文件</small></button></div></section>`;
   $("#nodeNameInput").addEventListener("change", event => { const value = event.target.value.trim(); if (!value || value === node.name) return; recordHistory(); node.name = value; renderCanvas(); renderLibrary(); scheduleSave(); });
   $$("#inspectorContent [data-upload-node]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); triggerReferenceUpload(button.dataset.uploadNode); }));
-   $$('[data-inspector-action]').forEach(button => button.addEventListener("click", () => { const action = button.dataset.inspectorAction; if (action === "run") runGeneratorNode(node.id); if (action === "upload") triggerReferenceUpload(node.id); if (action === "import-video") { pendingVideoImportNodeId = node.id; videoFileInput.value = ""; videoFileInput.click(); } if (action === "download") { if (node.type === "video-preview") void exportVideoPreview(node.id); else downloadNode(node); } if (action === "duplicate") duplicateSelected(); if (action === "delete") deleteSelection(); }));
+   $$('[data-inspector-action]').forEach(button => button.addEventListener("click", () => { const action = button.dataset.inspectorAction; if (action === "run") runGeneratorNode(node.id); if (action === "upload") triggerReferenceUpload(node.id); if (action === "import-video") { pendingVideoImportNodeId = node.id; videoFileInput.value = ""; videoFileInput.click(); } if (action === "download") { if (node.type === "video-preview") void exportVideoPreview(node.id); else downloadNode(node); } if (action === "delete-generated-file") void deleteGeneratedImageNodeWithFile(node.id); if (action === "duplicate") duplicateSelected(); if (action === "delete") deleteSelection(); }));
   refreshIcons();
 }
 async function handleCanvasPaste(event) {
