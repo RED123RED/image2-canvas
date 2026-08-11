@@ -532,34 +532,49 @@ async function persistGeneratedMedia(job, item, index) {
   return { url: `/api/generated/${filename}`, outputType: extension, nodeId: item?.nodeId || "", text: item?.text || "" };
 }
 
+async function collectRequestedImageItems(requestedCount, requestOnce) {
+  const targetCount = Math.min(4, Math.max(1, Number(requestedCount) || 1));
+  const items = [];
+  while (items.length < targetCount) {
+    const remaining = targetCount - items.length;
+    const responseItems = await requestOnce(remaining, items.length);
+    if (!Array.isArray(responseItems) || !responseItems.length) throw gatewayError(502, "接口响应中没有图片");
+    items.push(...responseItems);
+  }
+  return items.slice(0, targetCount);
+}
+
 async function requestImage2Generation(job) {
   const { apiKey, prompt, quality, size, n, references } = job.request;
   const endpoint = references.length ? "/images/edits" : "/images/generations";
-  let requestBody;
-  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Idempotency-Key": job.id };
-  if (references.length) {
-    const form = new FormData();
-    form.append("model", model);
-    form.append("prompt", prompt);
-    form.append("quality", quality);
-    form.append("size", size);
-    form.append("n", String(n));
-    references.forEach((dataUrl, index) => {
-      const { blob, filename } = parseDataUrl(dataUrl, index);
-      form.append("image[]", blob, filename);
-    });
-    requestBody = form;
-  } else {
-    headers["Content-Type"] = "application/json";
-    requestBody = JSON.stringify({ model, prompt, quality, size, n });
-  }
-  const response = await fetch(`${baseUrl}${endpoint}`, { method: "POST", headers, body: requestBody, signal: AbortSignal.timeout(10 * 60_000) });
-  const raw = await response.text();
-  let result;
-  try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
-  if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || `Image2 请求失败 (${response.status})`);
-  const items = Array.isArray(result.data) ? result.data : [];
-  if (!items.length) throw gatewayError(502, "接口响应中没有图片");
+  const requestOnce = async (count, index) => {
+    let requestBody;
+    const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Idempotency-Key": index ? `${job.id}:${index + 1}` : job.id };
+    if (references.length) {
+      const form = new FormData();
+      form.append("model", model);
+      form.append("prompt", prompt);
+      form.append("quality", quality);
+      form.append("size", size);
+      form.append("n", String(count));
+      references.forEach((dataUrl, referenceIndex) => {
+        const { blob, filename } = parseDataUrl(dataUrl, referenceIndex);
+        form.append("image[]", blob, filename);
+      });
+      requestBody = form;
+    } else {
+      headers["Content-Type"] = "application/json";
+      requestBody = JSON.stringify({ model, prompt, quality, size, n: count });
+    }
+    const response = await fetch(`${baseUrl}${endpoint}`, { method: "POST", headers, body: requestBody, signal: AbortSignal.timeout(10 * 60_000) });
+    const raw = await response.text();
+    let result;
+    try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
+    if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || `Image2 请求失败 (${response.status})`);
+    return Array.isArray(result.data) ? result.data : [];
+  };
+  // Preserve native batch support, then top up when an OpenAI-compatible gateway returns fewer images than requested.
+  const items = await collectRequestedImageItems(n, requestOnce);
   return { items, mode: references.length ? "edit" : "generate", referencesUsed: references.length };
 }
 
@@ -567,40 +582,43 @@ async function requestGeminiGeneration(job) {
   const { apiKey, prompt, size, outputSize, n, references } = job.request;
   const modelName = normalizeMoyuModel(job.model);
   const selectedReferences = references.slice(0, moyuReferenceLimit(modelName));
-  const payload = { model: modelName, prompt, size, n };
-  if (job.provider === "gemini") payload.quality = normalizeMoyuOutputSize(modelName, outputSize);
-  if (job.provider === "moyu") payload.watermark = false;
-  // The gateway accepts one reference as a string and multiple references as an array.
-  if (selectedReferences.length === 1) payload.image = selectedReferences[0];
-  else if (selectedReferences.length > 1) payload.image = selectedReferences;
-  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
-  let lastError;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const response = await fetch(`${geminiBaseUrl}/v1/images/generations`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(10 * 60_000)
-      });
-      const raw = await response.text();
-      let result;
-      try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
-      if (!response.ok) {
-        lastError = gatewayError(response.status, result?.error?.message || result?.message || `Gemini 请求失败 (${response.status})`);
-        if (response.status < 500 && response.status !== 429) throw lastError;
-      } else {
-        const items = Array.isArray(result.data) ? result.data : [];
-        if (!items.length) throw gatewayError(502, "Gemini 接口响应中没有图片");
-        return { items, mode: selectedReferences.length ? "edit" : "generate", referencesUsed: selectedReferences.length };
+  const requestOnce = async (count, index) => {
+    const payload = { model: modelName, prompt, size, n: count };
+    if (job.provider === "gemini") payload.quality = normalizeMoyuOutputSize(modelName, outputSize);
+    if (job.provider === "moyu") payload.watermark = false;
+    // The gateway accepts one reference as a string and multiple references as an array.
+    if (selectedReferences.length === 1) payload.image = selectedReferences[0];
+    else if (selectedReferences.length > 1) payload.image = selectedReferences;
+    const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": index ? `${job.id}:${index + 1}` : job.id };
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const response = await fetch(`${geminiBaseUrl}/v1/images/generations`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10 * 60_000)
+        });
+        const raw = await response.text();
+        let result;
+        try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
+        if (!response.ok) {
+          lastError = gatewayError(response.status, result?.error?.message || result?.message || `Gemini 请求失败 (${response.status})`);
+          if (response.status < 500 && response.status !== 429) throw lastError;
+        } else {
+          return Array.isArray(result.data) ? result.data : [];
+        }
+      } catch (error) {
+        lastError = error;
+        if (error?.code && error.code !== "GATEWAY" && error.code !== "RATE_LIMIT") throw error;
       }
-    } catch (error) {
-      lastError = error;
-      if (error?.code && error.code !== "GATEWAY" && error.code !== "RATE_LIMIT") throw error;
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1200 * (attempt + 1)));
     }
-    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1200 * (attempt + 1)));
-  }
-  throw lastError || gatewayError(502, "魔芋图像接口请求失败");
+    throw lastError || gatewayError(502, "魔芋图像接口请求失败");
+  };
+  // Gemini 3 and the configured Seedream gateway return one image per generation request.
+  const items = await collectRequestedImageItems(n, requestOnce);
+  return { items, mode: selectedReferences.length ? "edit" : "generate", referencesUsed: selectedReferences.length };
 }
 
 function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
