@@ -1984,6 +1984,7 @@ function renderEdges() {
       const visual = document.createElementNS("http://www.w3.org/2000/svg", "path");
       const hit = document.createElementNS("http://www.w3.org/2000/svg", "path"); hit.dataset.edgeId = spec.id;
       hit.addEventListener("pointerdown", event => { event.stopPropagation(); selectedEdgeId = hit.dataset.edgeId; state.selectedIds = []; renderEdges(); renderCanvasSelection(); renderInspector(); });
+      hit.addEventListener("dblclick", event => { event.preventDefault(); event.stopPropagation(); selectedEdgeId = hit.dataset.edgeId; state.selectedIds = []; deleteSelection(); toast("已删除连接"); });
       group.append(visual, hit); edgeLayer.append(group);
     }
     existing.delete(spec.id);
