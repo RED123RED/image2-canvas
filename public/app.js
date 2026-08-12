@@ -8,7 +8,7 @@ const sizeMap = {
   "16:9": { api: "2048x1152", label: "宽银幕", shape: "aspect-landscape" },
   "9:16": { api: "1152x2048", label: "短视频", shape: "aspect-portrait" }
 };
-const themeLabels = { dark: "暗黑科技", light: "明亮清晰", premium: "简约高级" };
+const themeLabels = { dark: "暗黑科技", light: "明亮清晰", premium: "高级灰" };
 const fixedGeneratorSettings = Object.freeze({ aspect: "3:4", quality: "medium", batch: 1 });
 const geminiImageModels = Object.freeze([
   { id: "gemini-3-pro-image-preview", label: "Gemini 3 Pro Image" },
