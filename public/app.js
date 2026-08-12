@@ -88,6 +88,8 @@ function generatorOutputOptions(node) { return generatorOutputSizeOptions[genera
 function generatorDefaultOutputSize(node) { return generatorOutputOptions(node).at(-1)?.value || "current"; }
 function normalizeGeneratorOutputSize(node) { const options = generatorOutputOptions(node); return options.some(option => option.value === node?.outputSize) ? node.outputSize : generatorDefaultOutputSize(node); }
 function generatorApiSize(node) {
+  // The Gemini gateway expects an aspect ratio such as "16:9", while Image2 and Seedream expect pixels.
+  if (node?.provider === "gemini") return sizeMap[node?.aspect] ? node.aspect : fixedGeneratorSettings.aspect;
   if (node?.provider !== "moyu") return sizeMap[node?.aspect]?.api || sizeMap[fixedGeneratorSettings.aspect].api;
   const maximum = { "1:1": "2048x2048", "16:9": "2848x1600", "9:16": "1600x2848" };
   return maximum[node.aspect] || sizeMap[node.aspect]?.api || sizeMap[fixedGeneratorSettings.aspect].api;
