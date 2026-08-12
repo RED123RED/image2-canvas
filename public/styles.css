@@ -428,6 +428,8 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .workflow-edge.video { stroke: #b17128; filter: drop-shadow(0 0 3px rgba(177, 113, 40, .24)); }
 .workflow-edge.is-selected { stroke-width: 3; opacity: 1; animation-duration: 1.2s; }
 .workspace.is-flow-interacting .workflow-edge { filter: none; animation-play-state: paused; }
+html[data-edge-motion="static"] .workflow-edge,
+html[data-edge-motion="static"] .script-relationship-edge { animation: none; filter: none; }
 .workspace.is-flow-interacting .edge-hit { pointer-events: none; }
 .edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; vector-effect: non-scaling-stroke; }
 

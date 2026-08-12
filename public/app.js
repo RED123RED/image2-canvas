@@ -160,6 +160,7 @@ const activeProjectSessionKey = "image2-canvas-active-project";
 let state = null;
 let projectMetas = [];
 let globalTheme = localStorage.getItem("image2-canvas-theme") || "light";
+let lineMotion = localStorage.getItem("image2-canvas-line-motion") === "static" ? "static" : "dynamic";
 let undoStack = [];
 let redoStack = [];
 const editableHistorySessions = new WeakMap();
@@ -3227,7 +3228,9 @@ async function refreshRunningHubSettingsStatus() {
   try { const result = await requestJson("/api/status", {}, 5_000); statusElement.textContent = result.runninghub?.ready ? `已配置 · 工作流 ${result.runninghub.workflowId} · ${result.runninghub.instanceType}` : "尚未配置，保存密钥后即可运行海螺 H3 视频。"; }
   catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
 }
-function openSettings() { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); const input = $("#geminiApiKeyInput"); if (input) input.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; settingsDialog.showModal(); void refreshGeminiSettingsStatus(); void refreshRunningHubSettingsStatus(); }
+function applyLineMotionPreference(value = lineMotion) { lineMotion = value === "static" ? "static" : "dynamic"; document.documentElement.dataset.edgeMotion = lineMotion; $$("#lineMotionSwitch [data-line-motion]").forEach(button => button.classList.toggle("is-active", button.dataset.lineMotion === lineMotion)); }
+function setLineMotion(value) { applyLineMotionPreference(value); localStorage.setItem("image2-canvas-line-motion", lineMotion); }
+function openSettings() { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); applyLineMotionPreference(); const input = $("#geminiApiKeyInput"); if (input) input.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; settingsDialog.showModal(); void refreshGeminiSettingsStatus(); void refreshRunningHubSettingsStatus(); }
 function bindStaticEvents() {
   $("#newProjectButton").addEventListener("click", () => {
     $("#newProjectName").value = ""; const radio = $(`#newProjectThemes input[value="${globalTheme}"]`); if (radio) radio.checked = true;
@@ -3288,6 +3291,7 @@ function bindStaticEvents() {
   projectFileInput.addEventListener("change", async event => { if (event.target.files[0]) await importProject(event.target.files[0]); event.target.value = ""; });
 
   $("#settingsButton").addEventListener("click", openSettings);
+  $$("#lineMotionSwitch [data-line-motion]").forEach(button => button.addEventListener("click", () => setLineMotion(button.dataset.lineMotion)));
   $("#revealKeyButton").addEventListener("click", () => { const input = $("#apiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $("#revealGeminiKeyButton").addEventListener("click", () => { const input = $("#geminiApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $("#revealRunningHubKeyButton").addEventListener("click", () => { const input = $("#runningHubApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
@@ -3380,6 +3384,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   scriptFlowStage.addEventListener("pointerdown", event => { if (!state || state.flowMode !== "script") return; if (event.target.closest(".script-character-node, .script-note-card, .flow-switch, .canvas-status")) return; if (event.button === 2) return; if (event.shiftKey && state.tool !== "hand" && !spacePressed && event.button === 0) return startScriptSelection(event); if (state.tool === "hand" || spacePressed || [0, 1].includes(event.button)) return startScriptPan(event); });
 }
 async function init() {
+  applyLineMotionPreference();
   bindStaticEvents();
   await loadProjectMetas();
   const savedSession = readActiveProjectSession();
