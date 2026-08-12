@@ -943,6 +943,39 @@ async function deleteGeneratedImages(req, res) {
   }
 }
 
+async function cleanupUnusedGeneratedImages(req, res) {
+  try {
+    const body = await readJson(req, 2 * 1024 * 1024);
+    const action = body?.action === "delete" ? "delete" : "preview";
+    const referenced = new Set((Array.isArray(body?.referencedFilenames) ? body.referencedFilenames : []).map(generatedImageFilename).filter(Boolean));
+    const activeJobIds = new Set([...jobs.values()].filter(job => ["queued", "running"].includes(job.status)).map(job => job.id));
+    const entries = await fs.readdir(generatedDir, { withFileTypes: true });
+    const unused = [];
+    let totalImageCount = 0;
+    let activeImageCount = 0;
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const filename = generatedImageFilename(entry.name);
+      if (!filename) continue;
+      totalImageCount += 1;
+      if (referenced.has(filename)) continue;
+      if ([...activeJobIds].some(id => filename.startsWith(`${id}-`))) { activeImageCount += 1; continue; }
+      const stat = await fs.stat(path.join(generatedDir, filename));
+      unused.push({ filename, bytes: stat.size });
+    }
+    const reclaimBytes = unused.reduce((total, item) => total + item.bytes, 0);
+    if (action !== "delete") return sendJson(res, 200, { totalImageCount, referencedCount: referenced.size, activeImageCount, unusedCount: unused.length, reclaimBytes });
+    let deleted = 0; let deletedBytes = 0; let missing = 0;
+    for (const item of unused) {
+      try { await fs.unlink(path.join(generatedDir, item.filename)); deleted += 1; deletedBytes += item.bytes; }
+      catch (error) { if (error?.code === "ENOENT") missing += 1; else throw error; }
+    }
+    return sendJson(res, 200, { totalImageCount, referencedCount: referenced.size, activeImageCount, unusedCount: unused.length, reclaimBytes, deleted, deletedBytes, missing });
+  } catch (error) {
+    return sendJson(res, 500, { error: error?.message || "未使用生成图片清理失败" });
+  }
+}
+
 function responseTextFrom(result) {
   const content = result?.choices?.[0]?.message?.content;
   if (Array.isArray(content)) return content.map(item => item?.text || item?.content || "").join("\n").trim();
@@ -1030,6 +1063,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/generate") return createJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/respond") return createResponse(req, res);
   if (req.method === "POST" && url.pathname === "/api/generated/delete") return deleteGeneratedImages(req, res);
+  if (req.method === "POST" && url.pathname === "/api/generated/cleanup-unused") return cleanupUnusedGeneratedImages(req, res);
   if (req.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
     const job = jobs.get(decodeURIComponent(url.pathname.slice("/api/jobs/".length)));
     return job ? sendJson(res, 200, { job: jobView(job) }) : sendJson(res, 404, { error: "生成任务不存在，可能已被清理" });

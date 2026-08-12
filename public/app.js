@@ -279,6 +279,7 @@ let runningHubApiKey = "";
 let isGenerating = false;
 let projectSearch = "";
 let projectOpeningId = null;
+let generatedCleanupPreview = null;
 let edgeRenderFrame = 0;
 let scriptEdgeRenderFrame = 0;
 let scriptSelectionFrame = 0;
@@ -703,6 +704,76 @@ async function removeGeneratedImageFiles(filenames) {
   const unique = [...new Set((filenames || []).filter(Boolean))];
   if (!unique.length) return { deleted: 0, missing: 0 };
   return requestJson("/api/generated/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filenames: unique }) }, 60_000);
+}
+function formatStorageSize(bytes) {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+async function collectAllGeneratedImageReferences() {
+  const projects = await dbGetAll("projects");
+  const files = new Set();
+  projects.filter(project => project?.id).forEach(project => generatedImageFilesForProject(project).forEach(file => files.add(file)));
+  return [...files];
+}
+async function inspectUnusedGeneratedImages(referencedFilenames, action = "preview") {
+  return requestJson("/api/generated/cleanup-unused", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, referencedFilenames })
+  }, 60_000);
+}
+function setGeneratedCleanupDialogState({ copy, summary = "", warning = false, canConfirm = false, busy = false }) {
+  $("#generatedCleanupCopy").textContent = copy;
+  const summaryElement = $("#generatedCleanupSummary");
+  summaryElement.hidden = !summary;
+  summaryElement.textContent = summary;
+  $("#generatedCleanupWarning").hidden = !warning;
+  const confirmButton = $("#confirmGeneratedCleanupButton");
+  confirmButton.disabled = !canConfirm || busy;
+  confirmButton.innerHTML = busy ? `${icon("loader-circle")} 正在清理…` : `${icon("trash-2")} 删除未使用图片`;
+  $("#cancelGeneratedCleanupButton").disabled = busy;
+  $("#closeGeneratedCleanupButton").disabled = busy;
+  refreshIcons();
+}
+async function openGeneratedCleanupDialog() {
+  generatedCleanupPreview = null;
+  const dialog = $("#generatedCleanupDialog");
+  setGeneratedCleanupDialogState({ copy: "正在检查全部项目画布中的图片引用…", busy: true });
+  dialog.showModal();
+  try {
+    const referencedFilenames = await collectAllGeneratedImageReferences();
+    const preview = await inspectUnusedGeneratedImages(referencedFilenames);
+    generatedCleanupPreview = { ...preview, referencedFilenames };
+    if (!preview.unusedCount) {
+      setGeneratedCleanupDialogState({ copy: "当前没有可清理的未使用生成图片。", summary: `已检查 ${preview.totalImageCount} 张本地生成图片，所有仍被项目画布引用的图片均会保留。` });
+      return;
+    }
+    setGeneratedCleanupDialogState({
+      copy: "以下图片没有出现在任何项目画布中，可以清理以释放 E 盘空间。",
+      summary: `可清理 ${preview.unusedCount} 张图片，预计释放 ${formatStorageSize(preview.reclaimBytes)}。`,
+      warning: true,
+      canConfirm: true
+    });
+  } catch (error) {
+    generatedCleanupPreview = null;
+    setGeneratedCleanupDialogState({ copy: `检查失败：${error?.message || "本机服务暂时不可用"}` });
+  }
+}
+async function confirmGeneratedCleanup() {
+  if (!generatedCleanupPreview?.unusedCount) return;
+  setGeneratedCleanupDialogState({ copy: "正在重新核对项目引用并删除未使用图片…", busy: true });
+  try {
+    const referencedFilenames = await collectAllGeneratedImageReferences();
+    const result = await inspectUnusedGeneratedImages(referencedFilenames, "delete");
+    generatedCleanupPreview = null;
+    $("#generatedCleanupDialog").close();
+    toast(result.deleted ? `已清理 ${result.deleted} 张未使用生成图片，释放 ${formatStorageSize(result.deletedBytes)}` : "没有需要清理的生成图片");
+  } catch (error) {
+    setGeneratedCleanupDialogState({ copy: `清理失败：${error?.message || "未知错误"}` });
+    toast(`本地图片清理失败：${error?.message || "未知错误"}`, true);
+  }
 }
 function cleanProjectForSave() {
   if (!state) return null;
@@ -3168,6 +3239,10 @@ function bindStaticEvents() {
   newProjectDialog.addEventListener("cancel", () => { $("#newProjectForm").reset(); });
   $("#newProjectForm").addEventListener("submit", event => { event.preventDefault(); const name = $("#newProjectName").value.trim(); const theme = $("#newProjectThemes input:checked")?.value || globalTheme; if (name) createProject(name, theme); });
   $("#projectSearch").addEventListener("input", event => { projectSearch = event.target.value; renderHome(); });
+  $("#cleanupUnusedGeneratedButton").addEventListener("click", () => void openGeneratedCleanupDialog());
+  $("#closeGeneratedCleanupButton").addEventListener("click", () => $("#generatedCleanupDialog").close());
+  $("#cancelGeneratedCleanupButton").addEventListener("click", () => $("#generatedCleanupDialog").close());
+  $("#confirmGeneratedCleanupButton").addEventListener("click", () => void confirmGeneratedCleanup());
   $("#homeCheckServiceButton").addEventListener("click", () => checkApiStatus());
   $("#homeRestartServiceButton").addEventListener("click", restartImage2Service);
   $$("#homeThemeSwitch [data-theme-value]").forEach(button => button.addEventListener("click", () => setTheme(button.dataset.themeValue)));

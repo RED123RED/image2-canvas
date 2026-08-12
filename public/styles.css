@@ -131,7 +131,7 @@ button:disabled { cursor: default; opacity: 0.5; }
   font-size: 16px;
   font-weight: 700;
 }
-.home-header-actions { gap: 10px; }
+.home-header-actions, .projects-heading-actions { gap: 10px; }
 .home-main { width: min(1180px, calc(100% - 48px)); margin: 0 auto; padding: 50px 0 72px; }
 .projects-heading { align-items: flex-end; justify-content: space-between; gap: 24px; }
 .projects-heading h1 { margin: 5px 0 7px; font-size: 30px; font-weight: 650; }
@@ -161,6 +161,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .service-health-actions .button { min-height: 34px; }
 .service-health-actions svg { width: 15px; height: 15px; }
 .new-project-button { min-height: 40px; }
+.projects-heading-actions { display: flex; flex: 0 0 auto; align-items: center; }
 .project-toolbar { justify-content: space-between; gap: 16px; margin-top: 34px; padding-bottom: 13px; border-bottom: 1px solid var(--line); }
 .search-field {
   display: flex;
@@ -658,6 +659,11 @@ dialog { color: var(--ink); }
 dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .settings-dialog { width: min(520px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
 .settings-dialog form { padding: 18px; }
+.generated-cleanup-shell { padding: 18px; }
+.generated-cleanup-copy { margin: 0; color: var(--ink); font-size: 12px; line-height: 1.65; }
+.generated-cleanup-summary { margin: 14px 0; padding: 13px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); color: var(--ink); font-size: 13px; font-weight: 650; }
+.generated-cleanup-warning { margin: 12px 0 0; color: var(--coral); font-size: 10px; font-weight: 650; }
+.danger-button { background: var(--coral); }
 .dialog-heading { justify-content: space-between; margin-bottom: 18px; }
 .field-label { display: block; margin: 13px 0 6px; font-size: 10px; font-weight: 700; }
 .password-row { gap: 6px; }
@@ -743,7 +749,8 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
   .home-main { padding: 27px 0 50px; }
   .projects-heading { align-items: stretch; flex-direction: column; }
   .projects-heading h1 { font-size: 24px; }
-  .new-project-button { width: 100%; }
+  .projects-heading-actions, .new-project-button { width: 100%; }
+  .projects-heading-actions .button { flex: 1; }
   .service-health-panel { align-items: stretch; flex-direction: column; gap: 14px; }
   .service-health-actions { width: 100%; }
   .service-health-actions .button { flex: 1; }

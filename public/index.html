@@ -27,7 +27,10 @@
     <main class="home-main">
       <div class="projects-heading">
         <div><span class="eyebrow">WORKSPACES</span><h1>项目</h1><p>为每个故事、角色或商品保留独立的节点工作流。</p></div>
-        <button class="button button-primary new-project-button" id="newProjectButton" type="button"><i data-lucide="plus"></i> 新建项目</button>
+        <div class="projects-heading-actions">
+          <button class="button button-subtle" id="cleanupUnusedGeneratedButton" type="button"><i data-lucide="hard-drive"></i> 清理未使用图片</button>
+          <button class="button button-primary new-project-button" id="newProjectButton" type="button"><i data-lucide="plus"></i> 新建项目</button>
+        </div>
       </div>
       <section class="service-health-panel" aria-labelledby="homeServiceTitle">
         <div class="service-health-copy">
@@ -217,6 +220,17 @@
         <span class="dialogue-analysis-resize" data-dialogue-analysis-resize aria-label="调整人物分析栏宽度" role="separator"></span>
       </section>
       <span class="dialogue-panel-resize" data-dialogue-resize aria-hidden="true"></span>
+    </section>
+  </dialog>
+
+  <dialog class="settings-dialog generated-cleanup-dialog" id="generatedCleanupDialog" aria-labelledby="generatedCleanupTitle">
+    <section class="generated-cleanup-shell">
+      <div class="dialog-heading"><div><span class="eyebrow">STORAGE MAINTENANCE</span><h2 id="generatedCleanupTitle">清理未使用生成图片</h2></div><button class="icon-button" id="closeGeneratedCleanupButton" type="button" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <p class="generated-cleanup-copy" id="generatedCleanupCopy">正在检查全部项目画布中的图片引用…</p>
+      <div class="generated-cleanup-summary" id="generatedCleanupSummary" hidden></div>
+      <p class="field-note">只检查 <code>output/generated</code> 中的生成图片。视频、上传素材、项目数据及仍显示在任意项目画布中的图片都会保留。</p>
+      <p class="generated-cleanup-warning" id="generatedCleanupWarning" hidden>删除后不会进入回收站，无法从软件中撤销。</p>
+      <div class="dialog-actions"><button class="button button-subtle" id="cancelGeneratedCleanupButton" type="button">取消</button><button class="button button-primary danger-button" id="confirmGeneratedCleanupButton" type="button" disabled><i data-lucide="trash-2"></i> 删除未使用图片</button></div>
     </section>
   </dialog>
   <div class="dialogue-entry-menu" id="dialogueEntryMenu" hidden>
