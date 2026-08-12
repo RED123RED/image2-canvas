@@ -55,29 +55,29 @@ html[data-theme="dark"] {
 }
 
 html[data-theme="premium"] {
-  color-scheme: light;
-  --ink: #292d31;
-  --muted: #717980;
-  --line: #d5dade;
-  --line-strong: #aeb6bd;
-  --surface: #f4f5f6;
-  --surface-soft: #e9ecef;
-  --surface-raised: #fafbfb;
-  --canvas: #dfe3e6;
-  --canvas-dot: rgba(69, 78, 85, 0.2);
-  --primary: #4d6873;
-  --primary-strong: #38525d;
-  --primary-soft: #dce5e8;
-  --blue: #48718f;
-  --blue-soft: #dfeaf1;
-  --violet: #786b84;
-  --violet-soft: #e9e4ed;
-  --coral: #a96358;
-  --amber: #9a7b45;
-  --edge-prompt: #806e94;
-  --edge-image: #397d72;
-  --shadow: 0 14px 34px rgba(38, 46, 52, 0.15);
-  --node-shadow: 0 8px 22px rgba(38, 46, 52, 0.16);
+  color-scheme: dark;
+  --ink: #e4e8eb;
+  --muted: #a7b0b7;
+  --line: #4b555d;
+  --line-strong: #69757e;
+  --surface: #30373d;
+  --surface-soft: #252b30;
+  --surface-raised: #3b444b;
+  --canvas: #1f252a;
+  --canvas-dot: rgba(190, 202, 210, 0.2);
+  --primary: #77b3a5;
+  --primary-strong: #9bd2c4;
+  --primary-soft: #263f3d;
+  --blue: #82b5df;
+  --blue-soft: #293c4d;
+  --violet: #b49bc1;
+  --violet-soft: #3a3040;
+  --coral: #e18a78;
+  --amber: #d8b16b;
+  --edge-prompt: #d094e4;
+  --edge-image: #5fceb0;
+  --shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
+  --node-shadow: 0 8px 22px rgba(0, 0, 0, 0.34);
 }
 
 * { box-sizing: border-box; }
@@ -683,8 +683,8 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .theme-dark small { color: #9ba5ae; }
 .theme-light > span { color: #202520; background: #f5f7f4; }
 .theme-light small { color: #6d756d; }
-.theme-premium > span { color: #292d31; background: #e9ecef; }
-.theme-premium small { color: #717980; }
+.theme-premium > span { color: #e4e8eb; background: #30373d; }
+.theme-premium small { color: #a7b0b7; }
 .settings-theme-switch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .settings-theme-switch button { display: flex; min-height: 40px; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: var(--surface); cursor: pointer; font-size: 9px; }
 .settings-theme-switch button.is-active { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
