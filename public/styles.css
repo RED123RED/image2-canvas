@@ -1148,6 +1148,7 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .prompt-preset-actions { display: flex; min-height: 30px; align-items: center; gap: 5px; margin-bottom: 7px; }
 .prompt-preset-actions .prompt-preset-select { min-width: 0; flex: 1 1 auto; height: 30px; }
 .prompt-preset-actions .button { min-height: 30px; padding: 0 7px; font-size: 9px; }
+.prompt-preset-actions .icon-button { width: 30px; height: 30px; flex: 0 0 30px; }
 .composition-node .node-body { display: flex; min-height: 0; flex-direction: column; }
 .composition-node .prompt-composition { min-height: 0; height: 100%; padding-top: 0; border-top: 0; }
 .composition-node .composition-control-layout { grid-template-columns: minmax(120px, 1fr) 112px; gap: 10px; }

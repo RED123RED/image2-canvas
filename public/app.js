@@ -713,6 +713,18 @@ async function deletePromptPreset(nodeId) {
   promptPresets = promptPresets.filter(item => item.id !== preset.id);
   node.promptPresetId = ""; renderCanvas(); renderInspector(); toast(`提示词预设“${preset.name}”已删除`);
 }
+async function renamePromptPreset(nodeId) {
+  const node = findNode(nodeId); const preset = promptPresets.find(item => item.id === node?.promptPresetId);
+  if (!node || node.type !== "prompt" || !preset) return toast("请先选择要重命名的预设", true);
+  const name = window.prompt("修改预设名称", preset.name)?.trim();
+  if (!name || name === preset.name) return;
+  const duplicate = promptPresets.find(item => item.id !== preset.id && item.name.toLowerCase() === name.toLowerCase());
+  if (duplicate) return toast(`预设“${duplicate.name}”已存在，请换一个名称`, true);
+  const updated = { ...preset, name, updatedAt: Date.now() };
+  await dbPut("prompt-presets", updated, updated.id);
+  promptPresets = [updated, ...promptPresets.filter(item => item.id !== updated.id)].sort((a, b) => b.updatedAt - a.updatedAt);
+  renderCanvas(); renderInspector(); toast(`预设已重命名为“${name}”`);
+}
 function applyPromptPreset(nodeId, presetId) {
   const node = findNode(nodeId); const preset = promptPresets.find(item => item.id === presetId);
   if (!node || node.type !== "prompt" || !preset) return;
@@ -2224,7 +2236,7 @@ function renderPromptNodeHtml(node, selected, style) {
   const disabled = Boolean(node.disabled); const toggleLabel = disabled ? "启用提示词节点" : "禁用提示词节点";
   const toggle = '<button class="icon-button prompt-toggle node-interactive' + (disabled ? ' is-disabled' : '') + '" type="button" data-toggle-prompt="' + node.id + '" aria-label="' + toggleLabel + '" title="' + toggleLabel + '">' + icon(disabled ? "power" : "ban") + '</button>';
   const presetOptions = '<option value="">选择提示词预设</option>' + promptPresets.map(preset => '<option value="' + escapeHtml(preset.id) + '"' + (node.promptPresetId === preset.id ? ' selected' : '') + '>' + escapeHtml(preset.name) + '</option>').join("");
-  const presetActions = '<div class="prompt-preset-actions"><select class="node-select node-interactive prompt-preset-select" data-prompt-preset="' + node.id + '" aria-label="选择提示词预设">' + presetOptions + '</select><button class="button button-quiet node-interactive" type="button" data-save-prompt-preset="' + node.id + '">保存</button><button class="button button-quiet node-interactive danger-action" type="button" data-delete-prompt-preset="' + node.id + '"' + (node.promptPresetId ? '' : ' disabled') + '>删除</button></div>';
+  const presetActions = '<div class="prompt-preset-actions"><select class="node-select node-interactive prompt-preset-select" data-prompt-preset="' + node.id + '" aria-label="选择提示词预设">' + presetOptions + '</select><button class="button button-quiet node-interactive" type="button" data-save-prompt-preset="' + node.id + '">保存</button><button class="icon-button node-interactive" type="button" data-rename-prompt-preset="' + node.id + '" aria-label="修改预设名称" data-tooltip="修改预设名称"' + (node.promptPresetId ? '' : ' disabled') + '>' + icon("pencil") + '</button><button class="button button-quiet node-interactive danger-action" type="button" data-delete-prompt-preset="' + node.id + '"' + (node.promptPresetId ? '' : ' disabled') + '>删除</button></div>';
   return '<article class="canvas-node prompt-node' + (disabled ? ' is-disabled' : '') + selected + '" data-node-id="' + node.id + '" style="' + style + '"><div class="node-card">' + nodeHeaderHtml(node, "text-cursor-input", toggle, false) + '<div class="node-body">' + presetActions + '<textarea class="node-textarea node-interactive" data-prompt-content="' + node.id + '" placeholder="写下主体、光线、材质和画面文字…">' + escapeHtml(node.content || "") + '</textarea></div></div>' + resizeHandleHtml(node) + portHtml(node, "composition", "composition", "input", "参数控制", 104) + portHtml(node, "prompt", "prompt", "output", "Prompt", 72) + '</article>';
 }
 function renderCompositionNodeHtml(node, selected, style) {
@@ -2399,6 +2411,7 @@ function bindNodeEvents() {
   $$('[data-node-menu]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); selectNode(button.dataset.nodeMenu); }));
   $$('[data-toggle-prompt]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.togglePrompt); if (!node || node.type !== "prompt") return; recordHistory(); node.disabled = !node.disabled; renderCanvas(); renderInspector(); scheduleSave(); toast(node.disabled ? "提示词节点已禁用" : "提示词节点已启用"); }));
   $$('[data-save-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void savePromptPreset(button.dataset.savePromptPreset); }));
+  $$('[data-rename-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void renamePromptPreset(button.dataset.renamePromptPreset); }));
   $$('[data-delete-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void deletePromptPreset(button.dataset.deletePromptPreset); }));
   $$('[data-prompt-preset]').forEach(select => select.addEventListener("change", event => { event.stopPropagation(); if (event.target.value) applyPromptPreset(select.dataset.promptPreset, event.target.value); }));
   $$('[data-prompt-content]').forEach(textarea => textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; node.promptPresetId = ""; scheduleSave(); } }));
