@@ -2726,7 +2726,7 @@ async function handleCanvasPaste(event) {
   if (imageFiles.length) {
     event.preventDefault();
     if (state.flowMode === "script") return toast("请切换到工作流画布粘贴图片", true);
-    try { await importImages(imageFiles, { source: "剪贴板" }); }
+    try { await importImages(imageFiles, { source: "剪贴板", placeAtViewport: true }); }
     catch (error) { toast(`粘贴图片失败：${error?.message || "无法保存图片"}`, true); }
     return;
   }
@@ -2736,7 +2736,7 @@ async function handleCanvasPaste(event) {
 }
 async function importImages(files, options = {}) {
   const accepted = [...files].filter(file => /^image\/(png|jpeg|webp)$/i.test(file.type)); if (!accepted.length) return;
-  recordHistory(); const center = sceneCenter(); const nodes = []; const anchor = state.nodes.find(node => node.type === "generator"); const baseX = anchor ? anchor.x - 320 : center.x - 135; const baseY = anchor ? anchor.y + anchor.height + 70 : center.y - 160;
+  recordHistory(); const center = sceneCenter(); const nodes = []; const anchor = state.nodes.find(node => node.type === "generator"); const baseX = options.placeAtViewport ? center.x - 135 : anchor ? anchor.x - 320 : center.x - 135; const baseY = options.placeAtViewport ? center.y - 160 : anchor ? anchor.y + anchor.height + 70 : center.y - 160;
   for (let index = 0; index < accepted.length; index += 1) {
     const file = accepted[index]; const stored = await persistImportedImage(file); const dimensions = stored.dimensions;
     nodes.push({ id: uid("image"), type: "image", name: (file.name || `剪贴图 ${index + 1}`).replace(/\.[^.]+$/, ""), src: stored.url, previewSrc: stored.previewUrl || stored.url, originalSrc: stored.url, x: Math.round(baseX - Math.floor(index / 4) * 300), y: Math.round(baseY + (index % 4) * 350), width: 270, height: nodeHeight("image"), source: options.source || "导入素材", ratio: String(dimensions.width) + ":" + String(dimensions.height), createdAt: Date.now() + index });
