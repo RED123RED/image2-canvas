@@ -161,6 +161,7 @@ const activeProjectSessionKey = "image2-canvas-active-project";
 
 let state = null;
 let projectMetas = [];
+let promptPresets = [];
 let globalTheme = localStorage.getItem("image2-canvas-theme") || "light";
 let lineMotion = localStorage.getItem("image2-canvas-line-motion") === "static" ? "static" : "dynamic";
 let undoStack = [];
@@ -436,7 +437,7 @@ function finishHorizonCompositionDrag(event) {
   const node = findNode(session.nodeId); if (!node || node.type !== "composition") return; if (!session.moved) { if (node.composition.horizonEnabled === false) return; node.composition = normalizePromptComposition({ ...node.composition, horizonEnabled: false, horizonPending: false }); applyCompositionToLinkedPrompts(node.id); } undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; renderCanvas(); renderInspector(); updateHistoryButtons(); scheduleSave();
 }
 function createPromptNode(x, y, content = "") {
-  return { id: uid("prompt"), type: "prompt", name: "画面提示词", x, y, width: 320, height: nodeHeight("prompt"), content, composition: { ...defaultPromptComposition }, promptLayout: normalizePromptLayout(null, 320, nodeHeight("prompt")), disabled: false, createdAt: Date.now() };
+  return { id: uid("prompt"), type: "prompt", name: "画面提示词", x, y, width: 320, height: nodeHeight("prompt"), content, promptPresetId: "", composition: { ...defaultPromptComposition }, promptLayout: normalizePromptLayout(null, 320, nodeHeight("prompt")), disabled: false, createdAt: Date.now() };
 }
 function createCompositionNode(x, y) {
   return { id: uid("composition"), type: "composition", name: "参数控制", x, y, width: 390, height: nodeHeight("composition"), composition: { ...defaultPromptComposition }, createdAt: Date.now() };
@@ -608,7 +609,7 @@ function normalizeProject(project) {
   if (node.type === "image") return { ...node, x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: node.width || 270, height: node.height || nodeHeight("image") };
   if (node.type === "video") return { ...node, mediaType: "video", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || 322), outputType: node.outputType || "mp4", status: "idle" };
   if (node.type === "loading") return { ...node, mediaType: node.mediaType === "video" ? "video" : "image", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || nodeHeight("loading")) };
-      if (node.type === "prompt") { const width = node.width || 320; const height = Math.max(Number(node.height) || 0, nodeHeight("prompt")); return { ...node, width, height, content: stripPromptCompositionMarkers(node.content), compositionInstruction: String(node.compositionInstruction || ""), composition: normalizePromptComposition(node.composition), promptLayout: normalizePromptLayout(node.promptLayout, width, height), disabled: Boolean(node.disabled) }; }
+      if (node.type === "prompt") { const width = node.width || 320; const height = Math.max(Number(node.height) || 0, nodeHeight("prompt")); return { ...node, width, height, content: stripPromptCompositionMarkers(node.content), promptPresetId: String(node.promptPresetId || ""), compositionInstruction: String(node.compositionInstruction || ""), composition: normalizePromptComposition(node.composition), promptLayout: normalizePromptLayout(node.promptLayout, width, height), disabled: Boolean(node.disabled) }; }
       if (node.type === "composition") return { ...node, name: node.name === "构图控制" ? "参数控制" : node.name || "参数控制", width: Math.max(300, Number(node.width) || 390), height: Math.max(320, Number(node.height) || nodeHeight("composition")), composition: normalizePromptComposition(node.composition) };
       if (node.type === "note") return { ...node, name: node.name || "便签", content: String(node.content || ""), width: Math.max(170, Number(node.width) || 260), height: Math.max(130, Number(node.height) || 190) };
       if (node.type === "frame") return { ...node, name: node.name || "工作流分组", width: node.width || 700, height: node.height || 480 };
@@ -640,11 +641,12 @@ function projectMeta(project) {
 }
 function openDatabase() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("image2-canvas", 2);
+    const request = indexedDB.open("image2-canvas", 3);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains("projects")) db.createObjectStore("projects");
       if (!db.objectStoreNames.contains("project-meta")) db.createObjectStore("project-meta");
+      if (!db.objectStoreNames.contains("prompt-presets")) db.createObjectStore("prompt-presets");
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -676,6 +678,45 @@ async function dbDeleteProject(id) {
   const db = await openDatabase();
   try { await new Promise((resolve, reject) => { const transaction = db.transaction(["projects", "project-meta"], "readwrite"); transaction.objectStore("projects").delete(id); transaction.objectStore("project-meta").delete(id); transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); }); }
   finally { db.close(); }
+}
+async function dbPut(storeName, value, key) {
+  const db = await openDatabase();
+  try { await new Promise((resolve, reject) => { const request = db.transaction(storeName, "readwrite").objectStore(storeName).put(value, key); request.onsuccess = resolve; request.onerror = () => reject(request.error); }); }
+  finally { db.close(); }
+}
+async function dbDelete(storeName, key) {
+  const db = await openDatabase();
+  try { await new Promise((resolve, reject) => { const request = db.transaction(storeName, "readwrite").objectStore(storeName).delete(key); request.onsuccess = resolve; request.onerror = () => reject(request.error); }); }
+  finally { db.close(); }
+}
+async function loadPromptPresets() {
+  const records = await dbGetAll("prompt-presets");
+  promptPresets = records.filter(item => item?.id && String(item.name || "").trim() && String(item.content || "").trim()).map(item => ({ id: item.id, name: String(item.name).trim(), content: String(item.content), createdAt: Number(item.createdAt) || Date.now(), updatedAt: Number(item.updatedAt) || Number(item.createdAt) || Date.now() })).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+async function savePromptPreset(nodeId) {
+  const node = findNode(nodeId); const content = String(node?.content || "").trim();
+  if (!node || node.type !== "prompt" || !content) return toast("请先在提示词节点中写入内容", true);
+  const name = window.prompt("预设名称", node.promptPresetId ? promptPresets.find(item => item.id === node.promptPresetId)?.name || "" : "")?.trim();
+  if (!name) return;
+  const existing = promptPresets.find(item => item.name.toLowerCase() === name.toLowerCase());
+  if (existing && existing.id !== node.promptPresetId && !window.confirm(`预设“${existing.name}”已存在，是否覆盖？`)) return;
+  const now = Date.now(); const preset = { id: existing?.id || node.promptPresetId || uid("prompt-preset"), name, content, createdAt: existing?.createdAt || now, updatedAt: now };
+  await dbPut("prompt-presets", preset, preset.id);
+  promptPresets = [preset, ...promptPresets.filter(item => item.id !== preset.id)].sort((a, b) => b.updatedAt - a.updatedAt);
+  node.promptPresetId = preset.id; renderCanvas(); renderInspector(); scheduleSave(); toast(`提示词预设“${name}”已保存`);
+}
+async function deletePromptPreset(nodeId) {
+  const node = findNode(nodeId); const preset = promptPresets.find(item => item.id === node?.promptPresetId);
+  if (!node || node.type !== "prompt" || !preset) return toast("请先选择要删除的预设", true);
+  if (!window.confirm(`删除提示词预设“${preset.name}”？当前节点文字会保留。`)) return;
+  await dbDelete("prompt-presets", preset.id);
+  promptPresets = promptPresets.filter(item => item.id !== preset.id);
+  node.promptPresetId = ""; renderCanvas(); renderInspector(); toast(`提示词预设“${preset.name}”已删除`);
+}
+function applyPromptPreset(nodeId, presetId) {
+  const node = findNode(nodeId); const preset = promptPresets.find(item => item.id === presetId);
+  if (!node || node.type !== "prompt" || !preset) return;
+  recordHistory(); node.content = preset.content; node.promptPresetId = preset.id; renderCanvas(); renderInspector(); scheduleSave(); toast(`已载入提示词预设“${preset.name}”`);
 }
 function generatedImageFilename(source) {
   try {
@@ -2182,7 +2223,9 @@ function compositionControlsHtml(node) {
 function renderPromptNodeHtml(node, selected, style) {
   const disabled = Boolean(node.disabled); const toggleLabel = disabled ? "启用提示词节点" : "禁用提示词节点";
   const toggle = '<button class="icon-button prompt-toggle node-interactive' + (disabled ? ' is-disabled' : '') + '" type="button" data-toggle-prompt="' + node.id + '" aria-label="' + toggleLabel + '" title="' + toggleLabel + '">' + icon(disabled ? "power" : "ban") + '</button>';
-  return '<article class="canvas-node prompt-node' + (disabled ? ' is-disabled' : '') + selected + '" data-node-id="' + node.id + '" style="' + style + '"><div class="node-card">' + nodeHeaderHtml(node, "text-cursor-input", toggle, false) + '<div class="node-body"><textarea class="node-textarea node-interactive" data-prompt-content="' + node.id + '" placeholder="写下主体、光线、材质和画面文字…">' + escapeHtml(node.content || "") + '</textarea></div></div>' + resizeHandleHtml(node) + portHtml(node, "composition", "composition", "input", "参数控制", 104) + portHtml(node, "prompt", "prompt", "output", "Prompt", 72) + '</article>';
+  const presetOptions = '<option value="">选择提示词预设</option>' + promptPresets.map(preset => '<option value="' + escapeHtml(preset.id) + '"' + (node.promptPresetId === preset.id ? ' selected' : '') + '>' + escapeHtml(preset.name) + '</option>').join("");
+  const presetActions = '<div class="prompt-preset-actions"><select class="node-select node-interactive prompt-preset-select" data-prompt-preset="' + node.id + '" aria-label="选择提示词预设">' + presetOptions + '</select><button class="button button-quiet node-interactive" type="button" data-save-prompt-preset="' + node.id + '">保存</button><button class="button button-quiet node-interactive danger-action" type="button" data-delete-prompt-preset="' + node.id + '"' + (node.promptPresetId ? '' : ' disabled') + '>删除</button></div>';
+  return '<article class="canvas-node prompt-node' + (disabled ? ' is-disabled' : '') + selected + '" data-node-id="' + node.id + '" style="' + style + '"><div class="node-card">' + nodeHeaderHtml(node, "text-cursor-input", toggle, false) + '<div class="node-body">' + presetActions + '<textarea class="node-textarea node-interactive" data-prompt-content="' + node.id + '" placeholder="写下主体、光线、材质和画面文字…">' + escapeHtml(node.content || "") + '</textarea></div></div>' + resizeHandleHtml(node) + portHtml(node, "composition", "composition", "input", "参数控制", 104) + portHtml(node, "prompt", "prompt", "output", "Prompt", 72) + '</article>';
 }
 function renderCompositionNodeHtml(node, selected, style) {
   return '<article class="canvas-node composition-node' + selected + '" data-node-id="' + node.id + '" style="' + style + '"><div class="node-card">' + nodeHeaderHtml(node, "sliders-horizontal") + '<div class="node-body composition-body">' + compositionControlsHtml(node) + '</div></div>' + resizeHandleHtml(node) + portHtml(node, "composition", "composition", "output", "构图", 72) + '</article>';
@@ -2355,7 +2398,10 @@ function bindNodeEvents() {
 
   $$('[data-node-menu]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); selectNode(button.dataset.nodeMenu); }));
   $$('[data-toggle-prompt]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.togglePrompt); if (!node || node.type !== "prompt") return; recordHistory(); node.disabled = !node.disabled; renderCanvas(); renderInspector(); scheduleSave(); toast(node.disabled ? "提示词节点已禁用" : "提示词节点已启用"); }));
-  $$('[data-prompt-content]').forEach(textarea => textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; scheduleSave(); } }));
+  $$('[data-save-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void savePromptPreset(button.dataset.savePromptPreset); }));
+  $$('[data-delete-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void deletePromptPreset(button.dataset.deletePromptPreset); }));
+  $$('[data-prompt-preset]').forEach(select => select.addEventListener("change", event => { event.stopPropagation(); if (event.target.value) applyPromptPreset(select.dataset.promptPreset, event.target.value); }));
+  $$('[data-prompt-content]').forEach(textarea => textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; node.promptPresetId = ""; scheduleSave(); } }));
 $$('[data-note-content]').forEach(textarea => textarea.addEventListener("input", event => { const note = findNode(textarea.dataset.noteContent); if (note?.type === "note") { note.content = event.target.value; scheduleSave(); } }));
   $$('[data-composition-perspective]').forEach(button => button.addEventListener("click", event => {
     event.stopPropagation(); const node = findNode(button.dataset.compositionNode); if (!node || node.type !== "composition") return;
@@ -3388,6 +3434,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
 async function init() {
   applyLineMotionPreference();
   bindStaticEvents();
+  await loadPromptPresets();
   await loadProjectMetas();
   const savedSession = readActiveProjectSession();
   if (savedSession?.projectId && projectMetas.some(meta => meta.id === savedSession.projectId)) await openProject(savedSession.projectId);
