@@ -663,8 +663,8 @@ async function requestRunningHubGeneration(job) {
     runningHubNodeInfo("13", "expression", runningHubLengthExpression(seconds)),
     // The cloud workflow can be edited after its API export. Always pin the
     // archived resolution for the selected local quality profile.
-    runningHubNodeInfo(widthNode || "46", "value", Number(width)),
-    runningHubNodeInfo(heightNode || "78", "value", Number(height))
+    runningHubNodeInfo(widthNode || "46", "value", String(Math.round(Number(width)))),
+    runningHubNodeInfo(heightNode || "78", "value", String(Math.round(Number(height))))
   ];
   let uploadedReferences;
   try {
