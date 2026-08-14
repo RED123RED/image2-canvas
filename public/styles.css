@@ -283,6 +283,7 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .inspector-panel { grid-column: 3; grid-row: 2; border-left: 1px solid var(--line); }
 .panel-heading { min-height: 68px; justify-content: space-between; padding: 13px 13px 9px; }
 .panel-heading h2, .dialog-heading h2 { margin: 3px 0 0; font-size: 14px; font-weight: 650; }
+.inspector-heading-actions { display: flex; align-items: center; gap: 2px; }
 .eyebrow { display: block; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; }
 .library-tabs { display: grid; grid-template-columns: repeat(3, 1fr); padding: 0 9px; border-bottom: 1px solid var(--line); }
 .tab { position: relative; padding: 9px 5px 10px; color: var(--muted); background: transparent; font-size: 11px; }

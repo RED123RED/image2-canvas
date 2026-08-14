@@ -894,6 +894,19 @@ async function restartLocalService(req, res) {
     server.close(() => { clearTimeout(forceCloseTimer); startReplacement(); });
   }, 120);
 }
+
+async function openGeneratedFolder(req, res) {
+  try {
+    await fs.mkdir(generatedDir, { recursive: true });
+    if (process.platform !== "win32") return sendJson(res, 501, { error: "当前系统不支持打开 Windows 图片文件夹" });
+    const child = spawn("explorer.exe", [generatedDir], { detached: true, stdio: "ignore", windowsHide: true });
+    child.unref();
+    return sendJson(res, 200, { opened: true });
+  } catch (error) {
+    return sendJson(res, 500, { error: error?.message || "无法打开生成图片文件夹" });
+  }
+}
+
 async function serveStoredMedia(req, res, directory, filename) {
   const safeName = path.basename(filename);
   if (!safeName || safeName !== filename) return sendJson(res, 403, { error: "禁止访问" });
@@ -1066,6 +1079,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/respond") return createResponse(req, res);
   if (req.method === "POST" && url.pathname === "/api/generated/delete") return deleteGeneratedImages(req, res);
   if (req.method === "POST" && url.pathname === "/api/generated/cleanup-unused") return cleanupUnusedGeneratedImages(req, res);
+  if (req.method === "POST" && url.pathname === "/api/generated/open-folder") return openGeneratedFolder(req, res);
   if (req.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
     const job = jobs.get(decodeURIComponent(url.pathname.slice("/api/jobs/".length)));
     return job ? sendJson(res, 200, { job: jobView(job) }) : sendJson(res, 404, { error: "生成任务不存在，可能已被清理" });

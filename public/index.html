@@ -144,7 +144,10 @@
     <aside class="inspector-panel" id="inspectorPanel">
       <div class="panel-heading inspector-heading">
         <div><span class="eyebrow" id="inspectorEyebrow">PROJECT</span><h2 id="inspectorTitle">工作流概览</h2></div>
-        <button class="icon-button close-mobile" id="closeInspectorButton" type="button" aria-label="关闭属性"><i data-lucide="x"></i></button>
+        <div class="inspector-heading-actions">
+          <button class="icon-button" id="openGeneratedFolderButton" type="button" aria-label="打开生成图片文件夹" data-tooltip="打开生成图片文件夹"><i data-lucide="folder-open"></i></button>
+          <button class="icon-button close-mobile" id="closeInspectorButton" type="button" aria-label="关闭属性"><i data-lucide="x"></i></button>
+        </div>
       </div>
       <div class="inspector-content" id="inspectorContent"></div>
       <div class="panel-resizer panel-resizer-left" id="inspectorResizer" role="separator" aria-label="调整右侧栏宽度" aria-orientation="vertical"></div>

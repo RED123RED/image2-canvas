@@ -2976,6 +2976,14 @@ async function requestJson(url, options = {}, timeoutMs = 30_000) {
     clearTimeout(timer);
   }
 }
+async function openGeneratedFolder() {
+  try {
+    await requestJson("/api/generated/open-folder", { method: "POST" }, 10_000);
+    toast("已打开生成图片文件夹");
+  } catch (error) {
+    toast(error?.message || "无法打开生成图片文件夹", true);
+  }
+}
 function stopGenerationPolling(jobId, resetFailures = true) {
   const timer = generationPollers.get(jobId);
   if (timer) clearTimeout(timer);
@@ -3437,6 +3445,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   $("#mobileLibraryButton").addEventListener("click", () => $("#libraryPanel").classList.toggle("is-open"));
   $("#mobileInspectorButton").addEventListener("click", () => $("#inspectorPanel").classList.toggle("is-open"));
   $("#closeInspectorButton").addEventListener("click", () => $("#inspectorPanel").classList.remove("is-open"));
+  $("#openGeneratedFolderButton").addEventListener("click", () => void openGeneratedFolder());
 
   window.addEventListener("paste", handleCanvasPaste);
   document.addEventListener("focusin", event => { beginEditableHistory(event.target); beginDialogueEditableHistory(event.target); }, true);
