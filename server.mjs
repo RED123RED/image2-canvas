@@ -658,13 +658,11 @@ async function requestRunningHubGeneration(job) {
   const { apiKey, prompt, seconds, workflowId, referenceNodes, width, height, widthNode, heightNode, references = [] } = job.request;
   const nodeInfoList = [
     runningHubNodeInfo("59", "value", prompt),
-    // RunningHub serializes direct numeric overrides as strings. The workflow's
-    // expression field is string-safe and still produces the expected frame count.
-    runningHubNodeInfo("13", "expression", runningHubLengthExpression(seconds)),
-    // The cloud workflow can be edited after its API export. Always pin the
-    // archived resolution for the selected local quality profile.
-    runningHubNodeInfo(widthNode || "46", "value", String(Math.round(Number(width)))),
-    runningHubNodeInfo(heightNode || "78", "value", String(Math.round(Number(height))))
+    // RunningHub serializes nodeInfoList values as strings. Keep the duration
+    // expression override, but leave H3 width/height as the workflow's native
+    // integer inputs; overriding easy-int nodes turns them into strings inside
+    // MiniMaxH3ImageToVideo and fails before generation starts.
+    runningHubNodeInfo("13", "expression", runningHubLengthExpression(seconds))
   ];
   let uploadedReferences;
   try {
