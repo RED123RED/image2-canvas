@@ -555,20 +555,19 @@ html[data-edge-motion="static"] .script-relationship-edge { animation: none; fil
 .node-run-state { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; color: var(--muted); font-size: 8px; }
 .node-run-state .is-ready { color: var(--primary); }
 .answer-body { display: flex; min-height: 0; flex-direction: column; gap: 8px; padding: 10px 12px; }
-.answer-model-field { width: 100%; }
+.answer-model-field { width: 100%; flex: 0 0 auto; }
 .answer-model-field label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 8px; font-weight: 700; }
 .answer-inputs { margin: 0 -12px; padding: 7px 12px 6px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .generator-add-inputs, .answer-add-inputs { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: -2px; }
 .generator-add-inputs .add-input-button, .answer-add-inputs .add-input-button { padding-inline: 2px; }
 .answer-node .run-node-button { flex: 0 0 auto; }
-.answer-response-wrap { display: flex; min-height: 0; flex-direction: column; }
-.answer-response-wrap.is-expanded { flex: 1 1 auto; }
+.answer-body > .answer-skill-field, .answer-body > .answer-h3-settings, .answer-body > .field-note, .answer-body > .answer-add-inputs, .answer-body > .run-node-button { flex: 0 0 auto; }
+.answer-response-wrap { display: flex; min-height: 72px; flex: 1 1 auto; flex-direction: column; }
 .answer-response-heading { display: flex; height: 21px; align-items: center; justify-content: space-between; color: var(--muted); font-size: 9px; font-weight: 700; }
 .answer-response-actions { display: inline-flex; align-items: center; gap: 8px; }
 .answer-response-toggle { display: inline-flex; align-items: center; gap: 3px; padding: 2px 0; color: var(--blue); background: transparent; cursor: pointer; font-size: 9px; }
 .answer-response-toggle svg { width: 12px; height: 12px; }
-.answer-response { min-height: 72px; max-height: 116px; overflow: auto; padding: 9px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: var(--surface-soft); cursor: text; font-size: 10px; line-height: 1.55; white-space: pre-wrap; overscroll-behavior: contain; user-select: text; -webkit-user-select: text; }
-.answer-response-wrap.is-expanded .answer-response { max-height: none; flex: 1 1 auto; }
+.answer-response { min-height: 72px; flex: 1 1 auto; overflow: auto; padding: 9px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: var(--surface-soft); cursor: text; font-size: 10px; line-height: 1.55; white-space: pre-wrap; overscroll-behavior: contain; user-select: text; -webkit-user-select: text; }
 .answer-response.is-ready { color: var(--ink); background: var(--surface); }
 .answer-response.is-error { color: #b04b4b; border-color: #edcaca; background: #fff7f7; }
 .node-port-wrap { position: absolute; z-index: 8; display: flex; height: 20px; align-items: center; gap: 6px; transform: translateY(-50%); }
