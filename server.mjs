@@ -899,8 +899,12 @@ async function openGeneratedFolder(req, res) {
   try {
     await fs.mkdir(generatedDir, { recursive: true });
     if (process.platform !== "win32") return sendJson(res, 501, { error: "当前系统不支持打开 Windows 图片文件夹" });
-    const child = spawn("explorer.exe", [generatedDir], { detached: true, stdio: "ignore", windowsHide: true });
-    child.unref();
+    const explorerPath = path.join(process.env.WINDIR || "C:\\Windows", "explorer.exe");
+    await new Promise((resolve, reject) => {
+      const child = spawn(explorerPath, [generatedDir], { detached: true, stdio: "ignore", windowsHide: false });
+      child.once("error", reject);
+      child.once("spawn", () => { child.unref(); resolve(); });
+    });
     return sendJson(res, 200, { opened: true });
   } catch (error) {
     return sendJson(res, 500, { error: error?.message || "无法打开生成图片文件夹" });

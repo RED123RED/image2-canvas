@@ -2979,7 +2979,7 @@ async function requestJson(url, options = {}, timeoutMs = 30_000) {
 async function openGeneratedFolder() {
   try {
     await requestJson("/api/generated/open-folder", { method: "POST" }, 10_000);
-    toast("已打开生成图片文件夹");
+    toast("已请求 Windows 打开生成图片文件夹");
   } catch (error) {
     toast(error?.message || "无法打开生成图片文件夹", true);
   }
