@@ -2709,6 +2709,30 @@ async function deleteGeneratedImageNodeWithFile(nodeId) {
   undoStack = []; redoStack = []; updateHistoryButtons(); renderWorkspace(); scheduleSave();
   toast(canDeleteFile ? "已同步删除画布节点和本地生成图片" : "已删除画布节点；共享本地图片已保留");
 }
+function selectedGeneratedImageNodes() {
+  return state.selectedIds.map(findNode).filter(node => node?.type === "image" && generatedImageFilename(node.src));
+}
+async function deleteSelectedGeneratedImageNodesWithFiles() {
+  const nodes = selectedGeneratedImageNodes();
+  if (!nodes.length) return toast("所选模块中没有本地生成图片", true);
+  const nodeIds = new Set(nodes.map(node => node.id));
+  const filenames = [...new Set(nodes.map(node => generatedImageFilename(node.src)).filter(Boolean))];
+  const sameProjectFiles = generatedImageFilesForProject({ nodes: state.nodes.filter(node => !nodeIds.has(node.id)) });
+  const sharedFiles = await generatedImageFilesUsedByOtherProjects(state.id);
+  const deletableFiles = filenames.filter(filename => !sameProjectFiles.has(filename) && !sharedFiles.has(filename));
+  const retainedCount = filenames.length - deletableFiles.length;
+  const fileNote = deletableFiles.length ? `其中 ${deletableFiles.length} 个本地生成文件会同步删除` : "本地文件仍被其他画布节点或项目使用，会保留";
+  const sharedNote = retainedCount ? `；${retainedCount} 个仍被引用的文件会保留` : "";
+  if (!window.confirm(`删除所选 ${nodes.length} 个本地生成图片节点？${fileNote}${sharedNote}。此操作不可撤销。`)) return;
+  if (deletableFiles.length) {
+    try { await removeGeneratedImageFiles(deletableFiles); }
+    catch (error) { return toast(`本地图片删除失败，已保留画布节点：${error.message || "未知错误"}`, true); }
+  }
+  state.nodes = state.nodes.filter(node => !nodeIds.has(node.id)); state.edges = state.edges.filter(edge => !nodeIds.has(edge.source) && !nodeIds.has(edge.target)); state.recentIds = state.recentIds.filter(id => !nodeIds.has(id)); state.selectedIds = state.selectedIds.filter(id => !nodeIds.has(id)); selectedEdgeId = null;
+  // Restoring a batch after its files were removed would leave broken image references.
+  undoStack = []; redoStack = []; updateHistoryButtons(); renderWorkspace(); scheduleSave();
+  toast(deletableFiles.length ? `已删除 ${nodes.length} 个图片节点，并同步清理 ${deletableFiles.length} 个生成文件` : `已删除 ${nodes.length} 个图片节点；仍被引用的生成文件已保留`);
+}
 function deleteSelection() {
   if (selectedEdgeId) { recordHistory(); state.edges = state.edges.filter(edge => edge.id !== selectedEdgeId); selectedEdgeId = null; renderCanvas(); renderInspector(); scheduleSave(); return; }
   if (!state.selectedIds.length) return; recordHistory(); const ids = new Set(state.selectedIds);
@@ -2742,13 +2766,20 @@ function bindLibraryRows() { $$('[data-select-node]').forEach(button => button.a
 function focusNode(id) { const node = findNode(id); if (!node) return; const rect = workspace.getBoundingClientRect(); state.viewport.x = rect.width / 2 - (node.x + node.width / 2) * state.viewport.scale; state.viewport.y = rect.height / 2 - (node.y + node.height / 2) * state.viewport.scale; updateViewport(); }
 function renderInspector() {
   if (state?.flowMode === "script") return renderScriptInspector();
-  if (selectedEdgeId) return renderEdgeInspector(); const node = selectedNode(); if (node) return renderNodeInspector(node);
+  if (selectedEdgeId) return renderEdgeInspector(); const selectedNodes = state.selectedIds.map(findNode).filter(Boolean); if (selectedNodes.length > 1) return renderMultiSelectionInspector(selectedNodes); const node = selectedNode(); if (node) return renderNodeInspector(node);
   $("#inspectorEyebrow").textContent = "PROJECT"; $("#inspectorTitle").textContent = "工作流概览";
   const prompts = state.nodes.filter(node => node.type === "prompt").length; const compositions = state.nodes.filter(node => node.type === "composition").length; const images = state.nodes.filter(node => node.type === "image").length; const videos = state.nodes.filter(node => node.type === "video").length; const generators = state.nodes.filter(node => node.type === "generator").length; const answers = state.nodes.filter(node => node.type === "answer").length;
   inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">项目结构 <span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词</span><strong>${prompts}</strong></div><div class="summary-row"><span>参数控制</span><strong>${compositions}</strong></div><div class="summary-row"><span>图像素材</span><strong>${images}</strong></div><div class="summary-row"><span>视频结果</span><strong>${videos}</strong></div><div class="summary-row"><span>生图</span><strong>${generators}</strong></div><div class="summary-row"><span>模型回答</span><strong>${answers}</strong></div></section>
     <section class="control-section"><div class="control-title">数据流</div><div class="edge-summary"><span class="edge-swatch prompt"></span><span>Prompt 文本连接</span></div><div class="edge-summary"><span class="edge-swatch composition"></span><span>参数控制连接</span></div><div class="edge-summary"><span class="edge-swatch"></span><span>Image 图像连接</span></div><div class="edge-summary"><span class="edge-swatch video"></span><span>Video 视频连接</span></div></section>
     <section class="control-section"><div class="control-title">界面基调 <span>${themeLabels[state.theme]}</span></div><div class="settings-theme-switch">${themeButtonsHtml()}</div></section>`;
   bindInspectorThemeButtons(); refreshIcons();
+}
+function renderMultiSelectionInspector(nodes) {
+  const generatedImages = nodes.filter(node => node.type === "image" && generatedImageFilename(node.src));
+  $("#inspectorEyebrow").textContent = "MULTI SELECT"; $("#inspectorTitle").textContent = `已选择 ${nodes.length} 个模块`;
+  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">批量操作</div><div class="summary-row"><span>已选模块</span><strong>${nodes.length}</strong></div><div class="summary-row"><span>本地生成图片</span><strong>${generatedImages.length}</strong></div>${generatedImages.length ? `<p class="field-note">同步删除会保留仍被未选节点或其他项目引用的生成文件。</p>` : `<p class="field-note">当前选择中没有可同步清理的本地生成图片。</p>`}</section><section class="control-section"><div class="action-list">${generatedImages.length ? `<button class="action-row danger-action" type="button" id="deleteSelectedGeneratedFilesButton">${icon("trash-2")}<strong>同步删除已选生成图片</strong><small>删除 ${generatedImages.length} 个图片节点及未被引用的本地文件</small></button>` : ""}<button class="action-row danger-action" type="button" id="deleteSelectedNodesButton">${icon("trash-2")}<strong>删除所选模块</strong><small>仅删除画布节点，保留本地文件</small></button></div></section>`;
+  $("#deleteSelectedGeneratedFilesButton")?.addEventListener("click", () => void deleteSelectedGeneratedImageNodesWithFiles());
+  $("#deleteSelectedNodesButton").addEventListener("click", deleteSelection); refreshIcons();
 }
 function themeButtonsHtml() { return Object.entries(themeLabels).map(([value, label]) => `<button type="button" data-theme-value="${value}" class="${state?.theme === value ? "is-active" : ""}">${icon(value === "dark" ? "moon-star" : value === "light" ? "sun" : "gem")} ${label}</button>`).join(""); }
 function bindInspectorThemeButtons() { $$("#inspectorContent [data-theme-value]").forEach(button => button.addEventListener("click", () => { setTheme(button.dataset.themeValue); renderInspector(); })); }
