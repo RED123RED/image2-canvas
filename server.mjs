@@ -655,12 +655,16 @@ async function uploadRunningHubReference(apiKey, dataUrl, index) {
 }
 
 async function requestRunningHubGeneration(job) {
-  const { apiKey, prompt, seconds, workflowId, referenceNodes, references = [] } = job.request;
+  const { apiKey, prompt, seconds, workflowId, referenceNodes, width, height, widthNode, heightNode, references = [] } = job.request;
   const nodeInfoList = [
     runningHubNodeInfo("59", "value", prompt),
     // RunningHub serializes direct numeric overrides as strings. The workflow's
     // expression field is string-safe and still produces the expected frame count.
-    runningHubNodeInfo("13", "expression", runningHubLengthExpression(seconds))
+    runningHubNodeInfo("13", "expression", runningHubLengthExpression(seconds)),
+    // The cloud workflow can be edited after its API export. Always pin the
+    // archived resolution for the selected local quality profile.
+    runningHubNodeInfo(widthNode || "46", "value", Number(width)),
+    runningHubNodeInfo(heightNode || "78", "value", Number(height))
   ];
   let uploadedReferences;
   try {
@@ -805,7 +809,7 @@ async function createRunningHubJob(req, res, body) {
     const height = Math.min(4096, Math.max(32, Number(body.height) || workflow.height));
     if (width !== workflow.width || height !== workflow.height) return sendJson(res, 400, { error: `当前首帧工作流固定为 ${workflow.width} × ${workflow.height}，其他比例与清晰度将在对应工作流接入后开放` });
     const seconds = Math.min(workflow.maxSeconds, Math.max(workflow.minSeconds, Math.round(Number(body.seconds) || workflow.minSeconds)));
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, videoQuality, request: { apiKey, prompt, seconds, workflowId: workflow.id, referenceNodes: workflow.referenceNodes, references } };
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, videoQuality, request: { apiKey, prompt, seconds, workflowId: workflow.id, referenceNodes: workflow.referenceNodes, width: workflow.width, height: workflow.height, widthNode: "46", heightNode: "78", references } };
     jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
   } catch (error) {
     const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
