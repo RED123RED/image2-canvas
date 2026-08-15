@@ -23,6 +23,8 @@ const port = Number(process.env.PORT || 45173);
 const baseUrl = (process.env.IMAGE2_BASE_URL || "https://rehdasu.cn/v1").replace(/\/$/, "");
 const model = process.env.IMAGE2_MODEL || "gpt-image-2";
 const geminiBaseUrl = (process.env.GEMINI_MOYU_BASE_URL || "https://www.moyu.info").replace(/\/$/, "");
+const mjBaseUrl = (process.env.MJ_API_BASE_URL || "https://key.34ku.com").replace(/\/$/, "");
+const mjFastModel = "mj_fast_imagine";
 const runningHubBaseUrl = (process.env.RUNNINGHUB_BASE_URL || "https://www.runninghub.cn").replace(/\/$/, "");
 const runningHubVideoWorkflows = Object.freeze({
   "first-frame": Object.freeze({
@@ -367,6 +369,14 @@ async function resolveGeminiApiKey(req) {
   return typeof config?.gemini?.apiKey === "string" ? config.gemini.apiKey.trim() : "";
 }
 
+async function resolveMjApiKey(req) {
+  const explicit = req.headers["x-mj-api-key"];
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  if (process.env.MJ_API_KEY) return process.env.MJ_API_KEY.trim();
+  const config = await readProviderConfig();
+  return typeof config?.midjourney?.apiKey === "string" ? config.midjourney.apiKey.trim() : "";
+}
+
 async function resolveRunningHubApiKey(req) {
   const explicit = req.headers["x-runninghub-api-key"];
   if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
@@ -621,6 +631,77 @@ async function requestGeminiGeneration(job) {
   return { items, mode: selectedReferences.length ? "edit" : "generate", referencesUsed: selectedReferences.length };
 }
 
+function mjTaskIdFrom(result) {
+  const value = result?.result ?? result?.taskId ?? result?.task_id ?? result?.data?.taskId ?? result?.data?.task_id;
+  return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function mjTaskImageUrls(result) {
+  const direct = [result?.imageUrl, result?.image_url, result?.url].filter(value => typeof value === "string" && value.trim());
+  const arrays = [result?.imageUrls, result?.image_urls, result?.images, result?.data?.images, result?.data?.imageUrls]
+    .filter(Array.isArray)
+    .flatMap(items => items.map(item => typeof item === "string" ? item : item?.imageUrl || item?.image_url || item?.url))
+    .filter(value => typeof value === "string" && value.trim());
+  return [...new Set([...direct, ...arrays])];
+}
+
+function mjPromptWithAspect(prompt, aspect) {
+  if (/--ar\s+\d+(?:\.\d+)?:\d+(?:\.\d+)?\b/i.test(prompt)) return prompt;
+  const ratio = /^\d+:\d+$/.test(String(aspect || "")) ? aspect : "1:1";
+  return `${prompt.trim()} --ar ${ratio}`;
+}
+
+async function requestMjGeneration(job) {
+  const { apiKey, prompt, aspect, n, references } = job.request;
+  const selectedReferences = references.slice(0, 4);
+  selectedReferences.forEach((dataUrl, index) => {
+    const source = parseStoredImage(dataUrl, `第 ${index + 1} 张 Midjourney 参考图`);
+    if (source.buffer.length > 4 * 1024 * 1024) throw gatewayError(400, `第 ${index + 1} 张 Midjourney 参考图超过 4MB，请先压缩后再运行`);
+  });
+  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" };
+  const requestOnce = async (index) => {
+    const response = await fetch(`${mjBaseUrl}/mj/submit/imagine`, {
+      method: "POST",
+      headers: { ...headers, "Idempotency-Key": `${job.id}:${index + 1}` },
+      body: JSON.stringify({
+        botType: "MID_JOURNEY",
+        prompt: mjPromptWithAspect(prompt, aspect),
+        base64Array: selectedReferences,
+        accountFilter: { modes: ["FAST"], remix: true, remixAutoConsidered: true },
+        state: job.id
+      }),
+      signal: AbortSignal.timeout(90_000)
+    });
+    const raw = await response.text();
+    let submitted;
+    try { submitted = JSON.parse(raw); } catch { submitted = { description: raw.slice(0, 500) || "Midjourney 提交接口返回了无法解析的内容" }; }
+    const taskId = mjTaskIdFrom(submitted);
+    if (!response.ok || !taskId || ![0, 1, 22].includes(Number(submitted?.code ?? 1))) {
+      throw gatewayError(response.status || 502, submitted?.description || submitted?.message || "Midjourney 任务提交失败");
+    }
+    const deadline = Date.now() + 20 * 60_000;
+    let latest = null;
+    while (Date.now() < deadline) {
+      const taskResponse = await fetch(`${mjBaseUrl}/mj/task/${encodeURIComponent(taskId)}/fetch`, { headers, signal: AbortSignal.timeout(30_000) });
+      const taskRaw = await taskResponse.text();
+      let task;
+      try { task = JSON.parse(taskRaw); } catch { task = { description: taskRaw.slice(0, 500) || "Midjourney 查询接口返回了无法解析的内容" }; }
+      if (!taskResponse.ok) throw gatewayError(taskResponse.status, task?.description || task?.message || "Midjourney 任务查询失败");
+      latest = task?.data && typeof task.data === "object" ? task.data : task;
+      const status = String(latest?.status || latest?.state || "").toUpperCase();
+      const urls = mjTaskImageUrls(latest);
+      if (status === "SUCCESS" && urls.length) return urls.map(url => ({ url }));
+      if (["FAILURE", "FAILED", "CANCEL", "CANCELLED"].includes(status)) throw gatewayError(502, latest?.failReason || latest?.description || "Midjourney 任务失败");
+      await new Promise(resolve => setTimeout(resolve, 3_000));
+    }
+    throw gatewayError(504, `Midjourney 任务等待超时 (${latest?.id || taskId})`);
+  };
+  const count = Math.min(4, Math.max(1, Number(n) || 1));
+  const groups = [];
+  for (let index = 0; index < count; index += 1) groups.push(await requestOnce(index));
+  return { items: groups.flat(), mode: selectedReferences.length ? "reference" : "generate", referencesUsed: selectedReferences.length };
+}
+
 function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
   return { nodeId: String(nodeId), fieldName: String(fieldName), fieldValue: fieldValue ?? "" };
 }
@@ -721,7 +802,7 @@ async function executeJob(job) {
   await persistJobs();
   await writeJobLog(job, "started");
   try {
-    const result = job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : ["gemini", "moyu"].includes(job.provider) ? await requestGeminiGeneration(job) : await requestImage2Generation(job);
+    const result = job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : ["gemini", "moyu"].includes(job.provider) ? await requestGeminiGeneration(job) : await requestImage2Generation(job);
     if (result.mediaType === "video") job.media = await Promise.all(result.items.map((item, index) => persistGeneratedMedia(job, item, index)));
     else job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
     job.status = "succeeded";
@@ -757,12 +838,13 @@ async function drainJobs() {
 async function createJob(req, res) {
   try {
     const body = await readJson(req);
-    const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "gemini" ? "gemini" : body.provider === "moyu" ? "moyu" : "image2";
+    const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "gemini" ? "gemini" : body.provider === "moyu" ? "moyu" : body.provider === "midjourney" ? "midjourney" : "image2";
     if (provider === "runninghub-h3") return createRunningHubJob(req, res, body);
     const usesMoyu = ["gemini", "moyu"].includes(provider);
     if (usesMoyu && body.model && !moyuImageModels.includes(String(body.model))) return sendJson(res, 400, { error: "不支持的魔芋图像模型" });
-    const apiKey = usesMoyu ? await resolveGeminiApiKey(req) : await resolveApiKey(req);
-    if (!apiKey) return sendJson(res, 401, { error: usesMoyu ? "未配置魔芋 API Key，请在设置中保存 Gemini 密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
+    const isMj = provider === "midjourney";
+    const apiKey = isMj ? await resolveMjApiKey(req) : usesMoyu ? await resolveGeminiApiKey(req) : await resolveApiKey(req);
+    if (!apiKey) return sendJson(res, 401, { error: isMj ? "未配置 Midjourney API Key，请在设置中保存密钥" : usesMoyu ? "未配置魔芋 API Key，请在设置中保存 Gemini 密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
     const quality = ["low", "medium", "high"].includes(body.quality) ? body.quality : "high";
@@ -771,12 +853,13 @@ async function createJob(req, res) {
       : provider === "gemini"
         ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1")
         : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
-    const selectedModel = usesMoyu ? normalizeMoyuModel(body.model) : model;
+    const aspect = /^(?:1:1|3:4|4:3|16:9|9:16)$/.test(String(body.aspect || "")) ? String(body.aspect) : "1:1";
+    const selectedModel = isMj ? mjFastModel : usesMoyu ? normalizeMoyuModel(body.model) : model;
     const outputSize = usesMoyu ? normalizeMoyuOutputSize(selectedModel, String(body.outputSize || "")) : "current";
     const n = Math.min(4, Math.max(1, Number(body.n) || 1));
-    const maxReferences = provider === "moyu" || provider === "gemini" ? 14 : 8;
+    const maxReferences = isMj ? 4 : provider === "moyu" || provider === "gemini" ? 14 : 8;
     const references = Array.isArray(body.references) ? body.references.slice(0, maxReferences) : [];
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, outputSize, n, references } };
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, aspect, outputSize, n, references } };
     jobs.set(job.id, job);
     pendingJobIds.push(job.id);
     await persistJobs();
@@ -846,6 +929,22 @@ async function checkGeminiGateway(req, res) {
   }
 }
 
+async function checkMjGateway(req, res) {
+  const apiKey = await resolveMjApiKey(req);
+  if (!apiKey) return sendJson(res, 401, { ready: false, gateway: "missing_key", message: "未配置 Midjourney API Key" });
+  try {
+    const response = await fetch(`${mjBaseUrl}/v1/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw gatewayError(response.status, "Midjourney 网关鉴权失败");
+    const result = await response.json().catch(() => ({}));
+    const listedModels = Array.isArray(result.data) ? new Set(result.data.map(item => item?.id)) : null;
+    const available = !listedModels || listedModels.has(mjFastModel);
+    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: mjFastModel, baseUrl: mjBaseUrl, checkedAt: Date.now() });
+  } catch (error) {
+    const failure = classifyError(error);
+    return sendJson(res, 502, { ready: false, gateway: failure.code.toLowerCase(), message: failure.message, checkedAt: Date.now() });
+  }
+}
+
 async function saveGeminiProvider(req, res) {
   try {
     const body = await readJson(req, 64 * 1024);
@@ -856,6 +955,19 @@ async function saveGeminiProvider(req, res) {
     return sendJson(res, 200, { ready: true, provider: "moyu", model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl });
   } catch (error) {
     return sendJson(res, 400, { error: error?.message || "Gemini 设置保存失败" });
+  }
+}
+
+async function saveMjProvider(req, res) {
+  try {
+    const body = await readJson(req, 64 * 1024);
+    const apiKey = String(body.apiKey || "").trim();
+    if (!apiKey) return sendJson(res, 400, { error: "Midjourney API Key 不能为空" });
+    const previous = await readProviderConfig();
+    await saveProviderConfig({ ...previous, midjourney: { ...(previous.midjourney || {}), apiKey, baseUrl: mjBaseUrl, model: mjFastModel, updatedAt: Date.now() } });
+    return sendJson(res, 200, { ready: true, provider: "midjourney", model: mjFastModel, baseUrl: mjBaseUrl });
+  } catch (error) {
+    return sendJson(res, 400, { error: error?.message || "Midjourney 设置保存失败" });
   }
 }
 
@@ -1068,12 +1180,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/status") {
     const key = await resolveApiKey(req);
     const geminiKey = await resolveGeminiApiKey(req);
+    const mjKey = await resolveMjApiKey(req);
     const runningHubKey = await resolveRunningHubApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/gemini/health") return checkGeminiGateway(req, res);
+  if (req.method === "GET" && url.pathname === "/api/providers/midjourney/health") return checkMjGateway(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/gemini") return saveGeminiProvider(req, res);
+  if (req.method === "POST" && url.pathname === "/api/providers/midjourney") return saveMjProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/runninghub") return saveRunningHubProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/restart") return restartLocalService(req, res);
   if (req.method === "POST" && url.pathname === "/api/assets") return storeAsset(req, res);
