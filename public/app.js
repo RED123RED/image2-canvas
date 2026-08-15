@@ -459,7 +459,7 @@ function applyCompositionToLinkedPrompts(compositionId) {
   const instruction = promptCompositionInstruction(source.composition); linkedPromptsForComposition(compositionId).forEach(prompt => { prompt.content = upsertPromptCompositionInstruction(prompt.content, source.composition, prompt.compositionInstruction); prompt.compositionInstruction = instruction; });
 }
 function createGeneratorNode(x, y) {
-  return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, moyuModel: seedreamImageModels[0].id, mjSelection: 1, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
+  return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createVideoNode(x, y) {
   return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoMode: "first-frame", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 1, videoInputSlotsInitialized: true, width: 390, height: nodeHeight("video-generator", 1, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
@@ -593,7 +593,7 @@ function normalizeProject(project) {
         }
         const slots = Math.min(14, Math.max(1, Number(node.inputSlots) || 4));
         const promptSlots = Math.min(6, Math.max(1, Number(node.promptSlots) || 1));
-        const generatorNormalized = { ...node, provider: ["gemini", "moyu", "midjourney"].includes(node.provider) ? node.provider : "image2", geminiModel: geminiImageModels.some(item => item.id === node.geminiModel) ? node.geminiModel : geminiImageModels[0].id, moyuModel: seedreamImageModels.some(item => item.id === node.moyuModel) ? node.moyuModel : seedreamImageModels[0].id, mjSelection: Math.min(4, Math.max(1, Math.round(Number(node.mjSelection) || 1))), width: node.width || 360, promptSlots, inputSlots: slots, height: Math.max(Number(node.height) || 0, nodeHeight("generator", slots, promptSlots)), aspect: sizeMap[node.aspect] ? node.aspect : fixedGeneratorSettings.aspect, quality: ["low", "medium", "high"].includes(node.quality) ? node.quality : fixedGeneratorSettings.quality, batch: Math.min(4, Math.max(1, Number(node.batch) || fixedGeneratorSettings.batch)), status: node.activeJobId ? "running" : "idle" };
+        const generatorNormalized = { ...node, provider: ["gemini", "moyu", "midjourney"].includes(node.provider) ? node.provider : "image2", geminiModel: geminiImageModels.some(item => item.id === node.geminiModel) ? node.geminiModel : geminiImageModels[0].id, moyuModel: seedreamImageModels.some(item => item.id === node.moyuModel) ? node.moyuModel : seedreamImageModels[0].id, width: node.width || 360, promptSlots, inputSlots: slots, height: Math.max(Number(node.height) || 0, nodeHeight("generator", slots, promptSlots)), aspect: sizeMap[node.aspect] ? node.aspect : fixedGeneratorSettings.aspect, quality: ["low", "medium", "high"].includes(node.quality) ? node.quality : fixedGeneratorSettings.quality, batch: Math.min(4, Math.max(1, Number(node.batch) || fixedGeneratorSettings.batch)), status: node.activeJobId ? "running" : "idle" };
         generatorNormalized.outputSize = normalizeGeneratorOutputSize(generatorNormalized);
         return generatorNormalized;
       }
@@ -2260,6 +2260,10 @@ function renderImageNodeHtml(node, selected, style) {
   const elapsed = formatGenerationDuration(Date.now() - Number(node.generationStartedAt || 0)) || "0秒";
   const loadingStage = runningHubGenerationStageLabel(node.generationStage);
   const actions = loading ? "" : hasSource ? `<button class="icon-button node-interactive" type="button" data-crop-node="${node.id}" aria-label="裁剪参考图" data-tooltip="裁剪参考图">${icon("crop")}</button><button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载图片" data-tooltip="下载图片">${icon("download")}</button>` : `<button class="icon-button node-interactive" type="button" data-upload-node="${node.id}" aria-label="上传图像" data-tooltip="上传图像">${icon("image-plus")}</button>`;
+  const dimensions = Number(node.imageWidth) > 0 && Number(node.imageHeight) > 0 ? `${node.imageWidth} × ${node.imageHeight}` : "";
+  const candidateActions = node.midjourneyCandidate && hasSource
+    ? `<div class="midjourney-candidate-actions"><span>选择单图</span>${(node.midjourneySlots || []).map(slot => `<button class="node-interactive" type="button" data-midjourney-upscale="${node.id}" data-midjourney-slot="${slot}"${node.midjourneyActionJobId ? " disabled" : ""}>U${slot}</button>`).join("")}</div>`
+    : "";
   const preview = loading
     ? isVideoLoading
       ? `<div class="loading-preview video-loading-preview"><div>${icon("loader-circle")}<span>${escapeHtml(node.source || "海螺 H3 视频")} 生成中</span><strong data-generation-elapsed="${Number(node.generationStartedAt) || Date.now()}">已等待 ${escapeHtml(elapsed)}</strong><small>${escapeHtml(loadingStage)}</small></div></div>`
@@ -2267,7 +2271,8 @@ function renderImageNodeHtml(node, selected, style) {
     : hasSource ? `<img class="image-preview node-interactive" data-preview-node="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}" loading="lazy" draggable="false" decoding="async">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`;
   return `<article class="canvas-node image-node${loading ? " loading-node" : ""}${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, loading ? "loader-circle" : "image", actions)}<div class="node-body">
     ${preview}
-    <div class="image-node-meta"><strong>${escapeHtml(node.source || "参考图")}</strong><span>${escapeHtml(node.ratio || (hasSource ? "图片" : "未上传"))}</span></div>
+    ${candidateActions}
+    <div class="image-node-meta"><strong>${escapeHtml(node.source || "参考图")}</strong><span>${escapeHtml(dimensions || node.ratio || (hasSource ? "图片" : "未上传"))}</span></div>
     </div></div>${resizeHandleHtml(node)}${(node.generated || node.source === "Image2" || node.source === "Gemini" || loading) ? portHtml(node, "result", loadingMediaType, "input", "Result", 70) : ""}${portHtml(node, loadingMediaType, loadingMediaType, "output", loadingMediaType === "video" ? "Video" : "Image", 70)}</article>`;
 }
 function generatorPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${index}`; }
@@ -2281,14 +2286,13 @@ function renderGeneratorNodeHtml(node, selected, style) {
   const provider = generatorProviderForNode(node);
   const isMoyu = node.provider === "gemini" || node.provider === "moyu";
   const isMidjourney = node.provider === "midjourney";
-  const mjSelection = Math.min(4, Math.max(1, Math.round(Number(node.mjSelection) || 1)));
   const outputOptions = generatorOutputOptions(node);
   const outputSize = normalizeGeneratorOutputSize(node);
-  const outputSizeControl = isMidjourney
-    ? `<select class="node-select node-interactive" data-generator-field="mjSelection" data-node-id="${node.id}" aria-label="Midjourney 单图选择">${[1, 2, 3, 4].map(value => `<option value="${value}"${mjSelection === value ? " selected" : ""}>U${value}</option>`).join("")}</select>`
-    : outputOptions.length > 1
+  const outputSizeControl = outputOptions.length > 1
     ? `<select class="node-select node-interactive" data-generator-field="outputSize" data-node-id="${node.id}" aria-label="输出尺寸">${outputOptions.map(option => `<option value="${option.value}"${outputSize === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`
     : `<div class="node-static-field">${escapeHtml(outputOptions[0]?.label || "当前最大")}</div>`;
+  const batchControl = isMidjourney ? `<div class="node-static-field">四宫格</div>` : `<select class="node-select node-interactive" data-generator-field="batch" data-node-id="${node.id}" aria-label="生成张数">${[1,2,3,4].map(value => `<option value="${value}"${Number(node.batch) === value ? " selected" : ""}>${value}</option>`).join("")}</select>`;
+  const outputControl = isMidjourney ? `<div class="node-static-field">结果节点 U1-U4</div>` : outputSizeControl;
   const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, generatorPromptPortId(index)); const promptNode = findNode(edge?.source); const label = edge ? `${promptNode?.disabled ? "已禁用 · " : ""}${sourceLabelForEdge(edge)}` : "未连接"; return `<div class="input-slot${edge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>${index ? `提示词 ${index + 1}` : "提示词"}</span><span>${escapeHtml(label)}</span></div>`; }).join("");
   const slots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); return `<div class="input-slot${edge ? " is-connected" : ""}"><span>参考图 ${index + 1}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
   const statusLabel = node.status === "running" ? "生成中" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个结果` : "待运行";
@@ -2296,8 +2300,8 @@ function renderGeneratorNodeHtml(node, selected, style) {
     <div class="node-field generator-provider-field"><label>生图模型</label><select class="node-select node-interactive" data-generator-field="providerModel" data-node-id="${node.id}" aria-label="生图模型"><option value="image2"${node.provider === "image2" ? " selected" : ""}>Image2 · GPT Image 2</option>${geminiImageModels.map(item => `<option value="${item.id}"${node.provider === "gemini" && node.geminiModel === item.id ? " selected" : ""}>Gemini · ${item.label}</option>`).join("")}${seedreamImageModels.map(item => `<option value="${item.id}"${node.provider === "moyu" && node.moyuModel === item.id ? " selected" : ""}>豆包 · ${item.label}</option>`).join("")}${midjourneyImageModels.map(item => `<option value="${item.id}"${isMidjourney ? " selected" : ""}>Midjourney · ${item.label}</option>`).join("")}</select></div>
     <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-generator-field="aspect" data-node-id="${node.id}" aria-label="图像比例">${Object.keys(sizeMap).map(value => `<option value="${value}"${node.aspect === value ? " selected" : ""}>${value}</option>`).join("")}</select></div>
     <div class="node-field"><label>品质</label>${isMoyu || isMidjourney ? `<div class="node-static-field">模型默认</div>` : `<select class="node-select node-interactive" data-generator-field="quality" data-node-id="${node.id}" aria-label="图像品质"><option value="low"${node.quality === "low" ? " selected" : ""}>快速</option><option value="medium"${node.quality === "medium" ? " selected" : ""}>标准</option><option value="high"${node.quality === "high" ? " selected" : ""}>高品质</option></select>`}</div>
-    <div class="node-field"><label>张数</label><select class="node-select node-interactive" data-generator-field="batch" data-node-id="${node.id}" aria-label="生成张数">${[1,2,3,4].map(value => `<option value="${value}"${Number(node.batch) === value ? " selected" : ""}>${value}</option>`).join("")}</select></div>
-    <div class="node-field"><label>${isMidjourney ? "单图选择" : "输出尺寸"}</label>${outputSizeControl}</div></div>
+    <div class="node-field"><label>${isMidjourney ? "候选图" : "张数"}</label>${batchControl}</div>
+    <div class="node-field"><label>${isMidjourney ? "单图输出" : "输出尺寸"}</label>${outputControl}</div></div>
     <div class="generator-inputs">${promptSlots}${slots}</div><div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-input="${node.id}"${node.inputSlots >= generatorReferenceLimit(node) ? " disabled" : ""}>${icon("image-plus")} 添加图片输入</button></div>
     <button class="run-node-button node-interactive" type="button" data-run-node="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "play")} ${node.status === "running" ? `${escapeHtml(provider.label)} 处理中` : `运行 ${escapeHtml(provider.label)}`}</button>
     <div class="node-run-state"><span>${escapeHtml(provider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}">${statusLabel}</span></div>
@@ -2383,6 +2387,7 @@ function bindNodeEvents() {
   $$('[data-node-resize]').forEach(handle => handle.addEventListener("pointerdown", startResize));
   $$('[data-download-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.downloadNode); if (node) downloadNode(node); }));
   $$('[data-crop-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); openCropDialog(button.dataset.cropNode); }));
+  $$('[data-midjourney-upscale]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void upscaleMidjourneyCandidate(button.dataset.midjourneyUpscale, Number(button.dataset.midjourneySlot)); }));
   $$('[data-import-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoImportNodeId = button.dataset.importVideo; videoFileInput.value = ""; videoFileInput.click(); }));
   $$('[data-compose-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); composeVideoEditor(button.dataset.composeVideo); }));
   $$('[data-clip-field]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("change", event => updateVideoClip(input.dataset.editorNode, input.dataset.clipId, input.dataset.clipField, event.target.value)); });
@@ -2456,7 +2461,7 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
       const provider = generatorProviderForNode(node);
       if (["GPT Image 2", "Gemini Image", "豆包 Seedream", "Midjourney Fast", "生图"].includes(node.name)) node.name = node.provider === "gemini" ? "Gemini Image" : node.provider === "moyu" ? "豆包 Seedream" : node.provider === "midjourney" ? "Midjourney Fast" : "GPT Image 2";
       toast(`已切换为 ${provider.label} · ${provider.model}`);
-    } else node[field] = ["batch", "mjSelection"].includes(field) ? Number(event.target.value) : event.target.value;
+    } else node[field] = field === "batch" ? Number(event.target.value) : event.target.value;
     renderCanvas(); renderInspector(); scheduleSave();
   }));
   $$('[data-add-prompt-input]').forEach(button => button.addEventListener("click", event => {
@@ -3043,7 +3048,9 @@ function finishGenerationJob(generatorId, job) {
       const placeholder = placeholders[index];
       if (!placeholder) return;
       const node = findNode(placeholder.id);
-      Object.assign(node, { type: isVideo ? "video" : "image", mediaType: isVideo ? "video" : "image", generationJobId: undefined, generationStage: undefined, name: `${modelLabel} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, model: job.model || provider.model, modelLabel, outputType: image.outputType || (isVideo ? "mp4" : "png"), videoQuality: isVideo ? videoProfile.quality : undefined, videoWidth: isVideo ? videoProfile.dimensions.width : undefined, videoHeight: isVideo ? videoProfile.dimensions.height : undefined, generationDurationMs: isVideo ? generationDurationMs : undefined, generated: true, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
+      const isMjCandidate = job.provider === "midjourney" && job.midjourney?.kind === "grid";
+      const mjSlot = job.midjourney?.kind === "upscale" ? Number(job.midjourney.slot) : 0;
+      Object.assign(node, { type: isVideo ? "video" : "image", mediaType: isVideo ? "video" : "image", generationJobId: undefined, generationStage: undefined, name: `${modelLabel}${mjSlot ? ` · U${mjSlot}` : ""} · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${index + 1}`, src: image.url, source: provider.label, model: job.model || provider.model, modelLabel, outputType: image.outputType || (isVideo ? "mp4" : "png"), imageWidth: image.width || undefined, imageHeight: image.height || undefined, midjourneyCandidate: isMjCandidate, midjourneyJobId: isMjCandidate ? job.id : undefined, midjourneySlots: isMjCandidate ? job.midjourney.slots || [] : undefined, videoQuality: isVideo ? videoProfile.quality : undefined, videoWidth: isVideo ? videoProfile.dimensions.width : undefined, videoHeight: isVideo ? videoProfile.dimensions.height : undefined, generationDurationMs: isVideo ? generationDurationMs : undefined, generated: true, prompt: generator.activePrompt || "", revisedPrompt: image.revisedPrompt || "" });
       createdIds.push(node.id);
     });
     const unused = placeholders.filter(node => !createdIds.includes(node.id));
@@ -3094,14 +3101,66 @@ async function pollGenerationJob(generatorId, jobId) {
   }
   generationPollers.set(jobId, setTimeout(() => pollGenerationJob(generatorId, jobId), delay));
 }
+function ensureMidjourneyUpscalePlaceholder(candidate, job) {
+  const existing = state.nodes.find(node => node.type === "loading" && node.midjourneyActionJobId === job.id);
+  if (existing) return existing;
+  const slot = Number(job.midjourney?.slot || candidate.midjourneyActionSlot || 1);
+  const placeholder = { id: uid("result"), type: "loading", mediaType: "image", generationJobId: job.id, midjourneyActionJobId: job.id, generationStartedAt: Number(job.createdAt) || Date.now(), name: `Midjourney Fast · U${slot} 单图`, x: candidate.x + candidate.width + 190, y: candidate.y, width: 270, height: nodeHeight("loading"), source: "Midjourney Fast", model: "mj_fast_imagine", modelLabel: "Midjourney Fast", ratio: candidate.ratio || "图片", outputType: "png", createdAt: Date.now() };
+  state.nodes.push(placeholder);
+  state.edges.push({ id: uid("edge"), source: candidate.id, sourcePort: "image", target: placeholder.id, targetPort: "result", type: "image" });
+  return placeholder;
+}
+function finishMidjourneyUpscale(candidateId, job) {
+  const candidate = findNode(candidateId);
+  const placeholder = state.nodes.find(node => node.type === "loading" && node.midjourneyActionJobId === job.id);
+  if (!candidate || !placeholder) return stopGenerationPolling(job.id);
+  if (job.status === "succeeded" && job.images?.[0]?.url) {
+    const image = job.images[0]; const slot = Number(job.midjourney?.slot || candidate.midjourneyActionSlot || 1);
+    Object.assign(placeholder, { type: "image", mediaType: "image", generationJobId: undefined, midjourneyActionJobId: undefined, name: `Midjourney Fast · U${slot}`, src: image.url, source: "Midjourney Fast", model: job.model || "mj_fast_imagine", modelLabel: "Midjourney Fast", outputType: image.outputType || "png", imageWidth: image.width || undefined, imageHeight: image.height || undefined, generated: true, prompt: candidate.prompt || "", revisedPrompt: image.revisedPrompt || "" });
+    candidate.midjourneyUpscaledSlots = [...new Set([...(candidate.midjourneyUpscaledSlots || []), slot])];
+    state.selectedIds = [placeholder.id]; state.recentIds = [placeholder.id, ...state.recentIds].slice(0, 60); state.libraryTab = "history";
+    toast(`Midjourney U${slot} 单图已完成`);
+  } else {
+    const ids = new Set([placeholder.id]); state.nodes = state.nodes.filter(node => !ids.has(node.id)); state.edges = state.edges.filter(edge => !ids.has(edge.target));
+    toast(job.error || "Midjourney 单图生成失败", true);
+  }
+  delete candidate.midjourneyActionJobId; delete candidate.midjourneyActionSlot;
+  stopGenerationPolling(job.id); renderWorkspace(); scheduleSave();
+}
+async function pollMidjourneyUpscale(candidateId, jobId) {
+  stopGenerationPolling(jobId, false);
+  const candidate = findNode(candidateId); if (!state || !candidate || candidate.midjourneyActionJobId !== jobId) return;
+  let delay = 2_000;
+  try {
+    const { job } = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}`, {}, 15_000);
+    if (job.status === "succeeded" || job.status === "failed") return finishMidjourneyUpscale(candidateId, job);
+    generationPollFailures.delete(jobId);
+  } catch {
+    const failures = (generationPollFailures.get(jobId) || 0) + 1; generationPollFailures.set(jobId, failures); delay = Math.min(12_000, 2_000 * 2 ** Math.min(failures, 3));
+  }
+  generationPollers.set(jobId, setTimeout(() => pollMidjourneyUpscale(candidateId, jobId), delay));
+}
+async function upscaleMidjourneyCandidate(candidateId, slot) {
+  const candidate = findNode(candidateId);
+  if (!candidate?.midjourneyCandidate || !candidate.midjourneyJobId || candidate.midjourneyActionJobId) return;
+  if (!(candidate.midjourneySlots || []).includes(slot)) return toast(`U${slot} 当前不可用`, true);
+  recordHistory(); candidate.midjourneyActionJobId = "pending"; candidate.midjourneyActionSlot = slot; renderWorkspace(); scheduleSave();
+  try {
+    const result = await requestJson(`/api/jobs/${encodeURIComponent(candidate.midjourneyJobId)}/midjourney/upscale`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot }) }, 75_000);
+    const job = result.job; if (!job?.id) throw new Error("本机服务未返回 Midjourney 单图任务");
+    candidate.midjourneyActionJobId = job.id; ensureMidjourneyUpscalePlaceholder(candidate, job); state.selectedIds = []; toast(`已提交 U${slot} 单图任务`); renderWorkspace(); scheduleSave(); void pollMidjourneyUpscale(candidate.id, job.id);
+  } catch (error) {
+    delete candidate.midjourneyActionJobId; delete candidate.midjourneyActionSlot; toast(error?.message || "Midjourney 单图任务创建失败", true); renderWorkspace(); scheduleSave();
+  }
+}
 function resumeGenerationJobs() {
   if (!state) return;
   const active = state.nodes.filter(node => node.type === "generator" && node.activeJobId);
-  if (!active.length) return;
   active.forEach(generator => {
     generator.status = "running";
     pollGenerationJob(generator.id, generator.activeJobId);
   });
+  state.nodes.filter(node => node.midjourneyCandidate && node.midjourneyActionJobId && node.midjourneyActionJobId !== "pending").forEach(node => pollMidjourneyUpscale(node.id, node.midjourneyActionJobId));
 }
 async function runGeneratorNode(nodeId) {
   const generator = findNode(nodeId); if (!generator || generator.type !== "generator" || isGenerating || generator.activeJobId) return;
@@ -3131,13 +3190,13 @@ async function runGeneratorNode(nodeId) {
     const constraints = generator.constraints?.trim();
     const fullPrompt = constraints ? `${prompt}\n\n必须遵守的限制：${constraints}` : prompt;
     const externalSize = generatorApiSize(generator);
-    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesProviderKey && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ provider: generator.provider || "image2", model: usesProviderKey ? generatorModelForNode(generator) : undefined, prompt: fullPrompt, size: usesProviderKey ? externalSize : sizeMap[generator.aspect].api, aspect: generator.aspect, mjSelection: generator.mjSelection, outputSize: normalizeGeneratorOutputSize(generator), quality: generator.quality, n: generator.batch, references }) }, 75_000);
+    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesProviderKey && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ provider: generator.provider || "image2", model: usesProviderKey ? generatorModelForNode(generator) : undefined, prompt: fullPrompt, size: usesProviderKey ? externalSize : sizeMap[generator.aspect].api, aspect: generator.aspect, outputSize: normalizeGeneratorOutputSize(generator), quality: generator.quality, n: generator.provider === "midjourney" ? 1 : generator.batch, references }) }, 75_000);
     const job = result.job;
     if (!job?.id) throw new Error("本机服务未返回生成任务");
     generator.activeJobId = job.id;
     ensureGenerationPlaceholders(generator, job.id, job.imageCount, job.model, job.createdAt);
     state.selectedIds = [];
-    toast(`${provider.label} 已进入本机任务队列，正在生成 ${job.imageCount} 张图片`);
+    toast(generator.provider === "midjourney" ? `${provider.label} 正在生成四宫格候选图` : `${provider.label} 已进入本机任务队列，正在生成 ${job.imageCount} 张图片`);
     renderWorkspace();
     scheduleSave();
     pollGenerationJob(generator.id, job.id);
