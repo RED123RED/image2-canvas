@@ -2648,7 +2648,9 @@ function handlePointerUp(event) {
   if (resizeSession) {
     if (resizeSession.element) resizeSession.element.style.willChange = "";
     if (resizeSession.moved) { undoStack.push(resizeSession.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); }
-    resizeSession = null; renderCanvas(); renderInspector(); updateHistoryButtons();
+    // The resized node is already updated in-place while dragging. Rebuilding the canvas
+    // here recreates every video element and makes unrelated previews reload.
+    resizeSession = null; requestEdgeRender(); renderInspector(); updateHistoryButtons();
   }
   if (dragSession) {
     dragSession.elements.forEach(item => { const node = findNode(item.id); if (item.element && node) { item.element.style.left = `${node.x}px`; item.element.style.top = `${node.y}px`; item.element.style.transform = ""; item.element.style.willChange = ""; item.element.classList.remove("is-dragging"); } });
