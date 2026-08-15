@@ -652,33 +652,14 @@ function mjPromptWithAspect(prompt, aspect) {
 }
 
 async function requestMjGeneration(job) {
-  const { apiKey, prompt, aspect, n, references } = job.request;
+  const { apiKey, prompt, aspect, n, mjSelection, references } = job.request;
   const selectedReferences = references.slice(0, 4);
   selectedReferences.forEach((dataUrl, index) => {
     const source = parseStoredImage(dataUrl, `第 ${index + 1} 张 Midjourney 参考图`);
     if (source.buffer.length > 4 * 1024 * 1024) throw gatewayError(400, `第 ${index + 1} 张 Midjourney 参考图超过 4MB，请先压缩后再运行`);
   });
   const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" };
-  const requestOnce = async (index) => {
-    const response = await fetch(`${mjBaseUrl}/mj/submit/imagine`, {
-      method: "POST",
-      headers: { ...headers, "Idempotency-Key": `${job.id}:${index + 1}` },
-      body: JSON.stringify({
-        botType: "MID_JOURNEY",
-        prompt: mjPromptWithAspect(prompt, aspect),
-        base64Array: selectedReferences,
-        accountFilter: { modes: ["FAST"], remix: true, remixAutoConsidered: true },
-        state: job.id
-      }),
-      signal: AbortSignal.timeout(90_000)
-    });
-    const raw = await response.text();
-    let submitted;
-    try { submitted = JSON.parse(raw); } catch { submitted = { description: raw.slice(0, 500) || "Midjourney 提交接口返回了无法解析的内容" }; }
-    const taskId = mjTaskIdFrom(submitted);
-    if (!response.ok || !taskId || ![0, 1, 22].includes(Number(submitted?.code ?? 1))) {
-      throw gatewayError(response.status || 502, submitted?.description || submitted?.message || "Midjourney 任务提交失败");
-    }
+  const fetchMjTask = async taskId => {
     const deadline = Date.now() + 20 * 60_000;
     let latest = null;
     while (Date.now() < deadline) {
@@ -690,16 +671,50 @@ async function requestMjGeneration(job) {
       latest = task?.data && typeof task.data === "object" ? task.data : task;
       const status = String(latest?.status || latest?.state || "").toUpperCase();
       const urls = mjTaskImageUrls(latest);
-      if (status === "SUCCESS" && urls.length) return urls.map(url => ({ url }));
+      if (status === "SUCCESS" && urls.length) return { task: latest, urls };
       if (["FAILURE", "FAILED", "CANCEL", "CANCELLED"].includes(status)) throw gatewayError(502, latest?.failReason || latest?.description || "Midjourney 任务失败");
       await new Promise(resolve => setTimeout(resolve, 3_000));
     }
     throw gatewayError(504, `Midjourney 任务等待超时 (${latest?.id || taskId})`);
   };
+  const submitMjTask = async (pathname, body, index) => {
+    const response = await fetch(`${mjBaseUrl}${pathname}`, {
+      method: "POST",
+      headers: { ...headers, "Idempotency-Key": `${job.id}:${index + 1}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(90_000)
+    });
+    const raw = await response.text();
+    let submitted;
+    try { submitted = JSON.parse(raw); } catch { submitted = { description: raw.slice(0, 500) || "Midjourney 提交接口返回了无法解析的内容" }; }
+    const taskId = mjTaskIdFrom(submitted);
+    if (!response.ok || !taskId || ![0, 1, 22].includes(Number(submitted?.code ?? 1))) {
+      throw gatewayError(response.status || 502, submitted?.description || submitted?.message || "Midjourney 任务提交失败");
+    }
+    return taskId;
+  };
   const count = Math.min(4, Math.max(1, Number(n) || 1));
-  const groups = [];
-  for (let index = 0; index < count; index += 1) groups.push(await requestOnce(index));
-  return { items: groups.flat(), mode: selectedReferences.length ? "reference" : "generate", referencesUsed: selectedReferences.length };
+  const startSlot = Math.min(4, Math.max(1, Number(mjSelection) || 1));
+  const imagineTaskId = await submitMjTask("/mj/submit/imagine", {
+    botType: "MID_JOURNEY",
+    prompt: mjPromptWithAspect(prompt, aspect),
+    base64Array: selectedReferences,
+    accountFilter: { modes: ["FAST"], remix: true, remixAutoConsidered: true },
+    state: job.id
+  }, 0);
+  const imagineResult = await fetchMjTask(imagineTaskId);
+  const slots = Array.from({ length: count }, (_, index) => ((startSlot - 1 + index) % 4) + 1);
+  const actionTaskIds = slots.map(slot => {
+    const button = (imagineResult.task.buttons || []).find(item => new RegExp(`^U${slot}\\b`, "i").test(String(item?.label || "")) || new RegExp(`(?:upscale|upsample)::${slot}(?:::|$)`, "i").test(String(item?.customId || "")));
+    if (!button?.customId) throw gatewayError(502, `Midjourney 未返回 U${slot} 单图操作，请检查网关的按钮映射`);
+    return submitMjTask("/mj/submit/action", { chooseSameChannel: true, customId: button.customId, taskId: imagineTaskId, state: job.id }, slot);
+  });
+  const completed = [];
+  for (const actionTaskId of await Promise.all(actionTaskIds)) {
+    const result = await fetchMjTask(actionTaskId);
+    completed.push(...result.urls.map(url => ({ url })));
+  }
+  return { items: completed.slice(0, count), mode: selectedReferences.length ? "reference" : "generate", referencesUsed: selectedReferences.length };
 }
 
 function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
@@ -854,12 +869,13 @@ async function createJob(req, res) {
         ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1")
         : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
     const aspect = /^(?:1:1|3:4|4:3|16:9|9:16)$/.test(String(body.aspect || "")) ? String(body.aspect) : "1:1";
+    const mjSelection = Math.min(4, Math.max(1, Math.round(Number(body.mjSelection) || 1)));
     const selectedModel = isMj ? mjFastModel : usesMoyu ? normalizeMoyuModel(body.model) : model;
     const outputSize = usesMoyu ? normalizeMoyuOutputSize(selectedModel, String(body.outputSize || "")) : "current";
     const n = Math.min(4, Math.max(1, Number(body.n) || 1));
     const maxReferences = isMj ? 4 : provider === "moyu" || provider === "gemini" ? 14 : 8;
     const references = Array.isArray(body.references) ? body.references.slice(0, maxReferences) : [];
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, aspect, outputSize, n, references } };
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, aspect, mjSelection, outputSize, n, references } };
     jobs.set(job.id, job);
     pendingJobIds.push(job.id);
     await persistJobs();
