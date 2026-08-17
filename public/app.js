@@ -2187,6 +2187,11 @@ function renderCanvas() {
 function frameContainedNodes(frame) {
   return state.nodes.filter(item => item.type !== "frame" && item.id !== frame.id && item.x + item.width / 2 >= frame.x && item.x + item.width / 2 <= frame.x + frame.width && item.y + item.height / 2 >= frame.y && item.y + item.height / 2 <= frame.y + frame.height);
 }
+function updateFrameMetaDom(frame) {
+  const element = nodeLayer.querySelector(`[data-node-id="${CSS.escape(frame.id)}"]`);
+  const meta = element?.querySelector(".frame-meta");
+  if (meta) meta.textContent = `${frameContainedNodes(frame).length} 个节点 · 拖动画板可整体移动`;
+}
 function resizeHandleHtml(node) {
   const southWest = node.type === "frame" ? `<span class="node-resize-handle node-resize-handle-sw node-interactive" data-node-resize="${node.id}" data-node-resize-corner="sw" aria-label="向左下调整画板大小"></span>` : "";
   return `${southWest}<span class="node-resize-handle node-interactive" data-node-resize="${node.id}" data-node-resize-corner="se" aria-label="调整节点大小"></span>`;
@@ -2656,8 +2661,11 @@ function handlePointerUp(event) {
     dragSession.elements.forEach(item => { const node = findNode(item.id); if (item.element && node) { item.element.style.left = `${node.x}px`; item.element.style.top = `${node.y}px`; item.element.style.transform = ""; item.element.style.willChange = ""; item.element.classList.remove("is-dragging"); } });
     if (dragSession.moved) { undoStack.push(dragSession.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); }
     const movedFrame = dragSession.origins.some(origin => findNode(origin.id)?.type === "frame");
+    const movedFrames = dragSession.origins.map(origin => findNode(origin.id)).filter(node => node?.type === "frame");
     dragSession = null;
-    if (movedFrame) renderCanvas();
+    // Moving a frame already updates its children in-place. Refresh only the count label;
+    // rebuilding the canvas would recreate every video element in the group.
+    if (movedFrame) movedFrames.forEach(updateFrameMetaDom);
     renderLibrary(); renderInspector(); updateHistoryButtons();
   }
 }
