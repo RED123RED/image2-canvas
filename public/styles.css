@@ -982,6 +982,9 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .prompt-toggle.is-disabled { color: var(--primary); background: var(--primary-soft); }
 .prompt-node.is-disabled .node-card { opacity: .62; filter: grayscale(.28); }
 .prompt-node.is-disabled .node-type-icon { color: var(--muted); background: var(--surface-soft); }
+.image-toggle.is-disabled { color: var(--primary); background: var(--primary-soft); }
+.image-node.is-disabled .node-card { opacity: .62; filter: grayscale(.28); }
+.image-node.is-disabled .node-type-icon { color: var(--muted); background: var(--surface-soft); }
 .generator-node .input-slot.is-disabled { color: var(--muted); text-decoration: line-through; }
 
 
