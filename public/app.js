@@ -192,6 +192,8 @@ let pendingVideoImportNodeId = null;
 let cropSession = null;
 let compositionDragSession = null;
 let promptLayoutResizeSession = null;
+let promptReferenceClickTimer = null;
+const promptQuickSelection = new Map();
 let selectedEdgeId = null;
 let scriptDragSession = null;
 let scriptPanSession = null;
@@ -443,7 +445,7 @@ function finishHorizonCompositionDrag(event) {
   const node = findNode(session.nodeId); if (!node || node.type !== "composition") return; if (!session.moved) { if (node.composition.horizonEnabled === false) return; node.composition = normalizePromptComposition({ ...node.composition, horizonEnabled: false, horizonPending: false }); applyCompositionToLinkedPrompts(node.id); } undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; renderCanvas(); renderInspector(); updateHistoryButtons(); scheduleSave();
 }
 function createPromptNode(x, y, content = "") {
-  return { id: uid("prompt"), type: "prompt", name: "画面提示词", x, y, width: 320, height: nodeHeight("prompt"), content, promptPresetId: "", composition: { ...defaultPromptComposition }, promptLayout: normalizePromptLayout(null, 320, nodeHeight("prompt")), disabled: false, createdAt: Date.now() };
+  return { id: uid("prompt"), type: "prompt", name: "画面提示词", x, y, width: 320, height: nodeHeight("prompt"), content, promptPresetId: "", promptQuickParams: normalizePromptQuickParams(null), promptQuickInstruction: "", composition: { ...defaultPromptComposition }, promptLayout: normalizePromptLayout(null, 320, nodeHeight("prompt")), disabled: false, createdAt: Date.now() };
 }
 function createCompositionNode(x, y) {
   return { id: uid("composition"), type: "composition", name: "参数控制", x, y, width: 390, height: nodeHeight("composition"), composition: { ...defaultPromptComposition }, createdAt: Date.now() };
@@ -460,6 +462,48 @@ function applyCompositionToLinkedPrompts(compositionId) {
 }
 function createGeneratorNode(x, y) {
   return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
+}
+const promptQuickParamOptions = Object.freeze({
+  shotSize: { label: "景别", options: [["", "不指定"], ["extremeWide", "大远景"], ["wide", "全景"], ["medium", "中景"], ["close", "近景"], ["closeUp", "特写"]] },
+  cameraDirection: { label: "机位", options: [["", "不指定"], ["front", "正视"], ["left", "左侧"], ["right", "右侧"], ["top", "俯视"], ["bottom", "仰视"]] },
+  cameraAngle: { label: "角度", options: [["", "不指定"], ["angle0", "0°"], ["angle20", "20°"], ["angle45", "45°"], ["angle60", "60°"], ["angle90", "90°"]] },
+  depth: { label: "景深", options: [["", "不指定"], ["shallow", "浅景深"], ["balanced", "均衡景深"], ["deep", "深景深"]] },
+  perspective: { label: "透视", options: [["", "不指定"], ["left-near", "左近右远"], ["right-near", "左远右近"], ["parallel", "平行视角"]] },
+  motion: { label: "运镜", options: [["", "不指定"], ["static", "固定镜头"], ["push", "推进"], ["pull", "拉远"], ["left", "左移"], ["right", "右移"], ["up", "上摇"], ["down", "下摇"], ["follow", "跟拍"], ["orbit", "环绕"]] }
+});
+function normalizePromptQuickParams(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const valid = (field, fallback = "") => promptQuickParamOptions[field].options.some(([id]) => id === source[field]) ? source[field] : fallback;
+  const second = value => value === "" || value === null || value === undefined ? "" : /^\d+$/.test(String(value)) && Number(value) >= 0 && Number(value) <= 15 ? String(Number(value)) : "";
+  const start = second(source.secondsStart); const end = second(source.secondsEnd);
+  return { secondsStart: start, secondsEnd: end, shotSize: valid("shotSize"), cameraDirection: valid("cameraDirection"), cameraAngle: valid("cameraAngle"), depth: valid("depth"), perspective: valid("perspective"), motion: valid("motion") };
+}
+function promptQuickParamInstruction(value) {
+  const data = normalizePromptQuickParams(value);
+  const label = (field, id) => promptQuickParamOptions[field].options.find(([value]) => value === id)?.[1] || "";
+  const lines = [];
+  if (data.secondsStart !== "" && data.secondsEnd !== "" && Number(data.secondsEnd) > Number(data.secondsStart)) lines.push(`时长：${data.secondsStart}-${data.secondsEnd}秒。`);
+  if (data.shotSize) lines.push(`景别：${label("shotSize", data.shotSize)}。`);
+  if (data.cameraDirection) lines.push(`机位：${label("cameraDirection", data.cameraDirection)}。`);
+  if (data.cameraAngle) lines.push(`角度：${label("cameraAngle", data.cameraAngle)}。`);
+  if (data.depth) lines.push(`景深：${label("depth", data.depth)}。`);
+  if (data.perspective) lines.push(`透视：${label("perspective", data.perspective)}。`);
+  if (data.motion) lines.push(`运镜：${label("motion", data.motion)}。`);
+  return lines.join("\n");
+}
+function upsertPromptQuickInstruction(content, quickParams, previousInstruction = "") {
+  const block = /(?:^|\n)\s*【快捷镜头】[\s\S]*?【\/快捷镜头】(?=\s*(?:\n|$))/g;
+  const base = String(content || "").replace(block, "\n");
+  const previous = String(previousInstruction || "").trim();
+  const withoutPrevious = previous ? base.replace(previous, "") : base;
+  const directive = promptQuickParamInstruction(quickParams);
+  const cleaned = withoutPrevious.replace(/\n{3,}/g, "\n\n").trim();
+  if (!directive) return cleaned;
+  const wrapped = `【快捷镜头】\n${directive}\n【/快捷镜头】`;
+  return cleaned ? `${cleaned}\n\n${wrapped}` : wrapped;
+}
+function stripPromptQuickMarkers(content) {
+  return String(content || "").replace(/(?:^|\n)\s*【快捷镜头】([\s\S]*?)【\/快捷镜头】(?=\s*(?:\n|$))/g, (_, inner) => inner.split(/\r?\n/).map(line => line.trim()).filter(Boolean).join(" "));
 }
 function createVideoNode(x, y) {
   return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoMode: "first-frame", videoAspect: "16:9", videoQuality: "standard", videoSeconds: 6, promptSlots: 1, inputSlots: 1, videoInputSlotsInitialized: true, width: 390, height: nodeHeight("video-generator", 1, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
@@ -615,7 +659,7 @@ function normalizeProject(project) {
       if (node.type === "image") return { ...node, x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: node.width || 270, height: node.height || nodeHeight("image"), disabled: Boolean(node.disabled) };
   if (node.type === "video") return { ...node, mediaType: "video", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || 322), outputType: node.outputType || "mp4", status: "idle" };
   if (node.type === "loading") return { ...node, mediaType: node.mediaType === "video" ? "video" : "image", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || nodeHeight("loading")) };
-      if (node.type === "prompt") { const width = node.width || 320; const height = Math.max(Number(node.height) || 0, nodeHeight("prompt")); return { ...node, width, height, content: stripPromptCompositionMarkers(node.content), promptPresetId: String(node.promptPresetId || ""), compositionInstruction: String(node.compositionInstruction || ""), composition: normalizePromptComposition(node.composition), promptLayout: normalizePromptLayout(node.promptLayout, width, height), disabled: Boolean(node.disabled) }; }
+      if (node.type === "prompt") { const width = node.width || 320; const height = Math.max(Number(node.height) || 0, nodeHeight("prompt")); return { ...node, width, height, content: stripPromptQuickMarkers(stripPromptCompositionMarkers(node.content)), promptPresetId: String(node.promptPresetId || ""), promptQuickParams: normalizePromptQuickParams(node.promptQuickParams), promptQuickInstruction: String(node.promptQuickInstruction || ""), compositionInstruction: String(node.compositionInstruction || ""), composition: normalizePromptComposition(node.composition), promptLayout: normalizePromptLayout(node.promptLayout, width, height), disabled: Boolean(node.disabled) }; }
       if (node.type === "composition") return { ...node, name: node.name === "构图控制" ? "参数控制" : node.name || "参数控制", width: Math.max(300, Number(node.width) || 390), height: Math.max(320, Number(node.height) || nodeHeight("composition")), composition: normalizePromptComposition(node.composition) };
       if (node.type === "note") return { ...node, name: node.name || "便签", content: String(node.content || ""), width: Math.max(170, Number(node.width) || 260), height: Math.max(130, Number(node.height) || 190) };
       if (node.type === "frame") return { ...node, name: node.name || "工作流分组", width: node.width || 700, height: node.height || 480 };
@@ -2243,12 +2287,69 @@ function compositionControlsHtml(node) {
   const shotSize = compositionChoiceButtons(node, "shotSize", compositionShotSizeLabels, composition.shotSize);
   return '<section class="prompt-composition composition-controls" aria-label="参数控制"><div class="prompt-composition-heading"><strong>参数</strong><span>自动写入已连接提示词</span></div>' + tabs + '<div class="composition-control-layout"><div class="composition-setting composition-horizon-setting"><label><span>地平线</span><span class="composition-summary">' + (composition.horizonPending ? "待确认" : composition.horizonEnabled === false ? "提示词未启用" : horizonPositionLabel(composition.horizon) + ' · ' + horizonTiltLabel(composition.tilt)) + '</span></label><div class="horizon-canvas node-interactive" data-horizon-canvas="' + node.id + '" aria-label="单击取消地平线提示词，拖动后点击确认写入"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line class="horizon-guide" x1="5" x2="95" y1="50" y2="50"></line><line class="horizon-visual-line" data-horizon-visual-line x1="8" x2="92" y1="' + endpoints.left + '" y2="' + endpoints.right + '"></line><line class="horizon-hit-line" data-horizon-drag="middle" x1="8" x2="92" y1="' + endpoints.left + '" y2="' + endpoints.right + '"></line></svg><span class="horizon-handle" data-horizon-drag="left" style="top:' + endpoints.left + '%" aria-hidden="true"></span><span class="horizon-handle" data-horizon-drag="right" style="top:' + endpoints.right + '%" aria-hidden="true"></span></div><button class="horizon-confirm-button node-interactive" type="button" data-confirm-horizon="' + node.id + '"' + (composition.horizonPending ? "" : " disabled") + '>确认地平线</button></div><div class="composition-setting composition-perspective-setting"><label>透视</label><div class="composition-perspectives">' + perspectives + '</div></div></div><section class="composition-camera-controls" aria-label="摄影控制"><div class="composition-camera-heading"><strong>摄影</strong><span>自动写入已连接提示词</span></div><div class="composition-camera-grid"><div class="composition-camera-group"><label>景深</label><div>' + depth + '</div></div><div class="composition-camera-group"><label>焦段</label><div>' + focalLength + '</div></div><div class="composition-camera-group"><label>高度</label><div>' + cameraHeight + '</div></div></div><div class="composition-camera-direction"><label>机位方向</label><div>' + cameraDirection + '</div></div><div class="composition-camera-angle"><label>机位角度</label><div>' + cameraAngle + '</div></div><div class="composition-shot-size"><label>景别</label><div>' + shotSize + '</div></div></section></section>';
 }
+function promptReferenceNodes(node) {
+  if (!node || node.type !== "prompt") return [];
+  const seen = new Set(); const result = [];
+  const targets = state.edges.filter(edge => edge.type === "prompt" && edge.source === node.id).map(edge => findNode(edge.target)).filter(target => target && (target.type === "generator" || target.type === "answer"));
+  targets.forEach(target => {
+    state.edges.filter(edge => edge.type === "image" && edge.target === target.id && /^image(?:-|$)/.test(String(edge.targetPort || ""))).sort((a, b) => {
+      const aIndex = Number(String(a.targetPort || "").split("-")[1]); const bIndex = Number(String(b.targetPort || "").split("-")[1]);
+      return (Number.isFinite(aIndex) ? aIndex : 0) - (Number.isFinite(bIndex) ? bIndex : 0);
+    }).forEach(edge => {
+      const source = findNode(edge.source); if (!source || source.disabled || !imageSourceFromNode(source) || seen.has(source.id)) return;
+      seen.add(source.id); result.push(source);
+    });
+  });
+  return result;
+}
+function promptQuickSelect(node, field) {
+  const params = normalizePromptQuickParams(node.promptQuickParams); const config = promptQuickParamOptions[field];
+  const options = config.options.map(([value, label]) => `<option value="${escapeHtml(value)}"${params[field] === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
+  return `<label class="prompt-quick-field"><span>${escapeHtml(config.label)}</span><select class="node-select node-interactive" data-prompt-quick-field="${field}" data-prompt-quick-node="${node.id}" aria-label="${escapeHtml(config.label)}">${options}</select></label>`;
+}
+function promptQuickSeconds(node) {
+  const params = normalizePromptQuickParams(node.promptQuickParams); const options = [`<option value="">未指定</option>`].concat(Array.from({ length: 16 }, (_, index) => `<option value="${index}"${params.secondsStart === String(index) ? " selected" : ""}>${index}秒</option>`)).join(""); const endOptions = [`<option value="">未指定</option>`].concat(Array.from({ length: 16 }, (_, index) => `<option value="${index}"${params.secondsEnd === String(index) ? " selected" : ""}>${index}秒</option>`)).join("");
+  return `<div class="prompt-quick-field prompt-quick-seconds"><span>秒数</span><div><select class="node-select node-interactive" data-prompt-quick-field="secondsStart" data-prompt-quick-node="${node.id}" aria-label="开始秒数">${options}</select><b>-</b><select class="node-select node-interactive" data-prompt-quick-field="secondsEnd" data-prompt-quick-node="${node.id}" aria-label="结束秒数">${endOptions}</select></div></div>`;
+}
+function insertPromptReferenceToken(nodeId, index) {
+  const node = findNode(nodeId); if (!node || node.type !== "prompt") return;
+  const textarea = nodeLayer.querySelector(`[data-prompt-content="${CSS.escape(nodeId)}"]`); const value = String(node.content || ""); const selection = promptQuickRememberedSelection(nodeId); const start = Math.max(0, Math.min(value.length, Number(selection.start) || 0)); const end = Math.max(start, Math.min(value.length, Number(selection.end) || start)); const token = `图${Number(index) + 1}；\n`; node.content = `${value.slice(0, start)}${token}${value.slice(end)}`;
+  if (textarea) { textarea.value = node.content; const caret = start + token.length; textarea.focus({ preventScroll: true }); textarea.setSelectionRange(caret, caret); }
+  node.promptPresetId = ""; scheduleSave();
+}
+function promptQuickCurrentSelection(nodeId) {
+  const textarea = nodeLayer.querySelector(`[data-prompt-content="${CSS.escape(nodeId)}"]`); if (!textarea || document.activeElement !== textarea) return { start: String(textarea?.value || "").length, end: String(textarea?.value || "").length };
+  return { start: Number(textarea.selectionStart) || 0, end: Number(textarea.selectionEnd) || 0 };
+}
+function rememberPromptQuickSelection(nodeId) {
+  promptQuickSelection.set(nodeId, promptQuickCurrentSelection(nodeId));
+}
+function promptQuickRememberedSelection(nodeId) {
+  return promptQuickSelection.get(nodeId) || promptQuickCurrentSelection(nodeId);
+}
+function insertPromptQuickText(node, text, range = null) {
+  if (!node || node.type !== "prompt" || !String(text || "")) return;
+  const textarea = nodeLayer.querySelector(`[data-prompt-content="${CSS.escape(node.id)}"]`); const value = String(node.content || ""); const selection = range || promptQuickRememberedSelection(node.id); const start = Math.max(0, Math.min(value.length, Number(selection.start) || 0)); const end = Math.max(start, Math.min(value.length, Number(selection.end) || start)); node.content = `${value.slice(0, start)}${text}${value.slice(end)}`;
+  if (textarea) { textarea.value = node.content; const caret = start + String(text).length; textarea.focus({ preventScroll: true }); textarea.setSelectionRange(caret, caret); }
+  node.promptPresetId = ""; promptQuickSelection.delete(node.id);
+}
+function promptQuickLabel(field, value) {
+  return promptQuickParamOptions[field]?.options.find(([id]) => id === value)?.[1] || "";
+}
+function disconnectPromptReference(nodeId, sourceId) {
+  const beforeState = snapshot(); const promptTargets = new Set(state.edges.filter(edge => edge.type === "prompt" && edge.source === nodeId).map(edge => edge.target)); const before = state.edges.length;
+  state.edges = state.edges.filter(edge => !(edge.type === "image" && edge.source === sourceId && promptTargets.has(edge.target)));
+  if (state.edges.length === before) return;
+  undoStack.push(beforeState); if (undoStack.length > 18) undoStack.shift(); redoStack = []; renderCanvas(); renderInspector(); updateHistoryButtons(); scheduleSave(); toast("已取消该参考图链接");
+}
 function renderPromptNodeHtml(node, selected, style) {
   const disabled = Boolean(node.disabled); const toggleLabel = disabled ? "启用提示词节点" : "禁用提示词节点";
   const toggle = '<button class="icon-button prompt-toggle node-interactive' + (disabled ? ' is-disabled' : '') + '" type="button" data-toggle-prompt="' + node.id + '" aria-label="' + toggleLabel + '" title="' + toggleLabel + '">' + icon(disabled ? "power" : "ban") + '</button>';
   const presetOptions = '<option value="">选择提示词预设</option>' + promptPresets.map(preset => '<option value="' + escapeHtml(preset.id) + '"' + (node.promptPresetId === preset.id ? ' selected' : '') + '>' + escapeHtml(preset.name) + '</option>').join("");
   const presetActions = '<div class="prompt-preset-actions"><select class="node-select node-interactive prompt-preset-select" data-prompt-preset="' + node.id + '" aria-label="选择提示词预设">' + presetOptions + '</select><button class="button button-quiet node-interactive" type="button" data-save-prompt-preset="' + node.id + '">保存</button><button class="icon-button node-interactive" type="button" data-rename-prompt-preset="' + node.id + '" aria-label="修改预设名称" data-tooltip="修改预设名称"' + (node.promptPresetId ? '' : ' disabled') + '>' + icon("pencil") + '</button><button class="button button-quiet node-interactive danger-action" type="button" data-delete-prompt-preset="' + node.id + '"' + (node.promptPresetId ? '' : ' disabled') + '>删除</button></div>';
-  return '<article class="canvas-node prompt-node' + (disabled ? ' is-disabled' : '') + selected + '" data-node-id="' + node.id + '" style="' + style + '"><div class="node-card">' + nodeHeaderHtml(node, "text-cursor-input", toggle, false) + '<div class="node-body">' + presetActions + '<textarea class="node-textarea node-interactive" data-prompt-content="' + node.id + '" placeholder="写下主体、光线、材质和画面文字…">' + escapeHtml(node.content || "") + '</textarea></div></div>' + resizeHandleHtml(node) + portHtml(node, "composition", "composition", "input", "参数控制", 104) + portHtml(node, "prompt", "prompt", "output", "Prompt", 72) + '</article>';
+  const references = promptReferenceNodes(node); const referenceStrip = references.length ? `<div class="prompt-reference-strip" aria-label="已连接参考图">${references.map((reference, index) => `<figure class="prompt-reference-thumb node-interactive" data-prompt-reference-node="${node.id}" data-prompt-reference-source="${reference.id}" data-prompt-reference-index="${index}" title="单击插入图${index + 1}，双击取消链接"><img src="${escapeHtml(nodeDisplaySource(reference))}" alt="参考图 ${index + 1}" loading="lazy" decoding="async" draggable="false"><figcaption>${index + 1}</figcaption></figure>`).join("")}</div>` : '<div class="prompt-reference-strip is-empty" aria-hidden="true"></div>';
+  const quickToolbar = `<aside class="prompt-quick-toolbar" aria-label="提示词快捷参数"><div class="prompt-quick-heading">快捷镜头</div>${promptQuickSeconds(node)}${Object.keys(promptQuickParamOptions).map(field => promptQuickSelect(node, field)).join("")}<div class="prompt-preset-toolbar">${presetActions}</div></aside>`;
+  return `<article class="canvas-node prompt-node${disabled ? " is-disabled" : ""}${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "text-cursor-input", toggle, false)}<div class="node-body"><div class="prompt-reference-strip-wrap">${referenceStrip}</div><div class="prompt-work-area"><div class="prompt-editor"><textarea class="node-textarea node-interactive" data-prompt-content="${node.id}" placeholder="写下主体、光线、材质和画面文字…">${escapeHtml(node.content || "")}</textarea></div>${quickToolbar}</div></div></div>${resizeHandleHtml(node)}${portHtml(node, "composition", "composition", "input", "参数控制", 104)}${portHtml(node, "prompt", "prompt", "output", "Prompt", 72)}</article>`;
 }
 function renderCompositionNodeHtml(node, selected, style) {
   return '<article class="canvas-node composition-node' + selected + '" data-node-id="' + node.id + '" style="' + style + '"><div class="node-card">' + nodeHeaderHtml(node, "sliders-horizontal") + '<div class="node-body composition-body">' + compositionControlsHtml(node) + '</div></div>' + resizeHandleHtml(node) + portHtml(node, "composition", "composition", "output", "构图", 72) + '</article>';
@@ -2437,7 +2538,28 @@ function bindNodeEvents() {
   $$('[data-rename-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void renamePromptPreset(button.dataset.renamePromptPreset); }));
   $$('[data-delete-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void deletePromptPreset(button.dataset.deletePromptPreset); }));
   $$('[data-prompt-preset]').forEach(select => select.addEventListener("change", event => { event.stopPropagation(); if (event.target.value) applyPromptPreset(select.dataset.promptPreset, event.target.value); }));
-  $$('[data-prompt-content]').forEach(textarea => textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; node.promptPresetId = ""; scheduleSave(); } }));
+  $$('[data-prompt-quick-field]').forEach(control => { control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptQuickNode)); control.addEventListener("change", event => {
+    event.stopPropagation(); const node = findNode(control.dataset.promptQuickNode); if (!node || node.type !== "prompt") return;
+    const field = control.dataset.promptQuickField; const before = snapshot(); const next = normalizePromptQuickParams({ ...node.promptQuickParams, [field]: event.target.value });
+    if (field === "secondsStart") { node.promptQuickParams = next; node.promptQuickPendingSelection = promptQuickRememberedSelection(node.id); undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); return; }
+    if (field === "secondsEnd") {
+      if (next.secondsStart !== "" && next.secondsEnd !== "" && Number(next.secondsEnd) <= Number(next.secondsStart)) { control.value = ""; node.promptQuickParams = normalizePromptQuickParams({ ...node.promptQuickParams, secondsEnd: "" }); return toast("结束秒数必须大于开始秒数", true); }
+      node.promptQuickParams = next; const range = node.promptQuickPendingSelection || promptQuickCurrentSelection(node.id); if (next.secondsStart !== "" && next.secondsEnd !== "") insertPromptQuickText(node, `${next.secondsStart}秒-${next.secondsEnd}秒`, range); node.promptQuickPendingSelection = null;
+    } else { node.promptQuickParams = next; if (next[field]) insertPromptQuickText(node, promptQuickLabel(field, next[field])); }
+    undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave();
+  }); });
+  $$('[data-prompt-reference-node]').forEach(thumb => {
+    thumb.addEventListener("pointerdown", () => rememberPromptQuickSelection(thumb.dataset.promptReferenceNode));
+    thumb.addEventListener("click", event => { event.stopPropagation(); if (promptReferenceClickTimer) clearTimeout(promptReferenceClickTimer); promptReferenceClickTimer = setTimeout(() => { promptReferenceClickTimer = null; insertPromptReferenceToken(thumb.dataset.promptReferenceNode, thumb.dataset.promptReferenceIndex); }, 190); });
+    thumb.addEventListener("dblclick", event => { event.preventDefault(); event.stopPropagation(); if (promptReferenceClickTimer) clearTimeout(promptReferenceClickTimer); promptReferenceClickTimer = null; disconnectPromptReference(thumb.dataset.promptReferenceNode, thumb.dataset.promptReferenceSource); });
+  });
+  $$('[data-prompt-content]').forEach(textarea => {
+    textarea.addEventListener("select", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
+    textarea.addEventListener("keyup", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
+    textarea.addEventListener("mouseup", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
+    textarea.addEventListener("focus", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
+    textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; node.promptPresetId = ""; rememberPromptQuickSelection(node.id); scheduleSave(); } });
+  });
 $$('[data-note-content]').forEach(textarea => textarea.addEventListener("input", event => { const note = findNode(textarea.dataset.noteContent); if (note?.type === "note") { note.content = event.target.value; scheduleSave(); } }));
   $$('[data-composition-perspective]').forEach(button => button.addEventListener("click", event => {
     event.stopPropagation(); const node = findNode(button.dataset.compositionNode); if (!node || node.type !== "composition") return;
