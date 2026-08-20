@@ -2342,6 +2342,16 @@ function disconnectPromptReference(nodeId, sourceId) {
   if (state.edges.length === before) return;
   undoStack.push(beforeState); if (undoStack.length > 18) undoStack.shift(); redoStack = []; renderCanvas(); renderInspector(); updateHistoryButtons(); scheduleSave(); toast("已取消该参考图链接");
 }
+function applyPromptQuickField(control, value) {
+  const node = findNode(control.dataset.promptQuickNode); if (!node || node.type !== "prompt") return false;
+  const field = control.dataset.promptQuickField; const before = snapshot(); const next = normalizePromptQuickParams({ ...node.promptQuickParams, [field]: value });
+  if (field === "secondsStart") { node.promptQuickParams = next; node.promptQuickPendingSelection = promptQuickRememberedSelection(node.id); }
+  else if (field === "secondsEnd") {
+    if (next.secondsStart !== "" && next.secondsEnd !== "" && Number(next.secondsEnd) <= Number(next.secondsStart)) { control.value = ""; node.promptQuickParams = normalizePromptQuickParams({ ...node.promptQuickParams, secondsEnd: "" }); toast("结束秒数必须大于开始秒数", true); return false; }
+    node.promptQuickParams = next; const range = node.promptQuickPendingSelection || promptQuickCurrentSelection(node.id); if (next.secondsStart !== "" && next.secondsEnd !== "") insertPromptQuickText(node, `${next.secondsStart}秒-${next.secondsEnd}秒，`, range); node.promptQuickPendingSelection = null;
+  } else { node.promptQuickParams = next; if (next[field]) insertPromptQuickText(node, `${promptQuickParamOptions[field].label}；${promptQuickLabel(field, next[field])}，`); }
+  undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); return true;
+}
 function renderPromptNodeHtml(node, selected, style) {
   const disabled = Boolean(node.disabled); const toggleLabel = disabled ? "启用提示词节点" : "禁用提示词节点";
   const toggle = '<button class="icon-button prompt-toggle node-interactive' + (disabled ? ' is-disabled' : '') + '" type="button" data-toggle-prompt="' + node.id + '" aria-label="' + toggleLabel + '" title="' + toggleLabel + '">' + icon(disabled ? "power" : "ban") + '</button>';
@@ -2538,16 +2548,11 @@ function bindNodeEvents() {
   $$('[data-rename-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void renamePromptPreset(button.dataset.renamePromptPreset); }));
   $$('[data-delete-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void deletePromptPreset(button.dataset.deletePromptPreset); }));
   $$('[data-prompt-preset]').forEach(select => select.addEventListener("change", event => { event.stopPropagation(); if (event.target.value) applyPromptPreset(select.dataset.promptPreset, event.target.value); }));
-  $$('[data-prompt-quick-field]').forEach(control => { control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptQuickNode)); control.addEventListener("change", event => {
-    event.stopPropagation(); const node = findNode(control.dataset.promptQuickNode); if (!node || node.type !== "prompt") return;
-    const field = control.dataset.promptQuickField; const before = snapshot(); const next = normalizePromptQuickParams({ ...node.promptQuickParams, [field]: event.target.value });
-    if (field === "secondsStart") { node.promptQuickParams = next; node.promptQuickPendingSelection = promptQuickRememberedSelection(node.id); undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); return; }
-    if (field === "secondsEnd") {
-      if (next.secondsStart !== "" && next.secondsEnd !== "" && Number(next.secondsEnd) <= Number(next.secondsStart)) { control.value = ""; node.promptQuickParams = normalizePromptQuickParams({ ...node.promptQuickParams, secondsEnd: "" }); return toast("结束秒数必须大于开始秒数", true); }
-      node.promptQuickParams = next; const range = node.promptQuickPendingSelection || promptQuickCurrentSelection(node.id); if (next.secondsStart !== "" && next.secondsEnd !== "") insertPromptQuickText(node, `${next.secondsStart}秒-${next.secondsEnd}秒，`, range); node.promptQuickPendingSelection = null;
-    } else { node.promptQuickParams = next; if (next[field]) insertPromptQuickText(node, `${promptQuickParamOptions[field].label}；${promptQuickLabel(field, next[field])}，`); }
-    undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave();
-  }); });
+  $$('[data-prompt-quick-field]').forEach(control => {
+    control.addEventListener("pointerdown", () => { rememberPromptQuickSelection(control.dataset.promptQuickNode); control.dataset.promptQuickPointerValue = control.value; control.dataset.promptQuickChanged = ""; });
+    control.addEventListener("change", event => { event.stopPropagation(); if (applyPromptQuickField(control, event.target.value)) control.dataset.promptQuickChanged = "1"; });
+    control.addEventListener("click", event => { event.stopPropagation(); setTimeout(() => { const sameValue = control.value && control.value === control.dataset.promptQuickPointerValue; if (sameValue && control.dataset.promptQuickChanged !== "1") applyPromptQuickField(control, control.value); control.dataset.promptQuickChanged = ""; }, 0); });
+  });
   $$('[data-prompt-reference-node]').forEach(thumb => {
     thumb.addEventListener("pointerdown", () => rememberPromptQuickSelection(thumb.dataset.promptReferenceNode));
     thumb.addEventListener("click", event => { event.stopPropagation(); if (promptReferenceClickTimer) clearTimeout(promptReferenceClickTimer); promptReferenceClickTimer = setTimeout(() => { promptReferenceClickTimer = null; insertPromptReferenceToken(thumb.dataset.promptReferenceNode, thumb.dataset.promptReferenceIndex); }, 190); });
