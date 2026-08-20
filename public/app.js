@@ -2549,8 +2549,9 @@ function bindNodeEvents() {
   $$('[data-delete-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void deletePromptPreset(button.dataset.deletePromptPreset); }));
   $$('[data-prompt-preset]').forEach(select => select.addEventListener("change", event => { event.stopPropagation(); if (event.target.value) applyPromptPreset(select.dataset.promptPreset, event.target.value); }));
   $$('[data-prompt-quick-field]').forEach(control => {
-    control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptQuickNode));
-    control.addEventListener("change", event => { event.stopPropagation(); applyPromptQuickField(control, event.target.value); });
+    control.addEventListener("pointerdown", () => { rememberPromptQuickSelection(control.dataset.promptQuickNode); control.dataset.promptQuickPointerValue = control.value; control.dataset.promptQuickOpenedAt = String(performance.now()); control.dataset.promptQuickChanged = ""; });
+    control.addEventListener("change", event => { event.stopPropagation(); if (applyPromptQuickField(control, event.target.value)) control.dataset.promptQuickChanged = "1"; });
+    control.addEventListener("click", event => { event.stopPropagation(); const openedAt = Number(control.dataset.promptQuickOpenedAt) || performance.now(); setTimeout(() => { const elapsed = performance.now() - openedAt; const sameValue = control.value && control.value === control.dataset.promptQuickPointerValue; if (elapsed >= 120 && sameValue && control.dataset.promptQuickChanged !== "1") applyPromptQuickField(control, control.value); control.dataset.promptQuickChanged = ""; }, 0); });
   });
   $$('[data-prompt-reference-node]').forEach(thumb => {
     thumb.addEventListener("pointerdown", () => rememberPromptQuickSelection(thumb.dataset.promptReferenceNode));
