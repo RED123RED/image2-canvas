@@ -464,12 +464,12 @@ function createGeneratorNode(x, y) {
   return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 const promptQuickParamOptions = Object.freeze({
-  shotSize: { label: "景别", options: [["", "不指定"], ["extremeWide", "大远景"], ["wide", "全景"], ["medium", "中景"], ["close", "近景"], ["closeUp", "特写"]] },
-  cameraDirection: { label: "机位", options: [["", "不指定"], ["front", "正视"], ["left", "左侧"], ["right", "右侧"], ["top", "俯视"], ["bottom", "仰视"]] },
-  cameraAngle: { label: "角度", options: [["", "不指定"], ["angle0", "0°"], ["angle20", "20°"], ["angle45", "45°"], ["angle60", "60°"], ["angle90", "90°"]] },
-  depth: { label: "景深", options: [["", "不指定"], ["shallow", "浅景深"], ["balanced", "均衡景深"], ["deep", "深景深"]] },
-  perspective: { label: "透视", options: [["", "不指定"], ["left-near", "左近右远"], ["right-near", "左远右近"], ["parallel", "平行视角"]] },
-  motion: { label: "运镜", options: [["", "不指定"], ["static", "固定镜头"], ["push", "推进"], ["pull", "拉远"], ["left", "左移"], ["right", "右移"], ["up", "上摇"], ["down", "下摇"], ["follow", "跟拍"], ["orbit", "环绕"]] }
+  shotSize: { label: "景别", options: [["", "不指定"], ["extremeWide", "大远景，突出广阔环境与人物尺度"], ["wide", "全景，完整呈现人物动作与环境"], ["medium", "中景，人物腰部以上"], ["close", "近景，强调人物表情与互动"], ["closeUp", "特写，聚焦面部或关键细节"]] },
+  cameraDirection: { label: "机位", options: [["", "不指定"], ["front", "正视，镜头位于主体正前方"], ["left", "左侧，镜头位于主体左侧"], ["right", "右侧，镜头位于主体右侧"], ["top", "俯视，镜头位于主体上方俯拍"], ["bottom", "仰视，镜头位于主体下方仰拍"]] },
+  cameraAngle: { label: "角度", options: [["", "不指定"], ["angle0", "0°，正轴视角"], ["angle20", "20°，轻微侧倾"], ["angle45", "45°，斜侧构图"], ["angle60", "60°，明显侧向"], ["angle90", "90°，正侧面"]] },
+  depth: { label: "景深", options: [["", "不指定"], ["shallow", "浅景深，主体清晰背景虚化"], ["balanced", "均衡景深，主体与环境平衡"], ["deep", "深景深，前后景清晰"]] },
+  perspective: { label: "透视", options: [["", "不指定"], ["left-near", "左近右远，左侧更近右侧更远"], ["right-near", "左远右近，左侧更远右侧更近"], ["parallel", "平行视角，画面空间平行"]] },
+  motion: { label: "运镜", options: [["", "不指定"], ["static", "固定镜头，画面稳定"], ["push", "推进，镜头向主体靠近"], ["pull", "拉远，镜头远离主体"], ["left", "左移，镜头向左平移"], ["right", "右移，镜头向右平移"], ["up", "上摇，镜头向上转动"], ["down", "下摇，镜头向下转动"], ["follow", "跟拍，镜头跟随主体"], ["orbit", "环绕，镜头围绕主体移动"]] }
 });
 function normalizePromptQuickParams(value) {
   const source = value && typeof value === "object" ? value : {};
@@ -482,13 +482,13 @@ function promptQuickParamInstruction(value) {
   const data = normalizePromptQuickParams(value);
   const label = (field, id) => promptQuickParamOptions[field].options.find(([value]) => value === id)?.[1] || "";
   const lines = [];
-  if (data.secondsStart !== "" && data.secondsEnd !== "" && Number(data.secondsEnd) > Number(data.secondsStart)) lines.push(`时长：${data.secondsStart}-${data.secondsEnd}秒。`);
-  if (data.shotSize) lines.push(`景别：${label("shotSize", data.shotSize)}。`);
-  if (data.cameraDirection) lines.push(`机位：${label("cameraDirection", data.cameraDirection)}。`);
-  if (data.cameraAngle) lines.push(`角度：${label("cameraAngle", data.cameraAngle)}。`);
-  if (data.depth) lines.push(`景深：${label("depth", data.depth)}。`);
-  if (data.perspective) lines.push(`透视：${label("perspective", data.perspective)}。`);
-  if (data.motion) lines.push(`运镜：${label("motion", data.motion)}。`);
+  if (data.secondsStart !== "" && data.secondsEnd !== "" && Number(data.secondsEnd) > Number(data.secondsStart)) lines.push(`时长；${data.secondsStart}秒-${data.secondsEnd}秒，`);
+  if (data.shotSize) lines.push(`景别；${label("shotSize", data.shotSize)}，`);
+  if (data.cameraDirection) lines.push(`机位；${label("cameraDirection", data.cameraDirection)}，`);
+  if (data.cameraAngle) lines.push(`角度；${label("cameraAngle", data.cameraAngle)}，`);
+  if (data.depth) lines.push(`景深；${label("depth", data.depth)}，`);
+  if (data.perspective) lines.push(`透视；${label("perspective", data.perspective)}，`);
+  if (data.motion) lines.push(`运镜；${label("motion", data.motion)}，`);
   return lines.join("\n");
 }
 function upsertPromptQuickInstruction(content, quickParams, previousInstruction = "") {
@@ -2544,8 +2544,8 @@ function bindNodeEvents() {
     if (field === "secondsStart") { node.promptQuickParams = next; node.promptQuickPendingSelection = promptQuickRememberedSelection(node.id); undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); return; }
     if (field === "secondsEnd") {
       if (next.secondsStart !== "" && next.secondsEnd !== "" && Number(next.secondsEnd) <= Number(next.secondsStart)) { control.value = ""; node.promptQuickParams = normalizePromptQuickParams({ ...node.promptQuickParams, secondsEnd: "" }); return toast("结束秒数必须大于开始秒数", true); }
-      node.promptQuickParams = next; const range = node.promptQuickPendingSelection || promptQuickCurrentSelection(node.id); if (next.secondsStart !== "" && next.secondsEnd !== "") insertPromptQuickText(node, `${next.secondsStart}秒-${next.secondsEnd}秒`, range); node.promptQuickPendingSelection = null;
-    } else { node.promptQuickParams = next; if (next[field]) insertPromptQuickText(node, promptQuickLabel(field, next[field])); }
+      node.promptQuickParams = next; const range = node.promptQuickPendingSelection || promptQuickCurrentSelection(node.id); if (next.secondsStart !== "" && next.secondsEnd !== "") insertPromptQuickText(node, `${next.secondsStart}秒-${next.secondsEnd}秒，`, range); node.promptQuickPendingSelection = null;
+    } else { node.promptQuickParams = next; if (next[field]) insertPromptQuickText(node, `${promptQuickParamOptions[field].label}；${promptQuickLabel(field, next[field])}，`); }
     undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave();
   }); });
   $$('[data-prompt-reference-node]').forEach(thumb => {
