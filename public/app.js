@@ -464,7 +464,7 @@ function createGeneratorNode(x, y) {
   return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", geminiModel: geminiImageModels[0].id, moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 const promptQuickParamOptions = Object.freeze({
-  shotSize: { label: "景别", options: [["", "不指定"], ["extremeWide", "大远景，突出广阔环境与人物尺度"], ["wide", "全景，完整呈现人物动作与环境"], ["medium", "中景，人物腰部以上"], ["close", "近景，强调人物表情与互动"], ["closeUp", "特写，聚焦面部或关键细节"]] },
+  shotSize: { label: "景别", options: [["", "不指定"], ["extremeWide", "大远景，突出广阔环境与人物尺度"], ["wide", "全景，完整呈现人物动作与环境"], ["medium", "中景，人物腰部以上"], ["mediumClose", "中近景，人物胸部以上"], ["close", "近景，强调人物表情与互动"], ["closeUp", "特写，聚焦面部或关键细节"]] },
   cameraDirection: { label: "机位", options: [["", "不指定"], ["front", "正视，镜头位于主体正前方"], ["left", "左侧，镜头位于主体左侧"], ["right", "右侧，镜头位于主体右侧"], ["top", "俯视，镜头位于主体上方俯拍"], ["bottom", "仰视，镜头位于主体下方仰拍"]] },
   cameraAngle: { label: "角度", options: [["", "不指定"], ["angle0", "0°，正轴视角"], ["angle20", "20°，轻微侧倾"], ["angle45", "45°，斜侧构图"], ["angle60", "60°，明显侧向"], ["angle90", "90°，正侧面"]] },
   depth: { label: "景深", options: [["", "不指定"], ["shallow", "浅景深，主体清晰背景虚化"], ["balanced", "均衡景深，主体与环境平衡"], ["deep", "深景深，前后景清晰"]] },
@@ -2549,9 +2549,8 @@ function bindNodeEvents() {
   $$('[data-delete-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void deletePromptPreset(button.dataset.deletePromptPreset); }));
   $$('[data-prompt-preset]').forEach(select => select.addEventListener("change", event => { event.stopPropagation(); if (event.target.value) applyPromptPreset(select.dataset.promptPreset, event.target.value); }));
   $$('[data-prompt-quick-field]').forEach(control => {
-    control.addEventListener("pointerdown", () => { rememberPromptQuickSelection(control.dataset.promptQuickNode); control.dataset.promptQuickPointerValue = control.value; control.dataset.promptQuickChanged = ""; });
-    control.addEventListener("change", event => { event.stopPropagation(); if (applyPromptQuickField(control, event.target.value)) control.dataset.promptQuickChanged = "1"; });
-    control.addEventListener("click", event => { event.stopPropagation(); setTimeout(() => { const sameValue = control.value && control.value === control.dataset.promptQuickPointerValue; if (sameValue && control.dataset.promptQuickChanged !== "1") applyPromptQuickField(control, control.value); control.dataset.promptQuickChanged = ""; }, 0); });
+    control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptQuickNode));
+    control.addEventListener("change", event => { event.stopPropagation(); applyPromptQuickField(control, event.target.value); });
   });
   $$('[data-prompt-reference-node]').forEach(thumb => {
     thumb.addEventListener("pointerdown", () => rememberPromptQuickSelection(thumb.dataset.promptReferenceNode));
