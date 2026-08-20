@@ -2352,6 +2352,13 @@ function applyPromptQuickField(control, value) {
   } else { node.promptQuickParams = next; if (next[field]) insertPromptQuickText(node, `${promptQuickParamOptions[field].label}；${promptQuickLabel(field, next[field])}，`); }
   undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); return true;
 }
+function resetRemovedPromptQuickSelections(node) {
+  if (!node || node.type !== "prompt") return;
+  const content = String(node.content || ""); const params = normalizePromptQuickParams(node.promptQuickParams);
+  const reset = field => { const control = nodeLayer.querySelector(`[data-prompt-quick-node="${CSS.escape(node.id)}"][data-prompt-quick-field="${field}"]`); if (control) control.value = ""; };
+  if (params.secondsStart !== "" && params.secondsEnd !== "" && !content.includes(`${params.secondsStart}秒-${params.secondsEnd}秒，`)) { reset("secondsStart"); reset("secondsEnd"); }
+  Object.keys(promptQuickParamOptions).forEach(field => { if (params[field] && !content.includes(`${promptQuickParamOptions[field].label}；${promptQuickLabel(field, params[field])}，`)) reset(field); });
+}
 function renderPromptNodeHtml(node, selected, style) {
   const disabled = Boolean(node.disabled); const toggleLabel = disabled ? "启用提示词节点" : "禁用提示词节点";
   const toggle = '<button class="icon-button prompt-toggle node-interactive' + (disabled ? ' is-disabled' : '') + '" type="button" data-toggle-prompt="' + node.id + '" aria-label="' + toggleLabel + '" title="' + toggleLabel + '">' + icon(disabled ? "power" : "ban") + '</button>';
@@ -2549,9 +2556,8 @@ function bindNodeEvents() {
   $$('[data-delete-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void deletePromptPreset(button.dataset.deletePromptPreset); }));
   $$('[data-prompt-preset]').forEach(select => select.addEventListener("change", event => { event.stopPropagation(); if (event.target.value) applyPromptPreset(select.dataset.promptPreset, event.target.value); }));
   $$('[data-prompt-quick-field]').forEach(control => {
-    control.addEventListener("pointerdown", () => { rememberPromptQuickSelection(control.dataset.promptQuickNode); control.dataset.promptQuickPointerValue = control.value; control.dataset.promptQuickOpenedAt = String(performance.now()); control.dataset.promptQuickChanged = ""; });
-    control.addEventListener("change", event => { event.stopPropagation(); if (applyPromptQuickField(control, event.target.value)) control.dataset.promptQuickChanged = "1"; });
-    control.addEventListener("click", event => { event.stopPropagation(); const openedAt = Number(control.dataset.promptQuickOpenedAt) || performance.now(); setTimeout(() => { const elapsed = performance.now() - openedAt; const sameValue = control.value && control.value === control.dataset.promptQuickPointerValue; if (elapsed >= 120 && sameValue && control.dataset.promptQuickChanged !== "1") applyPromptQuickField(control, control.value); control.dataset.promptQuickChanged = ""; }, 0); });
+    control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptQuickNode));
+    control.addEventListener("change", event => { event.stopPropagation(); applyPromptQuickField(control, event.target.value); });
   });
   $$('[data-prompt-reference-node]').forEach(thumb => {
     thumb.addEventListener("pointerdown", () => rememberPromptQuickSelection(thumb.dataset.promptReferenceNode));
@@ -2563,7 +2569,7 @@ function bindNodeEvents() {
     textarea.addEventListener("keyup", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
     textarea.addEventListener("mouseup", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
     textarea.addEventListener("focus", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
-    textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; node.promptPresetId = ""; rememberPromptQuickSelection(node.id); scheduleSave(); } });
+    textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; node.promptPresetId = ""; rememberPromptQuickSelection(node.id); resetRemovedPromptQuickSelections(node); scheduleSave(); } });
   });
 $$('[data-note-content]').forEach(textarea => textarea.addEventListener("input", event => { const note = findNode(textarea.dataset.noteContent); if (note?.type === "note") { note.content = event.target.value; scheduleSave(); } }));
   $$('[data-composition-perspective]').forEach(button => button.addEventListener("click", event => {
