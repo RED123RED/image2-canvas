@@ -2304,12 +2304,16 @@ function promptReferenceNodes(node) {
 }
 function promptQuickSelect(node, field) {
   const params = normalizePromptQuickParams(node.promptQuickParams); const config = promptQuickParamOptions[field];
-  const options = config.options.map(([value, label]) => `<option value="${escapeHtml(value)}"${params[field] === value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
-  return `<label class="prompt-quick-field"><span>${escapeHtml(config.label)}</span><select class="node-select node-interactive" data-prompt-quick-field="${field}" data-prompt-quick-node="${node.id}" aria-label="${escapeHtml(config.label)}">${options}</select></label>`;
+  return promptQuickDropdown(node, field, params[field], config.options, config.label);
+}
+function promptQuickDropdown(node, field, current, options, label) {
+  const currentLabel = options.find(([value]) => value === current)?.[1] || options[0]?.[1] || "未指定";
+  const menu = options.map(([value, optionLabel]) => `<button type="button" class="prompt-quick-option node-interactive" data-prompt-quick-option data-prompt-quick-field="${escapeHtml(field)}" data-prompt-quick-node="${node.id}" data-prompt-quick-value="${escapeHtml(value)}">${escapeHtml(optionLabel)}</button>`).join("");
+  return `<div class="prompt-quick-field"><span>${escapeHtml(label)}</span><details class="prompt-quick-dropdown node-interactive" data-prompt-quick-node="${node.id}" data-prompt-quick-field="${escapeHtml(field)}"><summary class="prompt-quick-trigger" data-prompt-quick-trigger data-prompt-quick-node="${node.id}" data-prompt-quick-label data-prompt-quick-value="${escapeHtml(current)}">${escapeHtml(currentLabel)}</summary><div class="prompt-quick-menu">${menu}</div></details></div>`;
 }
 function promptQuickSeconds(node) {
-  const params = normalizePromptQuickParams(node.promptQuickParams); const options = [`<option value="">未指定</option>`].concat(Array.from({ length: 16 }, (_, index) => `<option value="${index}"${params.secondsStart === String(index) ? " selected" : ""}>${index}秒</option>`)).join(""); const endOptions = [`<option value="">未指定</option>`].concat(Array.from({ length: 16 }, (_, index) => `<option value="${index}"${params.secondsEnd === String(index) ? " selected" : ""}>${index}秒</option>`)).join("");
-  return `<div class="prompt-quick-field prompt-quick-seconds"><span>秒数</span><div><select class="node-select node-interactive" data-prompt-quick-field="secondsStart" data-prompt-quick-node="${node.id}" aria-label="开始秒数">${options}</select><b>-</b><select class="node-select node-interactive" data-prompt-quick-field="secondsEnd" data-prompt-quick-node="${node.id}" aria-label="结束秒数">${endOptions}</select></div></div>`;
+  const params = normalizePromptQuickParams(node.promptQuickParams); const options = [["", "未指定"], ...Array.from({ length: 16 }, (_, index) => [String(index), `${index}秒`])];
+  return `<div class="prompt-quick-field prompt-quick-seconds"><span>秒数</span><div>${promptQuickDropdown(node, "secondsStart", params.secondsStart, options, "开始") }<b>-</b>${promptQuickDropdown(node, "secondsEnd", params.secondsEnd, options, "结束")}</div></div>`;
 }
 function insertPromptReferenceToken(nodeId, index) {
   const node = findNode(nodeId); if (!node || node.type !== "prompt") return;
@@ -2351,13 +2355,6 @@ function applyPromptQuickField(control, value) {
     node.promptQuickParams = next; const range = node.promptQuickPendingSelection || promptQuickCurrentSelection(node.id); if (next.secondsStart !== "" && next.secondsEnd !== "") insertPromptQuickText(node, `${next.secondsStart}秒-${next.secondsEnd}秒，`, range); node.promptQuickPendingSelection = null;
   } else { node.promptQuickParams = next; if (next[field]) insertPromptQuickText(node, `${promptQuickParamOptions[field].label}；${promptQuickLabel(field, next[field])}，`); }
   undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); return true;
-}
-function resetRemovedPromptQuickSelections(node) {
-  if (!node || node.type !== "prompt") return;
-  const content = String(node.content || ""); const params = normalizePromptQuickParams(node.promptQuickParams);
-  const reset = field => { const control = nodeLayer.querySelector(`[data-prompt-quick-node="${CSS.escape(node.id)}"][data-prompt-quick-field="${field}"]`); if (control) control.value = ""; };
-  if (params.secondsStart !== "" && params.secondsEnd !== "" && !content.includes(`${params.secondsStart}秒-${params.secondsEnd}秒，`)) { reset("secondsStart"); reset("secondsEnd"); }
-  Object.keys(promptQuickParamOptions).forEach(field => { if (params[field] && !content.includes(`${promptQuickParamOptions[field].label}；${promptQuickLabel(field, params[field])}，`)) reset(field); });
 }
 function renderPromptNodeHtml(node, selected, style) {
   const disabled = Boolean(node.disabled); const toggleLabel = disabled ? "启用提示词节点" : "禁用提示词节点";
@@ -2555,10 +2552,16 @@ function bindNodeEvents() {
   $$('[data-rename-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void renamePromptPreset(button.dataset.renamePromptPreset); }));
   $$('[data-delete-prompt-preset]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void deletePromptPreset(button.dataset.deletePromptPreset); }));
   $$('[data-prompt-preset]').forEach(select => select.addEventListener("change", event => { event.stopPropagation(); if (event.target.value) applyPromptPreset(select.dataset.promptPreset, event.target.value); }));
-  $$('[data-prompt-quick-field]').forEach(control => {
-    control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptQuickNode));
-    control.addEventListener("change", event => { event.stopPropagation(); applyPromptQuickField(control, event.target.value); });
-  });
+  $$('[data-prompt-quick-trigger]').forEach(trigger => trigger.addEventListener("pointerdown", event => {
+    event.stopPropagation(); rememberPromptQuickSelection(trigger.dataset.promptQuickNode);
+  }));
+  $$('[data-prompt-quick-option]').forEach(option => option.addEventListener("click", event => {
+    event.preventDefault(); event.stopPropagation(); const dropdown = option.closest("details"); const control = option; const node = findNode(control.dataset.promptQuickNode); if (!node) return;
+    if (applyPromptQuickField(control, control.dataset.promptQuickValue)) {
+      const trigger = dropdown?.querySelector("[data-prompt-quick-label]"); const label = promptQuickParamOptions[control.dataset.promptQuickField]?.options.find(([id]) => id === control.dataset.promptQuickValue)?.[1] || (control.dataset.promptQuickField === "secondsStart" || control.dataset.promptQuickField === "secondsEnd" ? (control.dataset.promptQuickValue === "" ? "未指定" : `${control.dataset.promptQuickValue}秒`) : "未指定");
+      if (trigger) { trigger.textContent = label; trigger.dataset.promptQuickValue = control.dataset.promptQuickValue; } if (dropdown) dropdown.open = false;
+    }
+  }));
   $$('[data-prompt-reference-node]').forEach(thumb => {
     thumb.addEventListener("pointerdown", () => rememberPromptQuickSelection(thumb.dataset.promptReferenceNode));
     thumb.addEventListener("click", event => { event.stopPropagation(); if (promptReferenceClickTimer) clearTimeout(promptReferenceClickTimer); promptReferenceClickTimer = setTimeout(() => { promptReferenceClickTimer = null; insertPromptReferenceToken(thumb.dataset.promptReferenceNode, thumb.dataset.promptReferenceIndex); }, 190); });
@@ -2569,7 +2572,7 @@ function bindNodeEvents() {
     textarea.addEventListener("keyup", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
     textarea.addEventListener("mouseup", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
     textarea.addEventListener("focus", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
-    textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; node.promptPresetId = ""; rememberPromptQuickSelection(node.id); resetRemovedPromptQuickSelections(node); scheduleSave(); } });
+    textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; node.promptPresetId = ""; rememberPromptQuickSelection(node.id); scheduleSave(); } });
   });
 $$('[data-note-content]').forEach(textarea => textarea.addEventListener("input", event => { const note = findNode(textarea.dataset.noteContent); if (note?.type === "note") { note.content = event.target.value; scheduleSave(); } }));
   $$('[data-composition-perspective]').forEach(button => button.addEventListener("click", event => {

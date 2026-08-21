@@ -1177,8 +1177,15 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .prompt-quick-heading { margin: 0 2px 5px; color: var(--muted); font-size: 9px; font-weight: 600; }
 .prompt-quick-field { display: block; margin: 0 0 5px; }
 .prompt-quick-field > span { display: block; margin: 0 2px 2px; color: var(--muted); font-size: 8px; }
-.prompt-quick-field .node-select { height: 26px; padding: 0 5px; font-size: 9px; }
-.prompt-quick-seconds > div { display: grid; grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr); align-items: center; gap: 2px; }
+.prompt-quick-dropdown { position: relative; display: block; }
+.prompt-quick-trigger { display: flex; height: 26px; align-items: center; justify-content: space-between; overflow: hidden; padding: 0 7px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-soft); color: var(--text); cursor: pointer; font-size: 9px; list-style: none; white-space: nowrap; }
+.prompt-quick-trigger::-webkit-details-marker { display: none; }
+.prompt-quick-trigger::after { margin-left: 5px; color: var(--muted); content: "⌄"; }
+.prompt-quick-dropdown[open] .prompt-quick-trigger { border-color: var(--edge-prompt); }
+.prompt-quick-menu { position: absolute; z-index: 30; top: calc(100% + 2px); right: 0; left: 0; max-height: 190px; overflow-y: auto; padding: 3px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); box-shadow: 0 8px 20px rgba(0, 0, 0, .22); }
+.prompt-quick-option { display: block; width: 100%; padding: 5px 6px; border: 0; border-radius: 3px; background: transparent; color: var(--text); cursor: pointer; font-size: 9px; text-align: left; }
+.prompt-quick-option:hover { background: var(--primary-soft); }
+.prompt-quick-seconds > div { display: grid; grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr); align-items: start; gap: 2px; }
 .prompt-quick-seconds b { color: var(--muted); font-size: 9px; text-align: center; }
 .prompt-preset-toolbar { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); }
 .prompt-preset-toolbar .prompt-preset-actions { display: grid; grid-template-columns: minmax(0, 1fr) 28px 28px; gap: 4px; min-height: 0; margin: 0; }
