@@ -1189,6 +1189,11 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .prompt-quick-seconds b { color: var(--muted); font-size: 9px; text-align: center; }
 .prompt-preset-toolbar { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); }
 .prompt-preset-toolbar .prompt-preset-actions { display: grid; grid-template-columns: minmax(0, 1fr) 28px 28px; gap: 4px; min-height: 0; margin: 0; }
+.image-uniform-scale-control .field-note { margin-top: 5px; }
+.image-uniform-scale-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: center; gap: 8px; margin: 9px 0 7px; }
+.image-uniform-scale-row input[type="range"] { width: 100%; accent-color: var(--primary); cursor: pointer; }
+.image-uniform-scale-row output { min-width: 38px; padding: 4px 5px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: var(--surface-soft); font-size: 10px; text-align: center; }
+.image-uniform-scale-control .button { width: 100%; margin-top: 8px; }
 .prompt-preset-toolbar .prompt-preset-select { grid-column: 1 / -1; width: 100%; min-width: 0; height: 26px; }
 .prompt-preset-toolbar .button { min-height: 26px; padding: 0 4px; font-size: 8px; }
 .prompt-preset-toolbar .icon-button { width: 28px; height: 26px; }

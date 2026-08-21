@@ -2928,15 +2928,41 @@ function renderHistoryLibrary() { const recent = state.recentIds.map(findNode).f
 function emptyHtml(iconName, message) { return `<div class="empty-state">${icon(iconName)}<p>${escapeHtml(message)}</p></div>`; }
 function bindLibraryRows() { $$('[data-select-node]').forEach(button => button.addEventListener("click", () => { selectNode(button.dataset.selectNode); focusNode(button.dataset.selectNode); $("#libraryPanel").classList.remove("is-open"); })); refreshIcons(); }
 function focusNode(id) { const node = findNode(id); if (!node) return; const rect = workspace.getBoundingClientRect(); state.viewport.x = rect.width / 2 - (node.x + node.width / 2) * state.viewport.scale; state.viewport.y = rect.height / 2 - (node.y + node.height / 2) * state.viewport.scale; updateViewport(); }
+function imageUniformScaleValue(nodes = state?.nodes || []) {
+  const images = nodes.filter(node => node?.type === "image");
+  if (!images.length) return 50;
+  const averageWidth = images.reduce((total, node) => total + (Number(node.width) || 270), 0) / images.length;
+  return Math.round(Math.min(100, Math.max(0, (averageWidth - 180) / 320 * 100)));
+}
+function imageUniformScaleDimensions(value) {
+  const normalized = Math.min(100, Math.max(0, Number(value) || 0));
+  const width = Math.round(180 + normalized / 100 * 320);
+  return { width, height: Math.round(width * nodeHeight("image") / 270) };
+}
+function imageUniformScaleControl() {
+  const images = state.nodes.filter(node => node.type === "image");
+  const value = imageUniformScaleValue(images); const dimensions = imageUniformScaleDimensions(value);
+  return `<section class="control-section image-uniform-scale-control"><div class="control-title">参考图统一比例 <span>快捷操作</span></div><p class="field-note">统一所有参考图节点的显示大小；不会影响单个节点后续手动拉伸。</p><div class="image-uniform-scale-row"><input type="range" min="0" max="100" value="${value}" data-image-uniform-scale aria-label="参考图统一比例"><output data-image-uniform-scale-value>${value}</output></div><div class="summary-row"><span>统一尺寸</span><strong data-image-uniform-scale-size>${dimensions.width} × ${dimensions.height}</strong></div><button class="button button-quiet" type="button" data-confirm-image-uniform-scale${images.length ? "" : " disabled"}>${icon("check")} 确认统一比例</button></section>`;
+}
+function applyImageUniformScale(value) {
+  const images = state.nodes.filter(node => node.type === "image"); if (!images.length) return;
+  const dimensions = imageUniformScaleDimensions(value); recordHistory(); images.forEach(node => { node.width = dimensions.width; node.height = dimensions.height; }); renderWorkspace(); scheduleSave(); toast(`已统一 ${images.length} 个参考图节点：${dimensions.width} × ${dimensions.height}`);
+}
+function bindImageUniformScaleControl() {
+  const slider = $(`[data-image-uniform-scale]`); const output = $(`[data-image-uniform-scale-value]`); const size = $(`[data-image-uniform-scale-size]`);
+  slider?.addEventListener("input", event => { const value = Math.min(100, Math.max(0, Number(event.target.value) || 0)); const dimensions = imageUniformScaleDimensions(value); if (output) output.textContent = String(value); if (size) size.textContent = `${dimensions.width} × ${dimensions.height}`; });
+  $(`[data-confirm-image-uniform-scale]`)?.addEventListener("click", event => { event.stopPropagation(); applyImageUniformScale(slider?.value); });
+}
 function renderInspector() {
   if (state?.flowMode === "script") return renderScriptInspector();
   if (selectedEdgeId) return renderEdgeInspector(); const selectedNodes = state.selectedIds.map(findNode).filter(Boolean); if (selectedNodes.length > 1) return renderMultiSelectionInspector(selectedNodes); const node = selectedNode(); if (node) return renderNodeInspector(node);
   $("#inspectorEyebrow").textContent = "PROJECT"; $("#inspectorTitle").textContent = "工作流概览";
   const prompts = state.nodes.filter(node => node.type === "prompt").length; const compositions = state.nodes.filter(node => node.type === "composition").length; const images = state.nodes.filter(node => node.type === "image").length; const videos = state.nodes.filter(node => node.type === "video").length; const generators = state.nodes.filter(node => node.type === "generator").length; const answers = state.nodes.filter(node => node.type === "answer").length;
   inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">项目结构 <span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词</span><strong>${prompts}</strong></div><div class="summary-row"><span>参数控制</span><strong>${compositions}</strong></div><div class="summary-row"><span>图像素材</span><strong>${images}</strong></div><div class="summary-row"><span>视频结果</span><strong>${videos}</strong></div><div class="summary-row"><span>生图</span><strong>${generators}</strong></div><div class="summary-row"><span>模型回答</span><strong>${answers}</strong></div></section>
+    ${imageUniformScaleControl()}
     <section class="control-section"><div class="control-title">数据流</div><div class="edge-summary"><span class="edge-swatch prompt"></span><span>Prompt 文本连接</span></div><div class="edge-summary"><span class="edge-swatch composition"></span><span>参数控制连接</span></div><div class="edge-summary"><span class="edge-swatch"></span><span>Image 图像连接</span></div><div class="edge-summary"><span class="edge-swatch video"></span><span>Video 视频连接</span></div></section>
     <section class="control-section"><div class="control-title">界面基调 <span>${themeLabels[state.theme]}</span></div><div class="settings-theme-switch">${themeButtonsHtml()}</div></section>`;
-  bindInspectorThemeButtons(); refreshIcons();
+  bindInspectorThemeButtons(); bindImageUniformScaleControl(); refreshIcons();
 }
 function renderMultiSelectionInspector(nodes) {
   const generatedImages = nodes.filter(node => node.type === "image" && generatedImageFilename(node.src));
