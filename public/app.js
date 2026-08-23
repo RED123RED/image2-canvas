@@ -43,6 +43,20 @@ const answerSkillOptions = Object.freeze([
   { value: "none", label: "普通模型问答" },
   { value: "minimax-h3", label: "MiniMax H3 提示词生成器" }
 ]);
+const answerModelOptions = Object.freeze([
+  { value: "gpt-5.5", label: "GPT-5.5 系列", provider: "openai", vision: true },
+  { value: "gpt-5.6", label: "GPT-5.6 系列", provider: "openai", vision: true },
+  { value: "deepseek-v4-flash-vision-exp", label: "DeepSeek V4 Flash Vision", provider: "deepseek", vision: true },
+  { value: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "deepseek", vision: false },
+  { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek", vision: false }
+]);
+const deepseekAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "deepseek").map(option => option.value));
+const deepseekVisionAnswerModel = "deepseek-v4-flash-vision-exp";
+function answerModelOption(value) { return answerModelOptions.find(option => option.value === value) || answerModelOptions[1]; }
+function answerModelIsDeepseek(value) { return deepseekAnswerModels.includes(String(value || "")); }
+function normalizedAnswerModel(value) { return answerModelOptions.some(option => option.value === value) ? value : "gpt-5.6"; }
+function normalizedDeepseekThinking(value) { return value === "disabled" ? "disabled" : "enabled"; }
+function normalizedDeepseekReasoningEffort(value) { return value === "max" ? "max" : "high"; }
 const h3AnswerModeOptions = Object.freeze([
   { value: "auto", label: "自动识别" },
   { value: "t2va", label: "文生视频 · T2VA" },
@@ -51,7 +65,7 @@ const h3AnswerModeOptions = Object.freeze([
   { value: "fl2va", label: "首尾帧生视频 · FL2VA" },
   { value: "ref2va", label: "全能多参考 · Ref2VA" }
 ]);
-function answerNodeHeight(node) { return nodeHeight("answer", node?.inputSlots || 4, 1) + (node?.answerSkill === "minimax-h3" ? 112 : 0); }
+function answerNodeHeight(node) { return nodeHeight("answer", node?.inputSlots || 4, 1) + (node?.answerSkill === "minimax-h3" ? 112 : 0) + (answerModelIsDeepseek(node?.model) ? 100 : 0); }
 function normalizedAnswerSkill(value) { return answerSkillOptions.some(item => item.value === value) ? value : "none"; }
 function normalizedH3AnswerMode(value) { return h3AnswerModeOptions.some(item => item.value === value) ? value : "auto"; }
 function normalizedH3Duration(value) { return Math.min(15, Math.max(3, Math.round(Number(value) || 6))); }
@@ -515,7 +529,7 @@ function createVideoPreviewNode(x, y) {
   return { id: uid("video-preview"), type: "video-preview", name: "成片预览", x, y, width: 360, height: nodeHeight("video-preview"), createdAt: Date.now() };
 }
 function createAnswerNode(x, y) {
-  const node = { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, model: "gpt-5.6", answerSkill: "none", h3Mode: "auto", h3Duration: 6, status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
+  const node = { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, model: "gpt-5.6", deepseekThinking: "enabled", deepseekReasoningEffort: "high", answerSkill: "none", h3Mode: "auto", h3Duration: 6, status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
   node.height = answerNodeHeight(node);
   return node;
 }
@@ -652,7 +666,7 @@ function normalizeProject(project) {
       if (node.type === "answer") {
         const slots = Math.min(8, Math.max(1, Number(node.inputSlots) || 4));
         const answerSkill = normalizedAnswerSkill(node.answerSkill);
-        const next = { ...node, name: node.name || "模型回答", width: Math.max(320, Number(node.width) || 380), promptSlots: 1, inputSlots: slots, model: ["gpt-5.5", "gpt-5.6"].includes(node.model) ? node.model : "gpt-5.6", answerSkill, h3Mode: normalizedH3AnswerMode(node.h3Mode), h3Duration: normalizedH3Duration(node.h3Duration), status: node.status === "running" ? "running" : "idle", answer: String(node.answer || ""), error: String(node.error || "") };
+        const next = { ...node, name: node.name || "模型回答", width: Math.max(320, Number(node.width) || 380), promptSlots: 1, inputSlots: slots, model: normalizedAnswerModel(node.model), deepseekThinking: normalizedDeepseekThinking(node.deepseekThinking), deepseekReasoningEffort: normalizedDeepseekReasoningEffort(node.deepseekReasoningEffort), answerSkill, h3Mode: normalizedH3AnswerMode(node.h3Mode), h3Duration: normalizedH3Duration(node.h3Duration), status: node.status === "running" ? "running" : "idle", answer: String(node.answer || ""), error: String(node.error || "") };
         next.height = Math.max(Number(node.height) || 0, answerNodeHeight(next));
         return next;
       }
@@ -2494,12 +2508,16 @@ function answerImagePortTop(node, index) { return answerInputPortTop(node.prompt
 function renderAnswerNodeHtml(node, selected, style) {
   const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, answerPromptPortId(index)); const promptNode = findNode(edge?.source); const label = edge ? sourceLabelForEdge(edge) : "未连接"; return `<div class="input-slot${edge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>${index ? `提示词 ${index + 1}` : "提示词"}</span><span>${escapeHtml(label)}</span></div>`; }).join("");
   const imageSlots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); const imageNode = findNode(edge?.source); return `<div class="input-slot${edge ? " is-connected" : ""}${imageNode?.disabled ? " is-disabled" : ""}"><span>参考图 ${index + 1}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
+  const modelOption = answerModelOption(node.model);
+  const modelOptions = answerModelOptions.map(item => `<option value="${item.value}"${node.model === item.value ? " selected" : ""}>${item.label}</option>`).join("");
   const usingH3Skill = node.answerSkill === "minimax-h3";
+  const usingDeepseek = answerModelIsDeepseek(node.model);
+  const deepseekSettings = usingDeepseek ? `<div class="answer-deepseek-settings"><div class="node-field-row"><div class="node-field"><label>思考模式</label><select class="node-select node-interactive" data-answer-deepseek-thinking="${node.id}" aria-label="DeepSeek 思考模式"><option value="enabled"${node.deepseekThinking === "enabled" ? " selected" : ""}>开启</option><option value="disabled"${node.deepseekThinking === "disabled" ? " selected" : ""}>关闭</option></select></div><div class="node-field"><label>思考强度</label><select class="node-select node-interactive" data-answer-deepseek-effort="${node.id}" aria-label="DeepSeek 思考强度"${node.deepseekThinking === "disabled" ? " disabled" : ""}><option value="high"${node.deepseekReasoningEffort === "high" ? " selected" : ""}>High</option><option value="max"${node.deepseekReasoningEffort === "max" ? " selected" : ""}>Max</option></select></div></div><p class="field-note">${modelOption.vision ? "当前模型支持图像识别、截图文字和图表分析。" : "当前模型为纯文本；连接参考图时请切换到 DeepSeek V4 Flash Vision。"}</p></div>` : "";
   const h3Settings = usingH3Skill ? `<div class="node-field answer-skill-field"><label>提示词 Skill</label><select class="node-select node-interactive" data-answer-skill="${node.id}" aria-label="回答 Skill">${answerSkillOptions.map(item => `<option value="${item.value}"${node.answerSkill === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div><div class="node-field-row answer-h3-settings"><div class="node-field"><label>H3 模式</label><select class="node-select node-interactive" data-answer-h3-mode="${node.id}" aria-label="MiniMax H3 模式">${h3AnswerModeOptions.map(item => `<option value="${item.value}"${node.h3Mode === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div><div class="node-field"><label>视频时长</label><select class="node-select node-interactive" data-answer-h3-duration="${node.id}" aria-label="MiniMax H3 视频时长">${Array.from({ length: 13 }, (_, index) => index + 3).map(seconds => `<option value="${seconds}"${node.h3Duration === seconds ? " selected" : ""}>${seconds} 秒</option>`).join("")}</select></div></div><p class="field-note">自动识别：无图为文生视频，1 图为首帧，2 图为首尾帧，3 图及以上为全能多参考。</p>` : `<div class="node-field answer-skill-field"><label>提示词 Skill</label><select class="node-select node-interactive" data-answer-skill="${node.id}" aria-label="回答 Skill">${answerSkillOptions.map(item => `<option value="${item.value}"${node.answerSkill === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div>`;
   const answerText = node.status === "running" ? (usingH3Skill ? "正在生成 MiniMax H3 提示词…" : "模型正在回答…") : node.error ? node.error : node.answer || (usingH3Skill ? "连接提示词和参考图后，将输出可直接用于 MiniMax H3 的视频提示词。" : "连接提示词后，模型回答会显示在这里。");
   const responseClass = node.error ? " is-error" : node.answer ? " is-ready" : "";
   const expandLabel = node.answerExpanded ? "收起回答" : "展开回答";
-  return `<article class="canvas-node answer-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "message-square-text")}<div class="node-body answer-body"><div class="node-field answer-model-field"><label>模型</label><select class="node-select node-interactive" data-answer-model="${node.id}" aria-label="回答模型"><option value="gpt-5.5"${node.model === "gpt-5.5" ? " selected" : ""}>GPT-5.5 系列</option><option value="gpt-5.6"${node.model === "gpt-5.6" ? " selected" : ""}>GPT-5.6 系列</option></select></div><div class="answer-inputs">${promptSlots}${imageSlots}</div>${h3Settings}<div class="answer-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-answer-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-answer-image-input="${node.id}"${node.inputSlots >= 8 ? " disabled" : ""}>${icon("image-plus")} 添加参考图输入</button></div><button class="run-node-button node-interactive" type="button" data-run-answer="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "send-horizontal")} ${node.status === "running" ? (usingH3Skill ? "生成中" : "回答中") : (usingH3Skill ? "生成 H3 提示词" : "请求回答")}</button><div class="answer-response-wrap${node.answerExpanded ? " is-expanded" : ""}"><div class="answer-response-heading"><span>回答内容</span><span class="answer-response-actions"><button class="answer-response-toggle node-interactive" type="button" data-copy-answer="${node.id}" aria-label="复制回答" data-tooltip="复制回答">${icon("copy")}</button><button class="answer-response-toggle node-interactive" type="button" data-toggle-answer-response="${node.id}" aria-label="${expandLabel}">${icon(node.answerExpanded ? "chevron-up" : "chevron-down")} ${expandLabel}</button></span></div><div class="answer-response node-interactive${responseClass}" data-answer-selectable="${node.id}">${escapeHtml(answerText)}</div></div></div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, answerPromptPortId(index), "prompt", "input", index ? `提示词 ${index + 1}` : "提示词", answerPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", `参考图 ${index + 1}`, answerImagePortTop(node, index))).join("")}</article>`;
+  return `<article class="canvas-node answer-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "message-square-text")}<div class="node-body answer-body"><div class="node-field answer-model-field"><label>模型</label><select class="node-select node-interactive" data-answer-model="${node.id}" aria-label="回答模型">${modelOptions}</select></div><div class="answer-inputs">${promptSlots}${imageSlots}</div>${deepseekSettings}${h3Settings}<div class="answer-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-answer-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-answer-image-input="${node.id}"${node.inputSlots >= 8 ? " disabled" : ""}>${icon("image-plus")} 添加参考图输入</button></div><button class="run-node-button node-interactive" type="button" data-run-answer="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "send-horizontal")} ${node.status === "running" ? (usingH3Skill ? "生成中" : "回答中") : (usingH3Skill ? "生成 H3 提示词" : "请求回答")}</button><div class="answer-response-wrap${node.answerExpanded ? " is-expanded" : ""}"><div class="answer-response-heading"><span>回答内容</span><span class="answer-response-actions"><button class="answer-response-toggle node-interactive" type="button" data-copy-answer="${node.id}" aria-label="复制回答" data-tooltip="复制回答">${icon("copy")}</button><button class="answer-response-toggle node-interactive" type="button" data-toggle-answer-response="${node.id}" aria-label="${expandLabel}">${icon(node.answerExpanded ? "chevron-up" : "chevron-down")} ${expandLabel}</button></span></div><div class="answer-response node-interactive${responseClass}" data-answer-selectable="${node.id}">${escapeHtml(answerText)}</div></div></div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, answerPromptPortId(index), "prompt", "input", index ? `提示词 ${index + 1}` : "提示词", answerPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", `参考图 ${index + 1}`, answerImagePortTop(node, index))).join("")}</article>`;
 }
 
 function bindNodeEvents() {
@@ -2631,7 +2649,15 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
     recordHistory(); node.answerExpanded = !node.answerExpanded; renderCanvas(); renderInspector(); scheduleSave();
   }));
   $$("[data-run-answer]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); runAnswerNode(button.dataset.runAnswer); }));
-  $$("[data-answer-model]").forEach(control => control.addEventListener("change", event => { const node = findNode(control.dataset.answerModel); if (!node || node.type !== "answer") return; recordHistory(); node.model = event.target.value; renderInspector(); scheduleSave(); }));
+  $$('[data-answer-model]').forEach(control => control.addEventListener("change", event => { const node = findNode(control.dataset.answerModel); if (!node || node.type !== "answer") return; recordHistory(); node.model = normalizedAnswerModel(event.target.value); node.height = Math.max(320, Math.max(Number(node.height) || 0, answerNodeHeight(node))); renderCanvas(); renderInspector(); scheduleSave(); }));
+  $$('[data-answer-deepseek-thinking]').forEach(control => control.addEventListener("change", event => {
+    event.stopPropagation(); const node = findNode(control.dataset.answerDeepseekThinking); if (!node || node.type !== "answer") return;
+    recordHistory(); node.deepseekThinking = normalizedDeepseekThinking(event.target.value); renderCanvas(); renderInspector(); scheduleSave();
+  }));
+  $$('[data-answer-deepseek-effort]').forEach(control => control.addEventListener("change", event => {
+    event.stopPropagation(); const node = findNode(control.dataset.answerDeepseekEffort); if (!node || node.type !== "answer") return;
+    recordHistory(); node.deepseekReasoningEffort = normalizedDeepseekReasoningEffort(event.target.value); renderCanvas(); renderInspector(); scheduleSave();
+  }));
   $$("[data-answer-skill]").forEach(control => control.addEventListener("change", event => {
     event.stopPropagation(); const node = findNode(control.dataset.answerSkill); if (!node || node.type !== "answer") return;
     recordHistory(); const previous = node.answerSkill === "minimax-h3"; node.answerSkill = normalizedAnswerSkill(event.target.value); node.height = Math.max(answerNodeHeight(node), (Number(node.height) || answerNodeHeight(node)) + (node.answerSkill === "minimax-h3" && !previous ? 112 : node.answerSkill === "none" && previous ? -112 : 0)); renderCanvas(); renderInspector(); scheduleSave();
@@ -3410,14 +3436,19 @@ async function runAnswerNode(nodeId) {
   const promptEdges = state.edges.filter(edge => edge.target === nodeId && edge.type === "prompt" && (edge.targetPort === "prompt" || edge.targetPort.startsWith("prompt-"))).sort((a, b) => { const aIndex = a.targetPort === "prompt" ? 0 : Number(a.targetPort.split("-")[1]) || 0; const bIndex = b.targetPort === "prompt" ? 0 : Number(b.targetPort.split("-")[1]) || 0; return aIndex - bIndex; });
   const prompt = promptEdges.map(edge => { const source = findNode(edge.source); return source?.type === "prompt" && !source.disabled ? source.content?.trim() : ""; }).filter(Boolean).join("\n\n");
   if (!prompt) { selectNode(nodeId); return toast("请连接至少一个有内容且已启用的提示词模块", true); }
-  if (!$("#apiState").classList.contains("is-ready") && !apiKey) { openSettings(); return toast("请先连接 API", true); }
+  const usesDeepseek = answerModelIsDeepseek(node.model);
+  try {
+    const status = await requestJson("/api/status", {}, 8_000);
+    if (usesDeepseek ? !status.deepseek?.ready : !status.ready && !apiKey) { openSettings(); return toast(usesDeepseek ? "请先在设置中保存 DeepSeek API Key" : "请先连接 API", true); }
+  } catch { openSettings(); return toast("本机服务不可用，无法检查模型配置", true); }
   const imageEdges = state.edges.filter(edge => edge.target === nodeId && edge.type === "image" && edge.targetPort.startsWith("image-") && !findNode(edge.source)?.disabled).sort((a, b) => Number(a.targetPort.split("-")[1]) - Number(b.targetPort.split("-")[1]));
   const sources = imageEdges.map(edge => imageSourceFromNode(findNode(edge.source))).filter(Boolean).slice(0, 8);
+  if (usesDeepseek && sources.length && node.model !== deepseekVisionAnswerModel) { selectNode(nodeId); return toast("当前 DeepSeek 模型不支持图片输入，请切换到 V4 Flash Vision", true); }
   recordHistory(); node.status = "running"; node.error = ""; renderCanvas(); renderInspector();
   try {
     const references = await Promise.all(sources.map(sourceToDataUrl));
     const h3Enabled = node.answerSkill === "minimax-h3";
-    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt, model: node.model, references, skill: h3Enabled ? "minimax-h3" : "none", h3Mode: h3Enabled ? resolveH3AnswerMode(node, references.length) : undefined, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined }) }, 165_000);
+    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt, model: node.model, references, skill: h3Enabled ? "minimax-h3" : "none", h3Mode: h3Enabled ? resolveH3AnswerMode(node, references.length) : undefined, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined }) }, 165_000);
     node.answer = String(result.answer || ""); node.model = result.model || node.model; node.status = "idle";
     toast("模型回答已完成");
   } catch (error) {
@@ -3586,9 +3617,14 @@ async function refreshRunningHubSettingsStatus() {
   try { const result = await requestJson("/api/status", {}, 5_000); statusElement.textContent = result.runninghub?.ready ? `已配置 · 工作流 ${result.runninghub.workflowId} · ${result.runninghub.instanceType}` : "尚未配置，保存密钥后即可运行海螺 H3 视频。"; }
   catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
 }
+async function refreshDeepseekSettingsStatus() {
+  const statusElement = $("#deepseekKeyStatus"); if (!statusElement) return;
+  try { const result = await requestJson("/api/status", {}, 5_000); statusElement.textContent = result.deepseek?.ready ? `已配置 · ${result.deepseek.model}` : "尚未配置，保存密钥后即可在模型回答节点中选择 DeepSeek。"; }
+  catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
+}
 function applyLineMotionPreference(value = lineMotion) { lineMotion = value === "static" ? "static" : "dynamic"; document.documentElement.dataset.edgeMotion = lineMotion; $$("#lineMotionSwitch [data-line-motion]").forEach(button => button.classList.toggle("is-active", button.dataset.lineMotion === lineMotion)); }
 function setLineMotion(value) { applyLineMotionPreference(value); localStorage.setItem("image2-canvas-line-motion", lineMotion); }
-function openSettings() { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); applyLineMotionPreference(); const input = $("#geminiApiKeyInput"); if (input) input.value = ""; const midjourneyInput = $("#midjourneyApiKeyInput"); if (midjourneyInput) midjourneyInput.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; settingsDialog.showModal(); void refreshGeminiSettingsStatus(); void refreshMidjourneySettingsStatus(); void refreshRunningHubSettingsStatus(); }
+function openSettings() { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); applyLineMotionPreference(); const input = $("#geminiApiKeyInput"); if (input) input.value = ""; const midjourneyInput = $("#midjourneyApiKeyInput"); if (midjourneyInput) midjourneyInput.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; const deepseekInput = $("#deepseekApiKeyInput"); if (deepseekInput) deepseekInput.value = ""; settingsDialog.showModal(); void refreshGeminiSettingsStatus(); void refreshMidjourneySettingsStatus(); void refreshRunningHubSettingsStatus(); void refreshDeepseekSettingsStatus(); }
 function bindStaticEvents() {
   $("#newProjectButton").addEventListener("click", () => {
     $("#newProjectName").value = ""; const radio = $(`#newProjectThemes input[value="${globalTheme}"]`); if (radio) radio.checked = true;
@@ -3654,6 +3690,7 @@ function bindStaticEvents() {
   $("#revealGeminiKeyButton").addEventListener("click", () => { const input = $("#geminiApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $("#revealMidjourneyKeyButton").addEventListener("click", () => { const input = $("#midjourneyApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $("#revealRunningHubKeyButton").addEventListener("click", () => { const input = $("#runningHubApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
+  $("#revealDeepseekKeyButton").addEventListener("click", () => { const input = $("#deepseekApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.addEventListener("click", () => { setTheme(button.dataset.themeValue); $$("#settingsThemeSwitch [data-theme-value]").forEach(item => item.classList.toggle("is-active", item.dataset.themeValue === button.dataset.themeValue)); }));
   $("#saveSettingsButton").addEventListener("click", async event => {
     event.preventDefault();
@@ -3661,6 +3698,7 @@ function bindStaticEvents() {
     const geminiKey = $("#geminiApiKeyInput").value.trim();
     const midjourneyKey = $("#midjourneyApiKeyInput").value.trim();
     const runningHubKey = $("#runningHubApiKeyInput").value.trim();
+    const deepseekKey = $("#deepseekApiKeyInput").value.trim();
     if (geminiKey) {
       try { await requestJson("/api/providers/gemini", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: geminiKey }) }, 10_000); }
       catch (error) { return toast(error.message || "Gemini 密钥保存失败", true); }
@@ -3673,7 +3711,11 @@ function bindStaticEvents() {
       try { await requestJson("/api/providers/runninghub", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: runningHubKey }) }, 10_000); }
       catch (error) { return toast(error.message || "RunningHub 密钥保存失败", true); }
     }
-    settingsDialog.close(); checkApiStatus(); toast(runningHubKey ? "RunningHub 密钥已安全保存" : midjourneyKey ? "Midjourney 密钥已安全保存" : geminiKey ? "Gemini 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "将使用服务器环境中的 Image2 API Key"));
+    if (deepseekKey) {
+      try { await requestJson("/api/providers/deepseek", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: deepseekKey }) }, 10_000); }
+      catch (error) { return toast(error.message || "DeepSeek 密钥保存失败", true); }
+    }
+    settingsDialog.close(); checkApiStatus(); toast(deepseekKey ? "DeepSeek 密钥已安全保存" : runningHubKey ? "RunningHub 密钥已安全保存" : midjourneyKey ? "Midjourney 密钥已安全保存" : geminiKey ? "Gemini 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "设置已保存"));
   });
   $("#projectName").addEventListener("click", () => { const next = window.prompt("项目名称", state.projectName)?.trim(); if (!next || next === state.projectName) return; recordHistory(); state.projectName = next; renderWorkspace(); scheduleSave(); });
   $("#closeDialogueScriptButton").addEventListener("click", closeStoryDialogue);

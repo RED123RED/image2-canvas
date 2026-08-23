@@ -572,6 +572,7 @@ html[data-edge-motion="static"] .script-relationship-edge { animation: none; fil
 .answer-model-field { width: 100%; flex: 0 0 auto; }
 .answer-model-field label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 8px; font-weight: 700; }
 .answer-inputs { margin: 0 -12px; padding: 7px 12px 6px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.answer-deepseek-settings { flex: 0 0 auto; margin-top: -1px; padding-top: 8px; border-top: 1px solid var(--line); }
 .generator-add-inputs, .answer-add-inputs { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: -2px; }
 .generator-add-inputs .add-input-button, .answer-add-inputs .add-input-button { padding-inline: 2px; }
 .answer-node .run-node-button { flex: 0 0 auto; }
