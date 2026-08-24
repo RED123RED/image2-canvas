@@ -52,6 +52,17 @@ const runningHubVideoWorkflows = Object.freeze({
     })
   })
 });
+const runningHubKrea2Workflow = Object.freeze({
+  id: "2091807003948703746",
+  promptNode: "67",
+  widthNode: "75",
+  heightNode: "75",
+  batchNode: "75",
+  outputNode: "9",
+  defaultWidth: 1920,
+  defaultHeight: 1080,
+  maxBatch: 4
+});
 const runningHubWorkflowId = runningHubVideoWorkflows["first-frame"].standard.id;
 const runningHubInstanceType = process.env.RUNNINGHUB_INSTANCE_TYPE === "default" ? "default" : "plus";
 const geminiImageModels = Object.freeze([
@@ -882,13 +893,57 @@ async function requestRunningHubGeneration(job) {
   throw gatewayError(504, `RunningHub 任务等待超时 (${lastStatus?.taskId || submitted.taskId})`);
 }
 
+async function requestRunningHubKrea2Generation(job) {
+  const { apiKey, prompt, width, height, n, workflow } = job.request;
+  const nodeInfoList = [
+    runningHubNodeInfo(workflow.promptNode, "text", prompt),
+    runningHubNodeInfo(workflow.widthNode, "width", width),
+    runningHubNodeInfo(workflow.heightNode, "height", height),
+    runningHubNodeInfo(workflow.batchNode, "batch_size", n)
+  ];
+  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
+  const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${workflow.id}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ addMetadata: true, nodeInfoList, instanceType: runningHubInstanceType, usePersonalQueue: false }),
+    signal: AbortSignal.timeout(60_000)
+  });
+  const submitRaw = await submitResponse.text();
+  let submitted;
+  try { submitted = JSON.parse(submitRaw); } catch { submitted = {}; }
+  const submitDiagnostic = runningHubDiagnostic("提交 Krea2 工作流", submitResponse.status, submitted, submitRaw);
+  updateRunningHubDiagnostic(job, submitDiagnostic);
+  if (!submitResponse.ok || !submitted?.taskId) throw runningHubRequestError("提交 Krea2 工作流", submitResponse.status, submitted, submitRaw, "RunningHub Krea2 工作流提交失败");
+  await persistJobs();
+  const startedAt = Date.now();
+  let lastStatus = submitted;
+  while (Date.now() - startedAt < 45 * 60_000) {
+    const response = await fetch(`${runningHubBaseUrl}/openapi/v2/query`, { method: "POST", headers, body: JSON.stringify({ taskId: submitted.taskId }), signal: AbortSignal.timeout(60_000) });
+    const raw = await response.text();
+    let status;
+    try { status = JSON.parse(raw); } catch { status = {}; }
+    const queryDiagnostic = runningHubDiagnostic("查询 Krea2 任务", response.status, status, raw);
+    updateRunningHubDiagnostic(job, queryDiagnostic);
+    if (!response.ok) throw runningHubRequestError("查询 Krea2 任务", response.status, status, raw, "RunningHub Krea2 任务查询失败");
+    lastStatus = status;
+    if (status.status === "SUCCESS") {
+      const results = Array.isArray(status.results) ? status.results.filter(item => item?.url || item?.text).slice(0, n) : [];
+      if (!results.length) throw gatewayError(502, "Krea2 工作流成功但没有可下载图片");
+      return { items: results, mode: "workflow", referencesUsed: 0, taskId: submitted.taskId };
+    }
+    if (status.status === "FAILED") throw runningHubRequestError("执行 Krea2 工作流", 502, status, raw, `RunningHub Krea2 任务失败 (${status.errorCode || "UNKNOWN"})`);
+    await new Promise(resolve => setTimeout(resolve, 5_000));
+  }
+  throw gatewayError(504, `RunningHub Krea2 任务等待超时 (${lastStatus?.taskId || submitted.taskId})`);
+}
+
 async function executeJob(job) {
   job.status = "running";
   job.startedAt = Date.now();
   await persistJobs();
   await writeJobLog(job, "started");
   try {
-    const result = job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : ["gemini", "moyu"].includes(job.provider) ? await requestGeminiGeneration(job) : await requestImage2Generation(job);
+    const result = job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "runninghub-krea2" ? await requestRunningHubKrea2Generation(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : ["gemini", "moyu"].includes(job.provider) ? await requestGeminiGeneration(job) : await requestImage2Generation(job);
     if (result.mediaType === "video") job.media = await Promise.all(result.items.map((item, index) => persistGeneratedMedia(job, item, index)));
     else job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
     job.status = "succeeded";
@@ -925,8 +980,9 @@ async function drainJobs() {
 async function createJob(req, res) {
   try {
     const body = await readJson(req);
-    const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "gemini" ? "gemini" : body.provider === "moyu" ? "moyu" : body.provider === "midjourney" ? "midjourney" : "image2";
+    const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "runninghub-krea2" ? "runninghub-krea2" : body.provider === "gemini" ? "gemini" : body.provider === "moyu" ? "moyu" : body.provider === "midjourney" ? "midjourney" : "image2";
     if (provider === "runninghub-h3") return createRunningHubJob(req, res, body);
+    if (provider === "runninghub-krea2") return createRunningHubKrea2Job(req, res, body);
     const usesMoyu = ["gemini", "moyu"].includes(provider);
     if (usesMoyu && body.model && !moyuImageModels.includes(String(body.model))) return sendJson(res, 400, { error: "不支持的魔芋图像模型" });
     const isMj = provider === "midjourney";
@@ -956,6 +1012,23 @@ async function createJob(req, res) {
   } catch (error) {
     const failure = classifyError(error);
     sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
+  }
+}
+
+async function createRunningHubKrea2Job(req, res, body) {
+  try {
+    const apiKey = await resolveRunningHubApiKey(req);
+    if (!apiKey) return sendJson(res, 401, { error: "未配置 RunningHub API Key，请在设置中保存密钥" });
+    const prompt = String(body.prompt || "").trim();
+    if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
+    const workflow = runningHubKrea2Workflow;
+    const width = Math.min(4096, Math.max(32, Number(body.width) || workflow.defaultWidth));
+    const height = Math.min(4096, Math.max(32, Number(body.height) || workflow.defaultHeight));
+    const n = Math.min(workflow.maxBatch, Math.max(1, Math.round(Number(body.n) || 1)));
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-krea2", model: `Krea2 workflow ${workflow.id}`, imageCount: n, request: { apiKey, prompt, width, height, n, workflow } };
+    jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
+  } catch (error) {
+    const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
   }
 }
 
