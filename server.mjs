@@ -1288,6 +1288,17 @@ function responseTextFrom(result) {
   return String(content || "").trim();
 }
 
+function claudeResponseTextFrom(result) {
+  const content = Array.isArray(result?.content) ? result.content : [];
+  return content.map(item => item?.type === "text" ? item.text || "" : "").join("\n").trim();
+}
+
+function claudeImageContentFromDataUrl(url) {
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([a-z0-9+/=]+)$/i.exec(String(url || ""));
+  if (!match) return null;
+  return { type: "image", source: { type: "base64", media_type: match[1].toLowerCase(), data: match[2] } };
+}
+
 function h3PromptSystemInstruction(mode, durationSeconds) {
   const duration = `${Number(durationSeconds).toFixed(2)} seconds`;
   const alignment = {
@@ -1321,16 +1332,38 @@ async function createResponse(req, res) {
     const durationSeconds = Math.min(15, Math.max(3, Math.round(Number(body.durationSeconds) || 6)));
     const content = [{ type: "text", text: prompt }];
     references.forEach(url => content.push({ type: "image_url", image_url: { url, detail: "auto" } }));
+    if (isClaude) {
+      const claudeContent = [...references.map(claudeImageContentFromDataUrl).filter(Boolean), { type: "text", text: prompt }];
+      const claudeRequestBody = {
+        model: textModel,
+        max_tokens: 16_384,
+        messages: [{ role: "user", content: claudeContent }]
+      };
+      if (usingH3Skill) claudeRequestBody.system = h3PromptSystemInstruction(h3Mode, durationSeconds);
+      const claudeResponse = await fetch(`${claudeBaseUrl}/messages`, {
+        method: "POST",
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(claudeRequestBody),
+        signal: AbortSignal.timeout(150_000)
+      });
+      const raw = await claudeResponse.text();
+      let result;
+      try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
+      if (!claudeResponse.ok) throw gatewayError(claudeResponse.status, result?.error?.message || result?.message || `Claude 回答失败 (${claudeResponse.status})`);
+      const answer = claudeResponseTextFrom(result);
+      if (!answer) throw gatewayError(502, "Claude 接口没有返回可显示的文本回答");
+      return sendJson(res, 200, { answer, model: textModel, provider: "claude", references: references.length, skill: usingH3Skill ? "minimax-h3" : "none", h3Mode: usingH3Skill ? h3Mode : undefined });
+    }
     const messages = usingH3Skill
       ? [{ role: "system", content: h3PromptSystemInstruction(h3Mode, durationSeconds) }, { role: "user", content }]
-      : [{ role: "user", content: (isDeepseek || isClaude) && !references.length ? prompt : content }];
+      : [{ role: "user", content: isDeepseek && !references.length ? prompt : content }];
     const requestBody = { model: textModel, messages };
     if (isDeepseek) {
       const thinking = body.deepseekThinking === "disabled" ? "disabled" : "enabled";
       requestBody.thinking = { type: thinking };
       if (thinking === "enabled") requestBody.reasoning_effort = body.deepseekReasoningEffort === "max" ? "max" : "high";
     }
-    const response = await fetch(`${isDeepseek ? deepseekBaseUrl : isClaude ? claudeBaseUrl : baseUrl}/chat/completions`, {
+    const response = await fetch(`${isDeepseek ? deepseekBaseUrl : baseUrl}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
@@ -1342,7 +1375,7 @@ async function createResponse(req, res) {
     if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || `模型回答失败 (${response.status})`);
     const answer = responseTextFrom(result);
     if (!answer) throw gatewayError(502, "接口没有返回可显示的文本回答");
-    return sendJson(res, 200, { answer, model: textModel, provider: isDeepseek ? "deepseek" : isClaude ? "claude" : "openai", references: references.length, skill: usingH3Skill ? "minimax-h3" : "none", h3Mode: usingH3Skill ? h3Mode : undefined });
+    return sendJson(res, 200, { answer, model: textModel, provider: isDeepseek ? "deepseek" : "openai", references: references.length, skill: usingH3Skill ? "minimax-h3" : "none", h3Mode: usingH3Skill ? h3Mode : undefined });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, failure.code === "REQUEST" ? 400 : 502, { error: failure.message, code: failure.code });
