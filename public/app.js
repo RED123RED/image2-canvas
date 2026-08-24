@@ -3136,7 +3136,7 @@ async function exportVideoPreview(nodeId) {
   const response = await composeVideoEditor(frame.editor.id); if (response?.url) downloadNode({ ...preview, type: "video-preview" });
 }
 function fileToDataUrl(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
-function createPreviewDataUrl(source, maxSize = 720) {
+function createPreviewDataUrl(source, maxSize = 720, quality = .82) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     let objectUrl = "";
@@ -3147,7 +3147,7 @@ function createPreviewDataUrl(source, maxSize = 720) {
       const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
       const context = canvas.getContext("2d"); context.fillStyle = "#ffffff"; context.fillRect(0, 0, width, height); context.drawImage(image, 0, 0, width, height);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
-      resolve(canvas.toDataURL("image/jpeg", .82));
+      resolve(canvas.toDataURL("image/jpeg", quality));
     };
     image.onerror = () => { if (objectUrl) URL.revokeObjectURL(objectUrl); reject(new Error("图片预览生成失败")); };
     if (source instanceof Blob) { objectUrl = URL.createObjectURL(source); image.src = objectUrl; } else image.src = source;
@@ -3173,6 +3173,14 @@ async function sourceToDataUrl(src) {
   if (src.startsWith("data:")) return src; const response = await fetch(src); if (!response.ok) throw new Error("参考图读取失败");
   const blob = await response.blob();
   return await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
+}
+async function sourceToClaudeDataUrl(src) {
+  const dataUrl = await sourceToDataUrl(src);
+  const response = await fetch(dataUrl);
+  if (!response.ok) throw new Error("Claude 参考图读取失败");
+  const blob = await response.blob();
+  // Keep Claude multi-image requests small enough for the gateway while retaining visual detail.
+  return createPreviewDataUrl(blob, 1400, .8);
 }
 function nodeDisplaySource(node) { return node?.previewSrc || node?.src || ""; }
 function imageSourceFromNode(node) {
@@ -3450,7 +3458,7 @@ async function runAnswerNode(nodeId) {
   if (usesDeepseek && sources.length && node.model !== deepseekVisionAnswerModel) { selectNode(nodeId); return toast("当前 DeepSeek 模型不支持图片输入，请切换到 V4 Flash Vision", true); }
   recordHistory(); node.status = "running"; node.error = ""; renderCanvas(); renderInspector();
   try {
-    const references = await Promise.all(sources.map(sourceToDataUrl));
+    const references = await Promise.all(sources.map(usesClaude ? sourceToClaudeDataUrl : sourceToDataUrl));
     const h3Enabled = node.answerSkill === "minimax-h3";
     const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && !usesClaude && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt, model: node.model, references, skill: h3Enabled ? "minimax-h3" : "none", h3Mode: h3Enabled ? resolveH3AnswerMode(node, references.length) : undefined, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined }) }, 165_000);
     node.answer = String(result.answer || ""); node.model = result.model || node.model; node.status = "idle";
