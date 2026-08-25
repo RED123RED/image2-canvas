@@ -120,6 +120,17 @@ function krea2Dimensions(node) {
   const normalize = value => Math.min(4096, Math.max(32, Math.round((Number(value) || 32) / 32) * 32));
   return { width: normalize(node?.kreaWidth || 1920), height: normalize(node?.kreaHeight || 1080) };
 }
+const krea2PresetDimensions = Object.freeze({
+  "16:9": [1920, 1088],
+  "9:16": [1088, 1920],
+  "1:1": [1024, 1024],
+  "3:4": [1152, 1536],
+  "4:3": [1536, 1152]
+});
+function krea2PresetForNode(node) {
+  const dimensions = krea2Dimensions(node);
+  return Object.entries(krea2PresetDimensions).find(([, value]) => value[0] === dimensions.width && value[1] === dimensions.height)?.[0] || "";
+}
 const generatorProviders = Object.freeze({ image2: { label: "Image2", model: "gpt-image-2" }, gemini: { label: "Gemini", model: geminiImageModels[0].id }, moyu: { label: "豆包 Seedream", model: seedreamImageModels[0].id }, midjourney: { label: "Midjourney Fast", model: midjourneyImageModels[0].id }, "runninghub-krea2": runningHubKrea2Provider });
 function generatorModelForNode(node) {
   if (node?.mediaType === "video" || node?.provider === "runninghub-h3") return runningHubVideoProvider.model;
@@ -2440,7 +2451,8 @@ function renderGeneratorNodeHtml(node, selected, style) {
     : `<div class="node-static-field">${escapeHtml(outputOptions[0]?.label || "当前最大")}</div>`;
   const batchControl = isMidjourney ? `<div class="node-static-field">四宫格</div>` : `<select class="node-select node-interactive" data-generator-field="batch" data-node-id="${node.id}" aria-label="生成张数">${[1,2,3,4].map(value => `<option value="${value}"${Number(node.batch) === value ? " selected" : ""}>${value}</option>`).join("")}</select>`;
   const outputControl = isMidjourney ? `<div class="node-static-field">结果节点 U1-U4</div>` : isRunningHubKrea2 ? `<div class="node-static-field">自定义尺寸</div>` : outputSizeControl;
-  const krea2SizeControl = isRunningHubKrea2 ? `<div class="node-field-row generator-custom-size"><div class="node-field"><label>宽度</label><input class="node-input node-interactive" type="number" min="32" max="4096" step="32" data-generator-field="kreaWidth" data-node-id="${node.id}" value="${krea2Dimensions(node).width}" aria-label="K2 白玉宽度"></div><div class="node-field"><label>高度</label><input class="node-input node-interactive" type="number" min="32" max="4096" step="32" data-generator-field="kreaHeight" data-node-id="${node.id}" value="${krea2Dimensions(node).height}" aria-label="K2 白玉高度"></div></div>` : "";
+  const krea2Preset = krea2PresetForNode(node);
+  const krea2SizeControl = isRunningHubKrea2 ? `<div class="node-field"><label>尺寸预设</label><select class="node-select node-interactive" data-generator-field="kreaPreset" data-node-id="${node.id}" aria-label="K2 白玉尺寸预设"><option value="">${krea2Preset ? "预设尺寸" : "自定义尺寸"}</option>${Object.keys(krea2PresetDimensions).map(value => `<option value="${value}"${krea2Preset === value ? " selected" : ""}>${value}</option>`).join("")}</select></div><div class="node-field-row generator-custom-size"><div class="node-field"><label>宽度</label><input class="node-input node-interactive" type="number" min="32" max="4096" step="32" data-generator-field="kreaWidth" data-node-id="${node.id}" value="${krea2Dimensions(node).width}" aria-label="K2 白玉宽度"></div><div class="node-field"><label>高度</label><input class="node-input node-interactive" type="number" min="32" max="4096" step="32" data-generator-field="kreaHeight" data-node-id="${node.id}" value="${krea2Dimensions(node).height}" aria-label="K2 白玉高度"></div></div>` : "";
   const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, generatorPromptPortId(index)); const promptNode = findNode(edge?.source); const label = edge ? sourceLabelForEdge(edge) : "未连接"; return `<div class="input-slot${edge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>${index ? `提示词 ${index + 1}` : "提示词"}</span><span>${escapeHtml(label)}</span></div>`; }).join("");
   const slots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); const imageNode = findNode(edge?.source); return `<div class="input-slot${edge ? " is-connected" : ""}${imageNode?.disabled ? " is-disabled" : ""}"><span>参考图 ${index + 1}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
   const statusLabel = node.status === "running" ? "生成中" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个结果` : "待运行";
@@ -2635,6 +2647,9 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
       const provider = generatorProviderForNode(node);
       if (["GPT Image 2", "Gemini Image", "豆包 Seedream", "Midjourney Fast", "K2 白玉", "生图"].includes(node.name)) node.name = node.provider === "gemini" ? "Gemini Image" : node.provider === "moyu" ? "豆包 Seedream" : node.provider === "midjourney" ? "Midjourney Fast" : node.provider === "runninghub-krea2" ? "K2 白玉" : "GPT Image 2";
       toast(`已切换为 ${provider.label} · ${provider.model}`);
+    } else if (field === "kreaPreset") {
+      const preset = krea2PresetDimensions[event.target.value];
+      if (preset) { node.kreaWidth = preset[0]; node.kreaHeight = preset[1]; }
     } else if (field === "kreaWidth" || field === "kreaHeight") {
       const dimensions = krea2Dimensions(node); const value = Math.min(4096, Math.max(32, Math.round((Number(event.target.value) || dimensions[field === "kreaWidth" ? "width" : "height"]) / 32) * 32));
       node[field] = value; event.target.value = String(value);
