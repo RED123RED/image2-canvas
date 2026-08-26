@@ -53,7 +53,7 @@ const runningHubVideoWorkflows = Object.freeze({
   })
 });
 const runningHubKrea2Workflow = Object.freeze({
-  id: "2091807003948703746",
+  id: "2092538454105223169",
   promptNode: "67",
   widthNode: "75",
   heightNode: "75",
