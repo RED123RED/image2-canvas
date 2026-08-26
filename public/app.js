@@ -2549,6 +2549,7 @@ function bindNodeEvents() {
   $$(".canvas-node").forEach(element => element.addEventListener("pointerdown", handleNodePointerDown));
   $$('[data-node-drag-handle]').forEach(handle => handle.addEventListener("pointerdown", event => { if (event.target.closest(".node-interactive, .node-port")) return; event.preventDefault(); event.stopPropagation(); startNodeDrag(event, handle.dataset.nodeDragHandle); }));
   $$('[data-node-resize]').forEach(handle => handle.addEventListener("pointerdown", startResize));
+  $$('[data-preview-node]').forEach(image => image.addEventListener("pointerdown", event => startNodeDrag(event, image.dataset.previewNode)));
   $$('[data-download-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.downloadNode); if (node) downloadNode(node); }));
   $$('[data-crop-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); openCropDialog(button.dataset.cropNode); }));
   $$('[data-midjourney-upscale]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void upscaleMidjourneyCandidate(button.dataset.midjourneyUpscale, Number(button.dataset.midjourneySlot)); }));
