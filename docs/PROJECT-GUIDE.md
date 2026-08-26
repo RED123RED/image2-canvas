@@ -77,8 +77,7 @@ npm run verify
 ### 单个任务
 
 ```powershell
-git switch -c feat/<task-name>
-# 修改并做最小范围测试
+# 默认直接在 master 上处理一个功能或缺陷；修改前先确认工作区状态
 npm run verify
 git diff --check
 git add <明确的文件>
@@ -93,7 +92,7 @@ git tag stable-YYYYMMDD-<task-name>
 
 ### 多个窗口同时工作
 
-不要让多个窗口同时打开并修改同一个目录。为每个独立任务创建 worktree：
+默认不同时打开多个窗口修改同一个目录。确实需要并行任务时，为每个独立任务创建 worktree：
 
 ```powershell
 git worktree add -b feat/<task-name> E:\AI剧本\image2-canvas-work\<task-name> master
