@@ -1306,8 +1306,8 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .story-type-picker { max-height: none; overflow: visible; }
 
 /* Larger editable frame titles in both workflows. */
-.frame-title { top: 12px; left: 16px; font-size: 24px; line-height: 1.1; }
-.frame-meta { top: 45px; left: 16px; font-size: 10px; }
+.frame-title { top: 16px; left: 20px; font-size: 72px; line-height: 1.1; }
+.frame-meta { top: 100px; left: 20px; font-size: 30px; line-height: 1.2; }
 .script-group-frame header { height: 50px; padding: 0 14px; }
 .script-frame-name, .script-frame-name:hover, .script-frame-name:focus { min-width: 104px; max-width: 340px; font-size: 20px; line-height: 1.1; }
 .script-group-frame header span { font-size: 10px; }
