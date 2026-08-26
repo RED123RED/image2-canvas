@@ -30,7 +30,7 @@
 - Seedream：支持豆包图像模型及像素尺寸控制。
 - Midjourney Fast：支持四宫格候选图和候选图放大任务。
 - RunningHub H3：支持首帧生视频等已接入模式，任务会上传参考图、轮询远程任务并保存诊断阶段。
-- RunningHub Krea2（界面显示“K2 白玉”）：工作流 `2092538454105223169`，支持自定义宽高、批量数量和比例预设；它不使用参考图输入。
+- RunningHub Krea2（界面显示“K2 白玉”）：工作流 `2092538454105223169`（https://www.runninghub.cn/workflow/2092538454105223169），支持自定义宽高、批量数量和比例预设；它不使用参考图输入。
 - 模型回答：支持 GPT-5.5/GPT-5.6、DeepSeek V4 系列和 Claude Sonnet 4.6；Claude 参考图会在前端压缩后再提交，以降低多图请求体积。
 
 各提供商密钥由本机服务读取，配置文件位于当前 Windows 用户的 `%APPDATA%\image2-canvas\providers.json`；密钥不得写入项目、导出文件、日志或 Git。
