@@ -216,6 +216,7 @@ let connectionDraft = null;
 let connectionMenu = null;
 let connectionMenuDraft = null;
 let connectionMenuDragSession = null;
+let connectionMenuResizeSession = null;
 let canvasContextMenu = null;
 function clearWorkflowInteractionState() {
   dragSession?.elements?.forEach(item => { if (item.element) { item.element.style.transform = ""; item.element.style.willChange = ""; item.element.classList.remove("is-dragging"); } });
@@ -1237,9 +1238,13 @@ function closeConnectionMenu() {
   if (connectionMenu) connectionMenu.remove();
   connectionMenu = null; connectionMenuDraft = null;
   connectionMenuDragSession = null;
+  connectionMenuResizeSession = null;
   window.removeEventListener("pointermove", moveConnectionMenu);
   window.removeEventListener("pointerup", finishConnectionMenuDrag);
   window.removeEventListener("pointercancel", finishConnectionMenuDrag);
+  window.removeEventListener("pointermove", moveConnectionMenuResize);
+  window.removeEventListener("pointerup", finishConnectionMenuResize);
+  window.removeEventListener("pointercancel", finishConnectionMenuResize);
   window.removeEventListener("pointerdown", handleConnectionMenuOutside);
 }
 function handleConnectionMenuOutside(event) { if (connectionMenu && !connectionMenu.contains(event.target)) closeConnectionMenu(); }
@@ -1264,6 +1269,28 @@ function finishConnectionMenuDrag() {
   window.removeEventListener("pointermove", moveConnectionMenu);
   window.removeEventListener("pointerup", finishConnectionMenuDrag);
   window.removeEventListener("pointercancel", finishConnectionMenuDrag);
+}
+function startConnectionMenuResize(event) {
+  if (!connectionMenu || event.button !== 0) return;
+  const rect = connectionMenu.getBoundingClientRect();
+  connectionMenuResizeSession = { startX: event.clientX, startY: event.clientY, width: rect.width, height: rect.height };
+  event.preventDefault(); event.stopPropagation();
+  window.addEventListener("pointermove", moveConnectionMenuResize);
+  window.addEventListener("pointerup", finishConnectionMenuResize);
+  window.addEventListener("pointercancel", finishConnectionMenuResize);
+}
+function moveConnectionMenuResize(event) {
+  if (!connectionMenu || !connectionMenuResizeSession) return;
+  const minWidth = 220; const minHeight = 148; const maxWidth = Math.max(minWidth, window.innerWidth - 24); const maxHeight = Math.max(minHeight, window.innerHeight - 24);
+  const width = Math.min(maxWidth, Math.max(minWidth, connectionMenuResizeSession.width + event.clientX - connectionMenuResizeSession.startX));
+  const height = Math.min(maxHeight, Math.max(minHeight, connectionMenuResizeSession.height + event.clientY - connectionMenuResizeSession.startY));
+  connectionMenu.style.width = `${Math.round(width)}px`; connectionMenu.style.height = `${Math.round(height)}px`;
+}
+function finishConnectionMenuResize() {
+  connectionMenuResizeSession = null;
+  window.removeEventListener("pointermove", moveConnectionMenuResize);
+  window.removeEventListener("pointerup", finishConnectionMenuResize);
+  window.removeEventListener("pointercancel", finishConnectionMenuResize);
 }
 function positionConnectionMenu(menu, clientX, clientY) {
   const margin = 12; const rect = menu.getBoundingClientRect();
@@ -1340,6 +1367,7 @@ function showConnectionMenu(clientX, clientY, draft) {
   });
   document.body.appendChild(menu); connectionMenu = menu; connectionMenuDraft = draft;
   menu.querySelector(".connection-menu-title")?.addEventListener("pointerdown", startConnectionMenuDrag);
+  const resizeHandle = document.createElement("span"); resizeHandle.className = "connection-menu-resize"; resizeHandle.setAttribute("aria-hidden", "true"); resizeHandle.addEventListener("pointerdown", startConnectionMenuResize); menu.appendChild(resizeHandle);
   positionConnectionMenu(menu, clientX, clientY); refreshIcons();
   setTimeout(() => window.addEventListener("pointerdown", handleConnectionMenuOutside), 0);
 }
