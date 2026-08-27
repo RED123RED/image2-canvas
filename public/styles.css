@@ -612,10 +612,15 @@ html[data-edge-motion="static"] .script-relationship-edge { animation: none; fil
 .connection-menu-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 3px 4px 8px; border-bottom: 1px solid var(--line); }
 .connection-menu-title span { color: var(--ink); font-size: 12px; font-weight: 800; }
 .connection-menu-title small { color: var(--muted); font-size: 9px; }
-.connection-option-list { max-height: 312px; overflow: auto; padding-top: 7px; }
+.connection-option-list, .connection-image-list { max-height: 312px; overflow: auto; padding-top: 7px; }
+.connection-menu-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 9px 8px 2px; border-top: 1px solid var(--line); color: var(--ink); font-size: 10px; font-weight: 750; }
+.connection-menu-section-title small { color: var(--muted); font-size: 9px; font-weight: 500; }
 .connection-option { display: flex; width: 100%; align-items: center; gap: 9px; padding: 8px; border-radius: 9px; color: var(--ink); background: transparent; cursor: pointer; text-align: left; }
 .connection-option:hover { background: var(--surface-soft); }
 .connection-option-icon { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border-radius: 7px; color: var(--edge-image); background: var(--primary-soft); }
+.connection-option-image { gap: 9px; }
+.connection-option-image .connection-option-image { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); }
+.connection-option-image .connection-option-image img { width: 100%; height: 100%; object-fit: cover; }
 .connection-menu.prompt .connection-option-icon { color: var(--edge-prompt); background: var(--violet-soft); }
 .connection-option-icon svg { width: 15px; height: 15px; }
 .connection-option-copy { min-width: 0; display: grid; gap: 3px; }

@@ -1190,6 +1190,23 @@ function connectionChoicesForDraft(draft) {
   if ((source.type === "generator" || source.type === "answer") && draft.direction === "input" && draft.dataType === "image") return [{ kind: "reference", title: "新建参考图节点", subtitle: "连接到参考图输入，随后手动上传", icon: "image-plus" }];
   return [];
 }
+function existingImageChoicesForDraft(draft) {
+  if (!state || draft?.dataType !== "image" || draft.direction !== "input") return [];
+  return state.nodes
+    .filter(node => node.id !== draft.nodeId && node.type !== "loading" && node.type !== "video" && node.type !== "video-editor" && node.type !== "video-preview" && Boolean(imageSourceFromNode(node)))
+    .map(node => {
+      const source = imageSourceFromNode(node);
+      const preview = node.type === "image" ? nodeCanvasSource(node) : source;
+      return { kind: "existing-image", sourceId: node.id, title: node.name || "未命名图片", subtitle: `${node.source || "画布图片"}${node.ratio ? ` · ${node.ratio}` : ""}`, imageSrc: preview || source };
+    });
+}
+function connectExistingImageForDraft(draft, sourceId) {
+  const source = findNode(sourceId);
+  if (!source || !imageSourceFromNode(source)) return toast("该图片已不可用，请重新选择", true);
+  recordHistory();
+  connectPorts({ nodeId: source.id, portId: "image", dataType: "image", direction: "output" }, draft, false);
+  renderCanvas(); renderInspector(); scheduleSave();
+}
 function createNodeForDraft(draft, kind, clientX, clientY) {
   if (!draft || !state) return;
   recordHistory();
@@ -1272,10 +1289,11 @@ function showCanvasContextMenu(event) {
 function showConnectionMenu(clientX, clientY, draft) {
   closeConnectionMenu();
   const choices = connectionChoicesForDraft(draft);
+  const imageChoices = existingImageChoicesForDraft(draft);
   if (!choices.length) return toast("这个端口不能在空白处创建节点", true);
   const menu = document.createElement("div");
   menu.className = `connection-menu ${draft.dataType}`;
-  menu.innerHTML = `<div class="connection-menu-title"><span>创建并连接</span><small>${choices.length === 1 ? escapeHtml(choices[0].subtitle) : "选择要连接的模块"}</small></div><div class="connection-option-list"></div>`;
+  menu.innerHTML = `<div class="connection-menu-title"><span>创建并连接</span><small>${imageChoices.length ? "选择新建模块或画布图片" : choices.length === 1 ? escapeHtml(choices[0].subtitle) : "选择要连接的模块"}</small></div><div class="connection-option-list"></div>${imageChoices.length ? `<div class="connection-menu-section-title"><span>画布已有图片</span><small>${imageChoices.length} 张</small></div><div class="connection-image-list"></div>` : ""}`;
   const list = menu.querySelector(".connection-option-list");
   choices.forEach(choice => {
     const button = document.createElement("button");
@@ -1283,6 +1301,14 @@ function showConnectionMenu(clientX, clientY, draft) {
     button.innerHTML = `<span class="connection-option-icon">${icon(choice.icon)}</span><span class="connection-option-copy"><strong>${escapeHtml(choice.title)}</strong><small>${escapeHtml(choice.subtitle)}</small></span>`;
     button.addEventListener("click", event => { event.stopPropagation(); closeConnectionMenu(); createNodeForDraft(draft, choice.kind, clientX, clientY); });
     list.appendChild(button);
+  });
+  const imageList = menu.querySelector(".connection-image-list");
+  imageChoices.forEach(choice => {
+    const button = document.createElement("button");
+    button.className = "connection-option connection-image-option"; button.type = "button";
+    button.innerHTML = `<span class="connection-option-image"><img src="${escapeHtml(choice.imageSrc)}" alt="" loading="lazy" decoding="async"></span><span class="connection-option-copy"><strong>${escapeHtml(choice.title)}</strong><small>${escapeHtml(choice.subtitle)}</small></span>`;
+    button.addEventListener("click", event => { event.stopPropagation(); closeConnectionMenu(); connectExistingImageForDraft(draft, choice.sourceId); });
+    imageList.appendChild(button);
   });
   document.body.appendChild(menu); connectionMenu = menu; connectionMenuDraft = draft;
   positionConnectionMenu(menu, clientX, clientY); refreshIcons();
