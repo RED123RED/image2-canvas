@@ -215,6 +215,7 @@ let selectionSession = null;
 let connectionDraft = null;
 let connectionMenu = null;
 let connectionMenuDraft = null;
+let connectionMenuDragSession = null;
 let canvasContextMenu = null;
 function clearWorkflowInteractionState() {
   dragSession?.elements?.forEach(item => { if (item.element) { item.element.style.transform = ""; item.element.style.willChange = ""; item.element.classList.remove("is-dragging"); } });
@@ -1194,7 +1195,7 @@ function connectionChoicesForDraft(draft) {
 function existingImageChoicesForDraft(draft) {
   if (!state || draft?.dataType !== "image" || draft.direction !== "input") return [];
   return state.nodes
-    .filter(node => node.id !== draft.nodeId && node.type !== "loading" && node.type !== "video" && node.type !== "video-editor" && node.type !== "video-preview" && Boolean(imageSourceFromNode(node)))
+    .filter(node => node.id !== draft.nodeId && node.type === "image" && node.mediaType !== "video" && Boolean(imageSourceFromNode(node)))
     .map(node => {
       const source = imageSourceFromNode(node);
       const preview = node.type === "image" ? nodeCanvasSource(node) : source;
@@ -1235,9 +1236,35 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
 function closeConnectionMenu() {
   if (connectionMenu) connectionMenu.remove();
   connectionMenu = null; connectionMenuDraft = null;
+  connectionMenuDragSession = null;
+  window.removeEventListener("pointermove", moveConnectionMenu);
+  window.removeEventListener("pointerup", finishConnectionMenuDrag);
+  window.removeEventListener("pointercancel", finishConnectionMenuDrag);
   window.removeEventListener("pointerdown", handleConnectionMenuOutside);
 }
 function handleConnectionMenuOutside(event) { if (connectionMenu && !connectionMenu.contains(event.target)) closeConnectionMenu(); }
+function startConnectionMenuDrag(event) {
+  if (!connectionMenu || event.button !== 0 || event.target.closest("button, input, select, textarea")) return;
+  const rect = connectionMenu.getBoundingClientRect();
+  connectionMenuDragSession = { startX: event.clientX, startY: event.clientY, left: rect.left, top: rect.top };
+  event.preventDefault(); event.stopPropagation();
+  window.addEventListener("pointermove", moveConnectionMenu);
+  window.addEventListener("pointerup", finishConnectionMenuDrag);
+  window.addEventListener("pointercancel", finishConnectionMenuDrag);
+}
+function moveConnectionMenu(event) {
+  if (!connectionMenu || !connectionMenuDragSession) return;
+  const margin = 12; const rect = connectionMenu.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - rect.width - margin, Math.max(margin, connectionMenuDragSession.left + event.clientX - connectionMenuDragSession.startX));
+  const top = Math.min(window.innerHeight - rect.height - margin, Math.max(margin, connectionMenuDragSession.top + event.clientY - connectionMenuDragSession.startY));
+  connectionMenu.style.left = `${left}px`; connectionMenu.style.top = `${top}px`;
+}
+function finishConnectionMenuDrag() {
+  connectionMenuDragSession = null;
+  window.removeEventListener("pointermove", moveConnectionMenu);
+  window.removeEventListener("pointerup", finishConnectionMenuDrag);
+  window.removeEventListener("pointercancel", finishConnectionMenuDrag);
+}
 function positionConnectionMenu(menu, clientX, clientY) {
   const margin = 12; const rect = menu.getBoundingClientRect();
   const left = Math.min(window.innerWidth - rect.width - margin, Math.max(margin, clientX + 10));
@@ -1306,12 +1333,13 @@ function showConnectionMenu(clientX, clientY, draft) {
   const imageList = menu.querySelector(".connection-image-list");
   imageChoices.forEach(choice => {
     const button = document.createElement("button");
-    button.className = "connection-option connection-image-option"; button.type = "button";
-    button.innerHTML = `<span class="connection-image-thumb"><img src="${escapeHtml(choice.imageSrc)}" alt="" loading="lazy" decoding="async"></span><span class="connection-option-copy"><strong>${escapeHtml(choice.title)}</strong><small>${escapeHtml(choice.subtitle)}</small></span>`;
+    button.className = "connection-option connection-image-option"; button.type = "button"; button.setAttribute("aria-label", choice.title); button.title = choice.title;
+    button.innerHTML = `<span class="connection-image-thumb"><img src="${escapeHtml(choice.imageSrc)}" alt="" loading="lazy" decoding="async"></span>`;
     button.addEventListener("click", event => { event.stopPropagation(); closeConnectionMenu(); connectExistingImageForDraft(draft, choice.sourceId); });
     imageList.appendChild(button);
   });
   document.body.appendChild(menu); connectionMenu = menu; connectionMenuDraft = draft;
+  menu.querySelector(".connection-menu-title")?.addEventListener("pointerdown", startConnectionMenuDrag);
   positionConnectionMenu(menu, clientX, clientY); refreshIcons();
   setTimeout(() => window.addEventListener("pointerdown", handleConnectionMenuOutside), 0);
 }
