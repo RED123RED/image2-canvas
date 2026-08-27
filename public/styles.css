@@ -422,6 +422,8 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 #workspaceView.is-script-mode #inspectorPanel .action-row strong { font-size: calc(11px * var(--script-inspector-scale, 1)); }.workspace.is-script-mode .canvas-scene, .workspace.is-script-mode .tool-rail { display: none; }
 .image-preview, .reference-placeholder { width: 100%; min-height: 130px; flex: 1 1 auto; border-radius: 5px; background: var(--surface-soft); object-fit: contain; }
 .reference-placeholder { display: grid; place-items: center; gap: 6px; padding: 14px; color: var(--muted); background: var(--surface-soft); cursor: pointer; }
+.reference-placeholder[data-reference-drag-node] { cursor: grab; }
+.reference-placeholder[data-reference-drag-node]:active { cursor: grabbing; }
 .reference-placeholder svg { width: 26px; height: 26px; }
 .reference-placeholder strong { color: var(--ink); font-size: 11px; }
 .reference-placeholder small { font-size: 9px; }
@@ -608,19 +610,19 @@ html[data-edge-motion="static"] .script-relationship-edge { animation: none; fil
 .video-loading-preview > div { display: grid; justify-items: center; gap: 7px; }
 .video-loading-preview strong { color: var(--ink); font-size: 16px; font-variant-numeric: tabular-nums; }
 .video-loading-preview small { color: var(--muted); font-size: 9px; }
-.connection-menu { position: fixed; z-index: 2000; width: 276px; max-height: 382px; overflow: hidden; padding: 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: color-mix(in srgb, var(--surface-raised) 94%, transparent); box-shadow: 0 18px 44px rgba(0,0,0,.22); backdrop-filter: blur(14px); }
+.connection-menu { position: fixed; z-index: 2000; width: 276px; max-height: min(560px, calc(100vh - 24px)); overflow-y: auto; padding: 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: color-mix(in srgb, var(--surface-raised) 94%, transparent); box-shadow: 0 18px 44px rgba(0,0,0,.22); backdrop-filter: blur(14px); }
 .connection-menu-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 3px 4px 8px; border-bottom: 1px solid var(--line); }
 .connection-menu-title span { color: var(--ink); font-size: 12px; font-weight: 800; }
 .connection-menu-title small { color: var(--muted); font-size: 9px; }
-.connection-option-list, .connection-image-list { max-height: 312px; overflow: auto; padding-top: 7px; }
+.connection-option-list, .connection-image-list { padding-top: 7px; }
 .connection-menu-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 9px 8px 2px; border-top: 1px solid var(--line); color: var(--ink); font-size: 10px; font-weight: 750; }
 .connection-menu-section-title small { color: var(--muted); font-size: 9px; font-weight: 500; }
 .connection-option { display: flex; width: 100%; align-items: center; gap: 9px; padding: 8px; border-radius: 9px; color: var(--ink); background: transparent; cursor: pointer; text-align: left; }
 .connection-option:hover { background: var(--surface-soft); }
 .connection-option-icon { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border-radius: 7px; color: var(--edge-image); background: var(--primary-soft); }
-.connection-option-image { gap: 9px; }
-.connection-option-image .connection-option-image { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); }
-.connection-option-image .connection-option-image img { width: 100%; height: 100%; object-fit: cover; }
+.connection-image-option { gap: 9px; }
+.connection-image-thumb { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); }
+.connection-image-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .connection-menu.prompt .connection-option-icon { color: var(--edge-prompt); background: var(--violet-soft); }
 .connection-option-icon svg { width: 15px; height: 15px; }
 .connection-option-copy { min-width: 0; display: grid; gap: 3px; }

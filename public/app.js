@@ -223,6 +223,7 @@ function clearWorkflowInteractionState() {
   if (selectionRect) selectionRect.hidden = true;
 }
 let pendingImageUploadNodeId = null;
+let suppressReferenceUploadNodeId = null;
 let pendingVideoImportNodeId = null;
 let cropSession = null;
 let compositionDragSession = null;
@@ -1306,7 +1307,7 @@ function showConnectionMenu(clientX, clientY, draft) {
   imageChoices.forEach(choice => {
     const button = document.createElement("button");
     button.className = "connection-option connection-image-option"; button.type = "button";
-    button.innerHTML = `<span class="connection-option-image"><img src="${escapeHtml(choice.imageSrc)}" alt="" loading="lazy" decoding="async"></span><span class="connection-option-copy"><strong>${escapeHtml(choice.title)}</strong><small>${escapeHtml(choice.subtitle)}</small></span>`;
+    button.innerHTML = `<span class="connection-image-thumb"><img src="${escapeHtml(choice.imageSrc)}" alt="" loading="lazy" decoding="async"></span><span class="connection-option-copy"><strong>${escapeHtml(choice.title)}</strong><small>${escapeHtml(choice.subtitle)}</small></span>`;
     button.addEventListener("click", event => { event.stopPropagation(); closeConnectionMenu(); connectExistingImageForDraft(draft, choice.sourceId); });
     imageList.appendChild(button);
   });
@@ -2451,7 +2452,7 @@ function renderImageNodeHtml(node, selected, style) {
     ? isVideoLoading
       ? `<div class="loading-preview video-loading-preview"><div>${icon("loader-circle")}<span>${escapeHtml(node.source || "海螺 H3 视频")} 生成中</span><strong data-generation-elapsed="${Number(node.generationStartedAt) || Date.now()}">已等待 ${escapeHtml(elapsed)}</strong><small>${escapeHtml(loadingStage)}</small></div></div>`
       : `<div class="loading-preview">${icon("loader-circle")}<span>${escapeHtml(node.source || "生图")} 生成中</span></div>`
-    : hasSource ? `<img class="image-preview node-interactive" data-preview-node="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}" loading="lazy" draggable="false" decoding="async">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`;
+    : hasSource ? `<img class="image-preview node-interactive" data-preview-node="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}" loading="lazy" draggable="false" decoding="async">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}" data-reference-drag-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`;
   return `<article class="canvas-node image-node${loading ? " loading-node" : ""}${disabled ? " is-disabled" : ""}${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, loading ? "loader-circle" : "image", `${actions}${toggle}`, false)}<div class="node-body">
     ${preview}
     ${candidateActions}
@@ -2575,7 +2576,7 @@ function bindNodeEvents() {
   $$(".canvas-node").forEach(element => element.addEventListener("pointerdown", handleNodePointerDown));
   $$('[data-node-drag-handle]').forEach(handle => handle.addEventListener("pointerdown", event => { if (event.target.closest(".node-interactive, .node-port")) return; event.preventDefault(); event.stopPropagation(); startNodeDrag(event, handle.dataset.nodeDragHandle); }));
   $$('[data-node-resize]').forEach(handle => handle.addEventListener("pointerdown", startResize));
-  $$('[data-preview-node]').forEach(image => image.addEventListener("pointerdown", event => startNodeDrag(event, image.dataset.previewNode)));
+  $$('[data-preview-node], [data-reference-drag-node]').forEach(element => element.addEventListener("pointerdown", event => startNodeDrag(event, element.dataset.previewNode || element.dataset.referenceDragNode)));
   $$('[data-download-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.downloadNode); if (node) downloadNode(node); }));
   $$('[data-crop-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); openCropDialog(button.dataset.cropNode); }));
   $$('[data-midjourney-upscale]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void upscaleMidjourneyCandidate(button.dataset.midjourneyUpscale, Number(button.dataset.midjourneySlot)); }));
@@ -2727,7 +2728,7 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
     event.stopPropagation(); const node = findNode(control.dataset.answerH3Duration); if (!node || node.type !== "answer") return;
     recordHistory(); node.h3Duration = normalizedH3Duration(event.target.value); renderCanvas(); renderInspector(); scheduleSave();
   }));
-  $$("[data-upload-node]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); triggerReferenceUpload(button.dataset.uploadNode); }));
+  $$("[data-upload-node]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const nodeId = button.dataset.uploadNode; if (suppressReferenceUploadNodeId === nodeId) { suppressReferenceUploadNodeId = null; return; } triggerReferenceUpload(nodeId); }));
   $$(".node-port").forEach(port => port.addEventListener("pointerdown", startConnection));
   refreshIcons();
 }
@@ -2880,11 +2881,16 @@ function handlePointerUp(event) {
     resizeSession = null; requestEdgeRender(); renderInspector(); updateHistoryButtons();
   }
   if (dragSession) {
+    const movedImageNodeId = dragSession.moved ? dragSession.origins.find(origin => findNode(origin.id)?.type === "image")?.id : null;
     dragSession.elements.forEach(item => { const node = findNode(item.id); if (item.element && node) { item.element.style.left = `${node.x}px`; item.element.style.top = `${node.y}px`; item.element.style.transform = ""; item.element.style.willChange = ""; item.element.classList.remove("is-dragging"); } });
     if (dragSession.moved) { undoStack.push(dragSession.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); }
     const movedFrame = dragSession.origins.some(origin => findNode(origin.id)?.type === "frame");
     const movedFrames = dragSession.origins.map(origin => findNode(origin.id)).filter(node => node?.type === "frame");
     dragSession = null;
+    if (movedImageNodeId) {
+      suppressReferenceUploadNodeId = movedImageNodeId;
+      setTimeout(() => { if (suppressReferenceUploadNodeId === movedImageNodeId) suppressReferenceUploadNodeId = null; }, 0);
+    }
     // Moving a frame already updates its children in-place. Refresh only the count label;
     // rebuilding the canvas would recreate every video element in the group.
     if (movedFrame) movedFrames.forEach(updateFrameMetaDom);
