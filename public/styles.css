@@ -433,11 +433,11 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .edge-layer, .node-layer { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; }
 .edge-layer { z-index: 1; pointer-events: none; }
 .node-layer { z-index: 2; }
-.workflow-edge { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; opacity: .95; stroke-dasharray: 8 10; filter: drop-shadow(0 0 3px rgba(56, 133, 119, .26)); animation: edge-flow 2.2s linear infinite; }
+.workflow-edge { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; opacity: .95; filter: drop-shadow(0 0 3px rgba(56, 133, 119, .26)); }
 .workflow-edge.prompt { stroke: var(--edge-prompt); filter: drop-shadow(0 0 3px rgba(154, 99, 196, .26)); }
 .workflow-edge.image { stroke: var(--edge-image); filter: drop-shadow(0 0 3px rgba(43, 145, 125, .26)); }
 .workflow-edge.video { stroke: #b17128; filter: drop-shadow(0 0 3px rgba(177, 113, 40, .24)); }
-.workflow-edge.is-selected { stroke-width: 3; opacity: 1; animation-duration: 1.2s; }
+.workflow-edge.is-selected { stroke-width: 3; opacity: 1; }
 .workspace.is-flow-interacting .workflow-edge { filter: none; animation-play-state: paused; }
 html[data-edge-motion="static"] .workflow-edge,
 html[data-edge-motion="static"] .script-relationship-edge { animation: none; filter: none; }

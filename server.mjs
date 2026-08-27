@@ -137,6 +137,7 @@ function trimCompletedJobs() {
 }
 
 function persistJobs() {
+  trimCompletedJobs();
   const snapshot = [...jobs.values()].map(jobPersistView);
   const write = jobPersistQueue.catch(() => undefined).then(async () => {
     await fs.mkdir(outputDir, { recursive: true });
