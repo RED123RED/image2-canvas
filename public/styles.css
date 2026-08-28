@@ -430,9 +430,10 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .asset-thumb-empty { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border-radius: 6px; color: var(--muted); background: var(--surface-soft); }
 .asset-thumb-empty svg { width: 18px; height: 18px; }
 .canvas-scene { position: absolute; top: 0; left: 0; width: 1px; height: 1px; transform-origin: 0 0; }
-.edge-layer, .node-layer { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; }
-.edge-layer { z-index: 1; pointer-events: none; }
-.node-layer { z-index: 2; }
+.frame-layer, .edge-layer, .node-layer { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; }
+.frame-layer { z-index: 1; }
+.edge-layer { z-index: 2; pointer-events: none; }
+.node-layer { z-index: 3; }
 .workflow-edge { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; opacity: .95; filter: drop-shadow(0 0 3px rgba(56, 133, 119, .26)); }
 .workflow-edge.prompt { stroke: var(--edge-prompt); filter: drop-shadow(0 0 3px rgba(154, 99, 196, .26)); }
 .workflow-edge.image { stroke: var(--edge-image); filter: drop-shadow(0 0 3px rgba(43, 145, 125, .26)); }

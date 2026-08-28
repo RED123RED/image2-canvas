@@ -178,6 +178,7 @@ const compositionTextureLabels = { clean: "干净通透", grain: "胶片颗粒",
 
 const workspace = $("#workspace");
 const canvasScene = $("#canvasScene");
+const frameLayer = $("#frameLayer");
 const nodeLayer = $("#nodeLayer");
 const edgeLayer = $("#edgeLayer");
 const libraryContent = $("#libraryContent");
@@ -2341,16 +2342,18 @@ function renderEdges() {
     draft.setAttribute("class", `workflow-edge ${connectionDraft.dataType}`); draft.setAttribute("d", edgePath(start, end));
   } else draft?.remove();
 }
+function canvasNodeElement(id) { const selector = `[data-node-id="${CSS.escape(id)}"]`; return frameLayer.querySelector(selector) || nodeLayer.querySelector(selector); }
 function renderCanvas() {
   syncAllVideoEditorClips();
-  const nodes = [...state.nodes].sort((a, b) => { if (a.type === "frame" && b.type !== "frame") return -1; if (b.type === "frame" && a.type !== "frame") return 1; return (a.createdAt || 0) - (b.createdAt || 0); });
-  nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
+  const frames = state.nodes.filter(node => node.type === "frame").sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const nodes = state.nodes.filter(node => node.type !== "frame").sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  frameLayer.innerHTML = frames.map(renderNodeHtml).join(""); nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
 }
 function frameContainedNodes(frame) {
   return state.nodes.filter(item => item.type !== "frame" && item.id !== frame.id && item.x + item.width / 2 >= frame.x && item.x + item.width / 2 <= frame.x + frame.width && item.y + item.height / 2 >= frame.y && item.y + item.height / 2 <= frame.y + frame.height);
 }
 function updateFrameMetaDom(frame) {
-  const element = nodeLayer.querySelector(`[data-node-id="${CSS.escape(frame.id)}"]`);
+  const element = canvasNodeElement(frame.id);
   const meta = element?.querySelector(".frame-meta");
   if (meta) meta.textContent = `${frameContainedNodes(frame).length} 个节点 · 拖动画板可整体移动`;
 }
@@ -2861,7 +2864,7 @@ function startNodeDrag(event, nodeId) {
   else if (!alreadySelected || state.selectedIds.length <= 1) selectNode(nodeId, false);
   const point = screenToScene(event.clientX, event.clientY);
   const movingIds = node.type === "frame" ? [...new Set([node.id, ...frameContainedNodes(node).map(item => item.id)])] : (alreadySelected ? [...state.selectedIds] : state.selectedIds);
-  const elements = movingIds.map(id => ({ id, element: nodeLayer.querySelector(`[data-node-id="${CSS.escape(id)}"]`) })).filter(item => item.element);
+  const elements = movingIds.map(id => ({ id, element: canvasNodeElement(id) })).filter(item => item.element);
   dragSession = { start: point, moved: false, before: snapshot(), origins: movingIds.map(id => { const item = findNode(id); return { id, x: item.x, y: item.y }; }), elements, elementById: new Map(elements.map(item => [item.id, item.element])) };
   workspace.classList.add("is-flow-interacting"); dragSession.elements.forEach(item => { item.element.classList.add("is-dragging"); item.element.style.willChange = "transform"; });
 }
@@ -2878,7 +2881,7 @@ function resizeMinimum(node) {
 }
 function startResize(event) {
   event.preventDefault(); event.stopPropagation(); const node = findNode(event.currentTarget.dataset.nodeResize); if (!node) return;
-  selectNode(node.id); const point = screenToScene(event.clientX, event.clientY); const corner = event.currentTarget.dataset.nodeResizeCorner || "se"; resizeSession = { nodeId: node.id, corner, start: point, moved: false, before: snapshot(), origin: { x: node.x, y: node.y, width: node.width, height: node.height }, element: nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`) };
+  selectNode(node.id); const point = screenToScene(event.clientX, event.clientY); const corner = event.currentTarget.dataset.nodeResizeCorner || "se"; resizeSession = { nodeId: node.id, corner, start: point, moved: false, before: snapshot(), origin: { x: node.x, y: node.y, width: node.width, height: node.height }, element: canvasNodeElement(node.id) };
   workspace.classList.add("is-flow-interacting"); if (resizeSession.element) resizeSession.element.style.willChange = "width, height";
 }
 function startPan(event) { event.preventDefault(); clearNativeTextSelection(); panSession = { clientX: event.clientX, clientY: event.clientY, x: state.viewport.x, y: state.viewport.y, moved: false, clearSelectionOnClick: event.button === 0 && state.tool !== "hand" && !spacePressed }; workspace.classList.add("is-panning", "is-flow-interacting"); }
