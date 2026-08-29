@@ -2531,10 +2531,15 @@ function videoGeneratorPortRowIndex(portId) {
 function syncVideoGeneratorPortPositions() {
   $$(".video-generator-node").forEach(element => {
     const rows = [...element.querySelectorAll(".generator-inputs .input-slot")];
+    const elementRect = element.getBoundingClientRect();
+    const scale = Math.max(0.01, Number(state?.viewport?.scale) || 1);
     element.querySelectorAll(".node-port-wrap.input").forEach(wrap => {
       const rowIndex = videoGeneratorPortRowIndex(wrap.querySelector(".node-port")?.dataset.portId || "");
       const row = rows[rowIndex];
-      if (row) wrap.style.top = `${row.offsetTop + row.offsetHeight / 2}px`;
+      if (row) {
+        const rowRect = row.getBoundingClientRect();
+        wrap.style.top = `${(rowRect.top - elementRect.top + rowRect.height / 2) / scale}px`;
+      }
     });
   });
 }
