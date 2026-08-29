@@ -502,6 +502,7 @@ html[data-edge-motion="static"] .script-relationship-edge { animation: none; fil
 .image-node:not(.loading-node) .node-body { display: flex; flex-direction: column; }
 .image-preview { width: 100%; height: auto; min-height: 130px; flex: 1 1 auto; border-radius: 5px; background: var(--surface-soft); object-fit: contain; cursor: default; }
 .video-preview { width: 100%; min-height: 150px; max-height: 235px; flex: 1 1 auto; border-radius: 5px; background: #101512; object-fit: contain; }
+.video-node .video-preview { min-height: 0; max-height: none; height: auto; }
 .video-node .node-type-icon, .video-generator-node .node-type-icon { color: #b17128; background: #fff1dd; }
 .video-editor-node .node-type-icon { color: #8748b8; background: #f2e7fb; }
 .video-preview-node .node-type-icon { color: #2f769b; background: #e2f2fa; }

@@ -68,6 +68,7 @@
 12. H3 视频节点的持久化字段包括 `videoMode: "reference"`、`videoAspect`、`videoMegapixels`、`videoSeconds`、`localVideoReference` 和 `localAudioReference`；旧 H3 节点打开时自动归一化为新六图参考结构并清理旧的内嵌预览字段，原有提示词和已连接参考图保持可用。Prompt、参考图 1-6 和参考视频端口挂在 `.canvas-node` 根层，并按对应输入行的实际中心定位。
 13. H3 参考视频和参考音频只允许使用本机画布资源路径；音频保存于 `output/audio-assets/`，视频保存于 `output/video-assets/` 或既有生成/剪辑目录。密钥、远程任务 ID 和上传文件名不得写入项目导出文件。
 14. 视频结果节点的检查器支持“同步删除生成文件”：仅当生成文件没有被当前项目其他节点或其他项目引用时才从 `output/generated/` 删除；普通删除仍只移除画布节点并保留文件。删除请求必须校验服务端返回的 `deleted`/`missing` 数量，不能把 HTTP 成功当作文件已删除。
+15. 最终视频结果节点的预览区域必须跟随节点宽高自由伸缩，保持 `object-fit: contain` 不变形；此规则不影响 H3 生成节点、视频剪辑节点或成片预览节点。
 
 ## 推荐的跨窗口流程
 
