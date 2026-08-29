@@ -2282,8 +2282,10 @@ function portPoint(node, portId) {
     if (portId === "image" || portId === "video") return { x: node.x + node.width, y: node.y + 76 };
     if (node.mediaType === "video") {
       const portElement = nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"] [data-port-id="${CSS.escape(portId)}"]`);
-      const portWrap = portElement?.closest(".node-port-wrap");
-      if (portWrap) return { x: node.x, y: node.y + portWrap.offsetTop };
+      if (portElement) {
+        const bounds = portElement.getBoundingClientRect();
+        return screenToScene(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+      }
       if (portId === "prompt" || /^prompt-\d+$/.test(portId)) { const index = portId === "prompt" ? 0 : Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + videoGeneratorPromptPortTop(index) }; }
       if (/^image-\d+$/.test(portId)) return { x: node.x, y: node.y + videoGeneratorImagePortTop(node, Number(portId.split("-")[1]) || 0) };
       if (portId === "video-reference") return { x: node.x, y: node.y + videoGeneratorVideoPortTop(node) };
@@ -2341,7 +2343,7 @@ function renderCanvas() {
   syncAllVideoEditorClips();
   const frames = state.nodes.filter(node => node.type === "frame").sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   const nodes = state.nodes.filter(node => node.type !== "frame").sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-  frameLayer.innerHTML = frames.map(renderNodeHtml).join(""); nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); syncVideoGeneratorPortPositions(); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
+  frameLayer.innerHTML = frames.map(renderNodeHtml).join(""); nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
 }
 function frameContainedNodes(frame) {
   return state.nodes.filter(item => item.type !== "frame" && item.id !== frame.id && item.x + item.width / 2 >= frame.x && item.x + item.width / 2 <= frame.x + frame.width && item.y + item.height / 2 >= frame.y && item.y + item.height / 2 <= frame.y + frame.height);
@@ -2521,28 +2523,6 @@ function generatorImagePortTop(node, index) { return generatorInputPortTop(node.
 function videoGeneratorPromptPortTop(index) { return 324 + index * 30; }
 function videoGeneratorImagePortTop(node, index) { return 354 + Math.max(0, node.promptSlots - 1) * 30 + index * 30; }
 function videoGeneratorVideoPortTop(node) { return 534 + Math.max(0, node.promptSlots - 1) * 30; }
-function videoGeneratorPortRowIndex(portId) {
-  if (portId === "prompt") return 0;
-  if (/^prompt-\d+$/.test(portId)) return Number(portId.split("-")[1]) || 0;
-  if (/^image-\d+$/.test(portId)) return 1 + (Number(portId.split("-")[1]) || 0);
-  if (portId === "video-reference") return 7;
-  return -1;
-}
-function syncVideoGeneratorPortPositions() {
-  $$(".video-generator-node").forEach(element => {
-    const rows = [...element.querySelectorAll(".generator-inputs .input-slot")];
-    const elementRect = element.getBoundingClientRect();
-    const scale = Math.max(0.01, Number(state?.viewport?.scale) || 1);
-    element.querySelectorAll(".node-port-wrap.input").forEach(wrap => {
-      const rowIndex = videoGeneratorPortRowIndex(wrap.querySelector(".node-port")?.dataset.portId || "");
-      const row = rows[rowIndex];
-      if (row) {
-        const rowRect = row.getBoundingClientRect();
-        wrap.style.top = `${(rowRect.top - elementRect.top + rowRect.height / 2) / scale}px`;
-      }
-    });
-  });
-}
 function renderGeneratorNodeHtml(node, selected, style) {
   if (node.mediaType === "video") return renderVideoGeneratorNodeHtml(node, selected, style);
   const provider = generatorProviderForNode(node);
@@ -2608,8 +2588,9 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
   const mode = runningHubVideoMode(node);
   const megapixels = Number(node.videoMegapixels) || .9;
   const shortName = source => decodeURIComponent(String(source || "").split("/").pop() || "").replace(/^\w+-\w+-/, "") || "本地参考素材";
-  const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, generatorPromptPortId(index)); const promptNode = findNode(edge?.source); const label = edge ? sourceLabelForEdge(edge) : "未连接"; return `<div class="input-slot${edge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>${index ? `Prompt ${index + 1}` : "Prompt"}</span><span>${escapeHtml(label)}</span></div>`; }).join("");
-  const imageSlots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); const imageNode = findNode(edge?.source); return `<div class="input-slot${edge ? " is-connected" : ""}${imageNode?.disabled ? " is-disabled" : ""}"><span>${escapeHtml(mode.inputs[index] || `参考图 ${index + 1}`)}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
+  const inputSlot = (portId, dataType, inputLabel, value, connected, disabled) => `<div class="input-slot video-generator-input-slot${connected ? " is-connected" : ""}${disabled ? " is-disabled" : ""}">${portHtml(node, portId, dataType, "input", inputLabel, 0)}<span>${escapeHtml(inputLabel)}</span><span>${escapeHtml(value)}</span></div>`;
+  const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, generatorPromptPortId(index)); const promptNode = findNode(edge?.source); const inputLabel = index ? `Prompt ${index + 1}` : "Prompt"; return inputSlot(generatorPromptPortId(index), "prompt", inputLabel, edge ? sourceLabelForEdge(edge) : "未连接", Boolean(edge), promptNode?.disabled); }).join("");
+  const imageSlots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); const imageNode = findNode(edge?.source); const inputLabel = mode.inputs[index] || `参考图 ${index + 1}`; return inputSlot(`image-${index}`, "image", inputLabel, edge ? sourceLabelForEdge(edge) : "未连接", Boolean(edge), imageNode?.disabled); }).join("");
   const videoEdge = incomingEdge(node.id, "video-reference");
   const videoLabel = videoEdge ? sourceLabelForEdge(videoEdge) : node.localVideoReference ? shortName(node.localVideoReference) : "未连接";
   const audioLabel = node.localAudioReference ? shortName(node.localAudioReference) : "未上传";
@@ -2621,13 +2602,13 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
     <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-video-field="aspect" data-node-id="${node.id}" aria-label="视频比例">${runningHubVideoAspects.map(value => `<option value="${value}"${node.videoAspect === value ? " selected" : ""}>${value}</option>`).join("")}</select></div><div class="node-field"><label>像素</label><select class="node-select node-interactive" data-video-field="megapixels" data-node-id="${node.id}" aria-label="视频像素">${runningHubVideoMegapixelOptions.map(option => `<option value="${option.value}"${megapixels === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select></div></div>
     <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: 11 }, (_, index) => index + 5).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field"><label>实例</label><div class="node-static-field">API plus · 48G</div></div></div>
     <div class="video-resolution-summary"><span>${megapixels.toFixed(1)} MP · 32 对齐</span><strong>${dimensions.width} × ${dimensions.height}</strong></div>
-    <div class="generator-inputs">${promptSlots}${imageSlots}<div class="input-slot${videoEdge || node.localVideoReference ? " is-connected" : ""}"><span>参考视频</span><span>${escapeHtml(videoLabel)}</span></div><div class="input-slot${node.localAudioReference ? " is-connected" : ""}"><span>参考音频</span><span>${escapeHtml(audioLabel)}</span></div></div>
+    <div class="generator-inputs">${promptSlots}${imageSlots}${inputSlot("video-reference", "video", "参考视频", videoLabel, Boolean(videoEdge || node.localVideoReference))}<div class="input-slot${node.localAudioReference ? " is-connected" : ""}"><span>参考音频</span><span>${escapeHtml(audioLabel)}</span></div></div>
     <div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-upload-video-reference="${node.id}">${icon("video")} 上传参考视频</button><button class="add-input-button node-interactive" type="button" data-upload-audio-reference="${node.id}">${icon("audio-lines")} 上传参考音频</button></div>
     ${preview}
     <div class="video-reference-note">六张图像参考和可选视频/音频素材会上传至 RunningHub；运行中可停止远程任务。</div>
     <button class="run-node-button node-interactive${node.status === "running" ? " is-cancel" : ""}" type="button" data-run-node="${node.id}">${icon(node.status === "running" ? "square" : "play")} ${node.status === "running" ? "停止海螺 H3" : "运行海螺 H3"}</button>
     <div class="node-run-state"><span>${escapeHtml(runningHubVideoProvider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}"${node.lastError ? ` title="${escapeHtml(node.lastError)}"` : ""}>${statusLabel}</span></div>
-    </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", videoGeneratorPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", mode.inputs[index] || `参考图 ${index + 1}`, videoGeneratorImagePortTop(node, index))).join("")}${portHtml(node, "video-reference", "video", "input", "参考视频", videoGeneratorVideoPortTop(node))}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
+    </div></div>${resizeHandleHtml(node)}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
 }
 function answerPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${index}`; }
 // Keep model input connectors centered on the rows rendered by .answer-inputs.
