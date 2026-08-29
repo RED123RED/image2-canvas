@@ -2918,7 +2918,17 @@ function startNodeDrag(event, nodeId) {
 }
 function resizeMinimum(node) {
   if (node.type === "frame") return { width: 320, height: 220 };
-  if (node.type === "generator") return { width: 300, height: 250 };
+  if (node.type === "generator") {
+    const element = canvasNodeElement(node.id);
+    const button = element?.querySelector(".run-node-button");
+    const scale = Math.max(0.01, Number(state?.viewport?.scale) || 1);
+    const elementRect = element?.getBoundingClientRect();
+    // Keep the action button visible while allowing the lower status line to be clipped when shrinking.
+    const contentHeight = element && button && elementRect
+      ? (button.getBoundingClientRect().bottom - elementRect.top) / scale + 12
+      : 0;
+    return { width: 300, height: Math.max(250, Math.ceil(contentHeight)) };
+  }
   if (node.type === "video-editor") return { width: 440, height: 300 };
   if (node.type === "video-preview") return { width: 280, height: 280 };
   if (node.type === "answer") return { width: 320, height: 400 };
