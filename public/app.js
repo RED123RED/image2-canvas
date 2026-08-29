@@ -29,13 +29,38 @@ const generatorOutputSizeOptions = Object.freeze({
 });
 const runningHubVideoAspects = Object.freeze(["1:1", "3:2", "4:3", "16:9", "2:1", "9:16", "3:4", "2:3"]);
 const runningHubVideoMegapixelOptions = Object.freeze([
+  { value: 0.2, label: "0.2 MP" },
+  { value: 0.3, label: "0.3 MP" },
   { value: 0.4, label: "0.4 MP" },
+  { value: 0.5, label: "0.5 MP" },
   { value: 0.6, label: "0.6 MP" },
+  { value: 0.7, label: "0.7 MP" },
+  { value: 0.8, label: "0.8 MP" },
   { value: 0.9, label: "0.9 MP" },
+  { value: 0.98, label: "0.98 MP" },
+  { value: 1, label: "1.0 MP" },
   { value: 1.2, label: "1.2 MP" },
   { value: 1.5, label: "1.5 MP" },
+  { value: 1.8, label: "1.8 MP" },
   { value: 2, label: "2.0 MP" }
 ]);
+// Exact 16:9 presets documented by the workflow's ResolutionSelector (multiple = 32).
+const runningHubVideo16x9Dimensions = Object.freeze({
+  0.2: { width: 608, height: 352 },
+  0.3: { width: 736, height: 416 },
+  0.4: { width: 864, height: 480 },
+  0.5: { width: 960, height: 544 },
+  0.6: { width: 1056, height: 608 },
+  0.7: { width: 1152, height: 640 },
+  0.8: { width: 1216, height: 672 },
+  0.9: { width: 1280, height: 736 },
+  0.98: { width: 1344, height: 768 },
+  1: { width: 1376, height: 768 },
+  1.2: { width: 1504, height: 832 },
+  1.5: { width: 1664, height: 928 },
+  1.8: { width: 1824, height: 1024 },
+  2: { width: 1920, height: 1088 }
+});
 const runningHubReferenceWorkflowId = "2093564802919649281";
 const runningHubVideoProvider = Object.freeze({ label: "海螺 H3 视频", model: "RunningHub · API plus" });
 const runningHubKrea2Provider = Object.freeze({ label: "K2 白玉", model: "Krea2 White Marble" });
@@ -77,6 +102,7 @@ function runningHubVideoDimensions(node) {
   const aspect = runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9";
   const [ratioWidth, ratioHeight] = aspect.split(":").map(Number);
   const megapixels = runningHubVideoMegapixelOptions.some(option => option.value === Number(node?.videoMegapixels)) ? Number(node.videoMegapixels) : 0.9;
+  if (aspect === "16:9" && runningHubVideo16x9Dimensions[megapixels]) return runningHubVideo16x9Dimensions[megapixels];
   const area = megapixels * 1_000_000; const ratio = ratioWidth / ratioHeight;
   const round32 = value => Math.max(32, Math.round(value / 32) * 32);
   return { width: round32(Math.sqrt(area * ratio)), height: round32(Math.sqrt(area / ratio)) };
