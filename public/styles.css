@@ -562,8 +562,6 @@ html[data-edge-motion="static"] .script-relationship-edge { animation: none; fil
 .node-static-field { display: flex; min-height: 30px; align-items: center; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 10px; background: var(--surface-soft); }
 .generator-inputs { margin: 7px -12px 9px; padding: 8px 12px 5px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .input-slot { display: flex; height: 30px; align-items: center; justify-content: space-between; padding-left: 7px; color: var(--muted); font-size: 9px; }
-.video-generator-input-slot { position: relative; }
-.video-generator-input-slot > .node-port-wrap.input { top: 50% !important; left: -19px; }
 .input-slot.is-connected { color: var(--ink); }
 .input-slot span:last-child { max-width: 165px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .add-input-button { display: flex; height: 28px; align-items: center; gap: 6px; padding: 0 7px; color: var(--blue); background: transparent; cursor: pointer; font-size: 9px; }

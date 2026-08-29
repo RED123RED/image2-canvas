@@ -110,7 +110,9 @@ function runningHubVideoDimensions(node) {
 function normalizeRunningHubVideo(node, connectedImageSlots = 0) {
   const inputSlots = 6;
   const promptSlots = Math.min(6, Math.max(1, Number(node?.promptSlots) || 1));
-  const next = { ...node, mediaType: "video", provider: "runninghub-h3", x: Number.isFinite(Number(node?.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node?.y)) ? Number(node.y) : 0, videoMode: "reference", videoAspect: runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9", videoMegapixels: runningHubVideoMegapixelOptions.some(option => option.value === Number(node?.videoMegapixels)) ? Number(node.videoMegapixels) : 0.9, videoSeconds: Math.min(15, Math.max(5, Math.round(Number(node?.videoSeconds) || 6))), promptSlots, inputSlots, videoInputSlotsInitialized: true, localVideoReference: String(node?.localVideoReference || ""), localAudioReference: String(node?.localAudioReference || ""), previewSrc: String(node?.previewSrc || ""), previewRemoteSrc: String(node?.previewRemoteSrc || ""), width: Math.max(380, Number(node?.width) || 420) };
+  const next = { ...node, mediaType: "video", provider: "runninghub-h3", x: Number.isFinite(Number(node?.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node?.y)) ? Number(node.y) : 0, videoMode: "reference", videoAspect: runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9", videoMegapixels: runningHubVideoMegapixelOptions.some(option => option.value === Number(node?.videoMegapixels)) ? Number(node.videoMegapixels) : 0.9, videoSeconds: Math.min(15, Math.max(5, Math.round(Number(node?.videoSeconds) || 6))), promptSlots, inputSlots, videoInputSlotsInitialized: true, localVideoReference: String(node?.localVideoReference || ""), localAudioReference: String(node?.localAudioReference || ""), width: Math.max(380, Number(node?.width) || 420) };
+  delete next.previewSrc;
+  delete next.previewRemoteSrc;
   next.height = Math.max(Number(node?.height) || 0, nodeHeight("video-generator", inputSlots, promptSlots));
   next.status = node?.activeJobId ? "running" : "idle";
   return next;
@@ -558,7 +560,7 @@ function stripPromptQuickMarkers(content) {
   return String(content || "").replace(/(?:^|\n)\s*【快捷镜头】([\s\S]*?)【\/快捷镜头】(?=\s*(?:\n|$))/g, (_, inner) => inner.split(/\r?\n/).map(line => line.trim()).filter(Boolean).join(" "));
 }
 function createVideoNode(x, y) {
-  return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoMode: "reference", videoAspect: "16:9", videoMegapixels: 0.9, videoSeconds: 6, promptSlots: 1, inputSlots: 6, videoInputSlotsInitialized: true, localVideoReference: "", localAudioReference: "", previewSrc: "", width: 420, height: nodeHeight("video-generator", 6, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
+  return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoMode: "reference", videoAspect: "16:9", videoMegapixels: 0.9, videoSeconds: 6, promptSlots: 1, inputSlots: 6, videoInputSlotsInitialized: true, localVideoReference: "", localAudioReference: "", width: 420, height: nodeHeight("video-generator", 6, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 function createVideoEditorNode(x, y) {
   return { id: uid("video-editor"), type: "video-editor", name: "视频剪辑", x, y, width: 680, height: nodeHeight("video-editor"), clips: [], inputSlots: 6, selectedClipId: "", timelinePlayhead: 0, previewPlaying: false, status: "idle", outputSrc: "", outputType: "mp4", createdAt: Date.now() };
@@ -2369,7 +2371,7 @@ function renderCanvas() {
   syncAllVideoEditorClips();
   const frames = state.nodes.filter(node => node.type === "frame").sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   const nodes = state.nodes.filter(node => node.type !== "frame").sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-  frameLayer.innerHTML = frames.map(renderNodeHtml).join(""); nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
+  frameLayer.innerHTML = frames.map(renderNodeHtml).join(""); nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); syncVideoGeneratorPortPositions(); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
 }
 function frameContainedNodes(frame) {
   return state.nodes.filter(item => item.type !== "frame" && item.id !== frame.id && item.x + item.width / 2 >= frame.x && item.x + item.width / 2 <= frame.x + frame.width && item.y + item.height / 2 >= frame.y && item.y + item.height / 2 <= frame.y + frame.height);
@@ -2549,6 +2551,21 @@ function generatorImagePortTop(node, index) { return generatorInputPortTop(node.
 function videoGeneratorPromptPortTop(index) { return 324 + index * 30; }
 function videoGeneratorImagePortTop(node, index) { return 354 + Math.max(0, node.promptSlots - 1) * 30 + index * 30; }
 function videoGeneratorVideoPortTop(node) { return 534 + Math.max(0, node.promptSlots - 1) * 30; }
+function syncVideoGeneratorPortPositions() {
+  $$(".video-generator-node").forEach(element => {
+    const node = findNode(element.dataset.nodeId); if (!node) return;
+    const rows = [...element.querySelectorAll(".generator-inputs .input-slot")];
+    const elementRect = element.getBoundingClientRect();
+    const scale = Math.max(0.01, Number(state?.viewport?.scale) || 1);
+    element.querySelectorAll(":scope > .node-port-wrap.input").forEach(wrap => {
+      const portId = wrap.querySelector(".node-port")?.dataset.portId || "";
+      const rowIndex = portId === "video-reference" ? node.promptSlots + node.inputSlots : portId === "prompt" ? 0 : /^prompt-\d+$/.test(portId) ? Number(portId.split("-")[1]) || 0 : /^image-\d+$/.test(portId) ? node.promptSlots + (Number(portId.split("-")[1]) || 0) : -1;
+      const row = rows[rowIndex]; if (!row) return;
+      const rowRect = row.getBoundingClientRect();
+      wrap.style.top = `${(rowRect.top - elementRect.top + rowRect.height / 2) / scale}px`;
+    });
+  });
+}
 function renderGeneratorNodeHtml(node, selected, style) {
   if (node.mediaType === "video") return renderVideoGeneratorNodeHtml(node, selected, style);
   const provider = generatorProviderForNode(node);
@@ -2614,14 +2631,13 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
   const mode = runningHubVideoMode(node);
   const megapixels = Number(node.videoMegapixels) || .9;
   const shortName = source => decodeURIComponent(String(source || "").split("/").pop() || "").replace(/^\w+-\w+-/, "") || "本地参考素材";
-  const inputSlot = (portId, dataType, inputLabel, value, connected, disabled) => `<div class="input-slot video-generator-input-slot${connected ? " is-connected" : ""}${disabled ? " is-disabled" : ""}">${portHtml(node, portId, dataType, "input", inputLabel, 0)}<span>${escapeHtml(inputLabel)}</span><span>${escapeHtml(value)}</span></div>`;
+  const inputSlot = (portId, dataType, inputLabel, value, connected, disabled) => `<div class="input-slot${connected ? " is-connected" : ""}${disabled ? " is-disabled" : ""}" data-video-input-port="${escapeHtml(portId)}"><span>${escapeHtml(inputLabel)}</span><span>${escapeHtml(value)}</span></div>`;
   const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, generatorPromptPortId(index)); const promptNode = findNode(edge?.source); const inputLabel = index ? `Prompt ${index + 1}` : "Prompt"; return inputSlot(generatorPromptPortId(index), "prompt", inputLabel, edge ? sourceLabelForEdge(edge) : "未连接", Boolean(edge), promptNode?.disabled); }).join("");
   const imageSlots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); const imageNode = findNode(edge?.source); const inputLabel = mode.inputs[index] || `参考图 ${index + 1}`; return inputSlot(`image-${index}`, "image", inputLabel, edge ? sourceLabelForEdge(edge) : "未连接", Boolean(edge), imageNode?.disabled); }).join("");
   const videoEdge = incomingEdge(node.id, "video-reference");
   const videoLabel = videoEdge ? sourceLabelForEdge(videoEdge) : node.localVideoReference ? shortName(node.localVideoReference) : "未连接";
   const audioLabel = node.localAudioReference ? shortName(node.localAudioReference) : "未上传";
   const statusLabel = node.status === "running" ? "生成中" : node.lastError ? "上次生成失败" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个视频` : "待运行";
-  const preview = (node.previewSrc || node.previewRemoteSrc) ? `<video class="video-preview video-generator-preview node-interactive" src="${escapeHtml(node.previewSrc || node.previewRemoteSrc)}" controls playsinline preload="metadata"></video>` : `<div class="video-inline-preview"><span>${icon("monitor-play")}</span><small>RunningHub 返回预览视频后会显示在这里</small></div>`;
   return `<article class="canvas-node generator-node video-generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", "", true, true)}<div class="node-body generator-body">
     <div class="video-provider-badge"><span>${escapeHtml(runningHubVideoProvider.label)}</span><small>工作流 ${runningHubReferenceWorkflowId} · plus</small></div>
     <div class="node-static-field">多图参考生视频 · 最多 6 张图</div>
@@ -2630,11 +2646,10 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
     <div class="video-resolution-summary"><span>${megapixels.toFixed(1)} MP · 32 对齐</span><strong>${dimensions.width} × ${dimensions.height}</strong></div>
     <div class="generator-inputs">${promptSlots}${imageSlots}${inputSlot("video-reference", "video", "参考视频", videoLabel, Boolean(videoEdge || node.localVideoReference))}<div class="input-slot${node.localAudioReference ? " is-connected" : ""}"><span>参考音频</span><span>${escapeHtml(audioLabel)}</span></div></div>
     <div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-upload-video-reference="${node.id}">${icon("video")} 上传参考视频</button><button class="add-input-button node-interactive" type="button" data-upload-audio-reference="${node.id}">${icon("audio-lines")} 上传参考音频</button></div>
-    ${preview}
     <div class="video-reference-note">六张图像参考和可选视频/音频素材会上传至 RunningHub；运行中可停止远程任务。</div>
     <button class="run-node-button node-interactive${node.status === "running" ? " is-cancel" : ""}" type="button" data-run-node="${node.id}">${icon(node.status === "running" ? "square" : "play")} ${node.status === "running" ? "停止海螺 H3" : "运行海螺 H3"}</button>
     <div class="node-run-state"><span>${escapeHtml(runningHubVideoProvider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}"${node.lastError ? ` title="${escapeHtml(node.lastError)}"` : ""}>${statusLabel}</span></div>
-    </div></div>${resizeHandleHtml(node)}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
+    </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", 0)).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", mode.inputs[index] || `参考图 ${index + 1}`, 0)).join("")}${portHtml(node, "video-reference", "video", "input", "参考视频", 0)}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
 }
 function answerPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${index}`; }
 // Keep model input connectors centered on the rows rendered by .answer-inputs.
@@ -3453,7 +3468,6 @@ function finishGenerationJob(generatorId, job) {
     generator.status = "idle";
     delete generator.activeJobId;
     delete generator.activePrompt;
-    if (isVideo) { generator.previewSrc = outputs[0]?.url || ""; delete generator.previewRemoteSrc; }
     state.selectedIds = createdIds;
     state.recentIds = [...createdIds, ...state.recentIds].slice(0, 60);
     state.libraryTab = "history";
@@ -3484,7 +3498,6 @@ async function pollGenerationJob(generatorId, jobId) {
     const hadPlaceholders = state.nodes.some(node => node.type === "loading" && node.generationJobId === jobId);
     const placeholders = ensureGenerationPlaceholders(generator, jobId, job.imageCount, job.model, job.startedAt || job.createdAt);
     const stage = runningHubGenerationStageLabel(job.runningHub?.stage);
-    if (job.previewRemoteUrl && generator.previewRemoteSrc !== job.previewRemoteUrl) { generator.previewRemoteSrc = job.previewRemoteUrl; renderCanvas(); refreshIcons(); }
     const stageChanged = placeholders.some(node => node.mediaType === "video" && node.generationStage !== stage);
     placeholders.forEach(node => { if (node.mediaType === "video") node.generationStage = stage; });
     if (!hadPlaceholders || stageChanged) { renderCanvas(); requestEdgeRender(); renderLibrary(); renderInspector(); refreshIcons(); }
