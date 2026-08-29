@@ -2281,9 +2281,12 @@ function portPoint(node, portId) {
   if (node.type === "generator") {
     if (portId === "image" || portId === "video") return { x: node.x + node.width, y: node.y + 76 };
     if (node.mediaType === "video") {
-      if (portId === "prompt" || /^prompt-\d+$/.test(portId)) { const index = portId === "prompt" ? 0 : Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + 184 + index * 30 }; }
-      if (/^image-\d+$/.test(portId)) return { x: node.x, y: node.y + 214 + Math.max(0, node.promptSlots - 1) * 30 + (Number(portId.split("-")[1]) || 0) * 30 };
-      if (portId === "video-reference") return { x: node.x, y: node.y + 394 + Math.max(0, node.promptSlots - 1) * 30 };
+      const portElement = nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"] [data-port-id="${CSS.escape(portId)}"]`);
+      const portWrap = portElement?.closest(".node-port-wrap");
+      if (portWrap) return { x: node.x, y: node.y + portWrap.offsetTop };
+      if (portId === "prompt" || /^prompt-\d+$/.test(portId)) { const index = portId === "prompt" ? 0 : Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + videoGeneratorPromptPortTop(index) }; }
+      if (/^image-\d+$/.test(portId)) return { x: node.x, y: node.y + videoGeneratorImagePortTop(node, Number(portId.split("-")[1]) || 0) };
+      if (portId === "video-reference") return { x: node.x, y: node.y + videoGeneratorVideoPortTop(node) };
     }
     if (portId === "prompt" || /^prompt-\d+$/.test(portId)) { const index = portId === "prompt" ? 0 : Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + generatorPromptPortTop(index) }; }
     const index = Number(portId.split("-")[1]) || 0;
@@ -2338,7 +2341,7 @@ function renderCanvas() {
   syncAllVideoEditorClips();
   const frames = state.nodes.filter(node => node.type === "frame").sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   const nodes = state.nodes.filter(node => node.type !== "frame").sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-  frameLayer.innerHTML = frames.map(renderNodeHtml).join(""); nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
+  frameLayer.innerHTML = frames.map(renderNodeHtml).join(""); nodeLayer.innerHTML = nodes.map(renderNodeHtml).join(""); syncVideoGeneratorPortPositions(); renderEdges(); bindNodeEvents(); syncGenerationElapsedClock();
 }
 function frameContainedNodes(frame) {
   return state.nodes.filter(item => item.type !== "frame" && item.id !== frame.id && item.x + item.width / 2 >= frame.x && item.x + item.width / 2 <= frame.x + frame.width && item.y + item.height / 2 >= frame.y && item.y + item.height / 2 <= frame.y + frame.height);
@@ -2515,6 +2518,26 @@ function generatorPromptPortId(index) { return index === 0 ? "prompt" : `prompt-
 function generatorInputPortTop(index) { return 189 + index * 30; }
 function generatorPromptPortTop(index) { return generatorInputPortTop(index); }
 function generatorImagePortTop(node, index) { return generatorInputPortTop(node.promptSlots + index); }
+function videoGeneratorPromptPortTop(index) { return 324 + index * 30; }
+function videoGeneratorImagePortTop(node, index) { return 354 + Math.max(0, node.promptSlots - 1) * 30 + index * 30; }
+function videoGeneratorVideoPortTop(node) { return 534 + Math.max(0, node.promptSlots - 1) * 30; }
+function videoGeneratorPortRowIndex(portId) {
+  if (portId === "prompt") return 0;
+  if (/^prompt-\d+$/.test(portId)) return Number(portId.split("-")[1]) || 0;
+  if (/^image-\d+$/.test(portId)) return 1 + (Number(portId.split("-")[1]) || 0);
+  if (portId === "video-reference") return 7;
+  return -1;
+}
+function syncVideoGeneratorPortPositions() {
+  $$(".video-generator-node").forEach(element => {
+    const rows = [...element.querySelectorAll(".generator-inputs .input-slot")];
+    element.querySelectorAll(".node-port-wrap.input").forEach(wrap => {
+      const rowIndex = videoGeneratorPortRowIndex(wrap.querySelector(".node-port")?.dataset.portId || "");
+      const row = rows[rowIndex];
+      if (row) wrap.style.top = `${row.offsetTop + row.offsetHeight / 2}px`;
+    });
+  });
+}
 function renderGeneratorNodeHtml(node, selected, style) {
   if (node.mediaType === "video") return renderVideoGeneratorNodeHtml(node, selected, style);
   const provider = generatorProviderForNode(node);
@@ -2599,7 +2622,7 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
     <div class="video-reference-note">六张图像参考和可选视频/音频素材会上传至 RunningHub；运行中可停止远程任务。</div>
     <button class="run-node-button node-interactive${node.status === "running" ? " is-cancel" : ""}" type="button" data-run-node="${node.id}">${icon(node.status === "running" ? "square" : "play")} ${node.status === "running" ? "停止海螺 H3" : "运行海螺 H3"}</button>
     <div class="node-run-state"><span>${escapeHtml(runningHubVideoProvider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}"${node.lastError ? ` title="${escapeHtml(node.lastError)}"` : ""}>${statusLabel}</span></div>
-    </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", 184 + index * 30)).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", mode.inputs[index] || `参考图 ${index + 1}`, 214 + (node.promptSlots - 1) * 30 + index * 30)).join("")}${portHtml(node, "video-reference", "video", "input", "参考视频", 394 + (node.promptSlots - 1) * 30)}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
+    </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", videoGeneratorPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", mode.inputs[index] || `参考图 ${index + 1}`, videoGeneratorImagePortTop(node, index))).join("")}${portHtml(node, "video-reference", "video", "input", "参考视频", videoGeneratorVideoPortTop(node))}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
 }
 function answerPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${index}`; }
 // Keep model input connectors centered on the rows rendered by .answer-inputs.
