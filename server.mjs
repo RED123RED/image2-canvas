@@ -12,11 +12,13 @@ const outputDir = path.join(__dirname, "output");
 const generatedDir = path.join(outputDir, "generated");
 const assetsDir = path.join(outputDir, "assets");
 const videoAssetsDir = path.join(outputDir, "video-assets");
+const audioAssetsDir = path.join(outputDir, "audio-assets");
 const editedVideoDir = path.join(outputDir, "video-edited");
 const videoTempDir = path.join(outputDir, "video-temp");
 const localFfmpegPath = path.join(__dirname, "tools", "ffmpeg", "bin", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
 const localFfprobePath = path.join(__dirname, "tools", "ffmpeg", "bin", process.platform === "win32" ? "ffprobe.exe" : "ffprobe");
 const maxVideoUploadBytes = 2 * 1024 * 1024 * 1024;
+const maxAudioUploadBytes = 512 * 1024 * 1024;
 const jobsPath = path.join(outputDir, "image2-generation-jobs.json");
 const generationLogPath = path.join(outputDir, "image2-generation.log");
 const port = Number(process.env.PORT || 45173);
@@ -33,23 +35,19 @@ const mjBaseUrl = (process.env.MJ_API_BASE_URL || "https://key.34ku.com").replac
 const mjFastModel = "mj_fast_imagine";
 const runningHubBaseUrl = (process.env.RUNNINGHUB_BASE_URL || "https://www.runninghub.cn").replace(/\/$/, "");
 const runningHubVideoWorkflows = Object.freeze({
-  "first-frame": Object.freeze({
-    standard: Object.freeze({
-      id: "2085564954459066369",
-      referenceNodes: ["60"],
-      width: 1376,
-      height: 768,
-      minSeconds: 5,
-      maxSeconds: 15
-    }),
-    clear: Object.freeze({
-      id: "2085580221075517441",
-      referenceNodes: ["60"],
-      width: 1920,
-      height: 1088,
-      minSeconds: 5,
-      maxSeconds: 15
-    })
+  reference: Object.freeze({
+    id: "2093564802919649281",
+    promptNode: "138",
+    durationNode: "131",
+    resolutionNode: "115",
+    imageNodes: ["137", "139", "147", "165", "166", "167"],
+    videoNode: "170",
+    audioNode: "171",
+    outputNode: "92",
+    minSeconds: 5,
+    maxSeconds: 15,
+    defaultAspect: "16:9",
+    defaultMegapixels: 0.9
   })
 });
 const runningHubKrea2Workflow = Object.freeze({
@@ -63,8 +61,8 @@ const runningHubKrea2Workflow = Object.freeze({
   defaultHeight: 1080,
   maxBatch: 4
 });
-const runningHubWorkflowId = runningHubVideoWorkflows["first-frame"].standard.id;
-const runningHubInstanceType = process.env.RUNNINGHUB_INSTANCE_TYPE === "default" ? "default" : "plus";
+const runningHubWorkflowId = runningHubVideoWorkflows.reference.id;
+const runningHubInstanceType = "plus";
 const geminiImageModels = Object.freeze([
   "gemini-3-pro-image-preview",
   "gemini-3.1-flash-image-preview"
@@ -109,7 +107,13 @@ const mimeTypes = {
   ".svg": "image/svg+xml",
   ".mp4": "video/mp4",
   ".webm": "video/webm",
-  ".mov": "video/quicktime"
+  ".mov": "video/quicktime",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".ogg": "audio/ogg",
+  ".flac": "audio/flac"
 };
 
 function sendJson(res, status, payload) {
@@ -164,6 +168,7 @@ async function initializeJobs() {
     fs.mkdir(generatedDir, { recursive: true }),
     fs.mkdir(assetsDir, { recursive: true }),
     fs.mkdir(videoAssetsDir, { recursive: true }),
+    fs.mkdir(audioAssetsDir, { recursive: true }),
     fs.mkdir(editedVideoDir, { recursive: true }),
     fs.mkdir(videoTempDir, { recursive: true })
   ]);
@@ -241,6 +246,47 @@ async function storeVideoUpload(req, res) {
   }
 }
 
+function audioExtension(filename, mime = "") {
+  const extension = path.extname(filename).toLowerCase();
+  if ([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"].includes(extension)) return extension.slice(1);
+  if (/wav/i.test(mime)) return "wav";
+  if (/mp4|m4a/i.test(mime)) return "m4a";
+  if (/aac/i.test(mime)) return "aac";
+  if (/ogg/i.test(mime)) return "ogg";
+  if (/flac/i.test(mime)) return "flac";
+  return "mp3";
+}
+
+async function storeAudioUpload(req, res) {
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  const originalName = safeVideoName(req.headers["x-file-name"], "参考音频.mp3");
+  const extension = audioExtension(originalName, contentType);
+  if (!/^audio\/(mpeg|wav|x-wav|mp4|aac|ogg|flac)$/i.test(contentType) && !/\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(originalName)) return sendJson(res, 400, { error: "仅支持 MP3、WAV、M4A、AAC、OGG 或 FLAC 音频" });
+  await fs.mkdir(audioAssetsDir, { recursive: true });
+  const identifier = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const filename = `${identifier}-${safeVideoName(originalName.replace(/\.[^.]+$/, ""), "audio")}.${extension}`;
+  const temporary = path.join(audioAssetsDir, `${filename}.uploading`);
+  const target = path.join(audioAssetsDir, filename);
+  let handle;
+  let size = 0;
+  try {
+    handle = await fs.open(temporary, "wx");
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > maxAudioUploadBytes) throw new Error("音频超过 512 MB");
+      await handle.write(chunk);
+    }
+    await handle.close(); handle = null;
+    if (!size) throw new Error("上传的音频为空");
+    await fs.rename(temporary, target);
+    return sendJson(res, 201, { filename, name: originalName, size, url: `/api/audio-assets/${encodeURIComponent(filename)}` });
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    await fs.rm(temporary, { force: true }).catch(() => undefined);
+    return sendJson(res, 400, { error: error?.message || "音频导入失败" });
+  }
+}
+
 async function localVideoTools() {
   const ffmpeg = process.env.FFMPEG_PATH || localFfmpegPath;
   try { await fs.access(ffmpeg); }
@@ -265,22 +311,21 @@ function runVideoTool(executable, args) {
   });
 }
 
-async function localVideoPath(source) {
+async function localMediaPath(source, kind = "video") {
   const pathname = decodeURIComponent(new URL(String(source || ""), "http://127.0.0.1").pathname);
-  const locations = [
-    ["/api/generated/", generatedDir],
-    ["/api/video-assets/", videoAssetsDir],
-    ["/api/video-edited/", editedVideoDir]
-  ];
+  const locations = kind === "audio"
+    ? [["/api/audio-assets/", audioAssetsDir]]
+    : [["/api/generated/", generatedDir], ["/api/video-assets/", videoAssetsDir], ["/api/video-edited/", editedVideoDir]];
   const matched = locations.find(([prefix]) => pathname.startsWith(prefix));
-  if (!matched) throw new Error("剪辑模块只能使用本机画布中的视频");
+  if (!matched) throw new Error(kind === "audio" ? "只能使用本机画布中的音频" : "只能使用本机画布中的视频");
   const filename = pathname.slice(matched[0].length);
-  if (!filename || path.basename(filename) !== filename) throw new Error("视频地址无效");
+  if (!filename || path.basename(filename) !== filename) throw new Error(kind === "audio" ? "音频地址无效" : "视频地址无效");
   const filePath = path.join(matched[1], filename);
   const stat = await fs.stat(filePath);
-  if (!stat.isFile()) throw new Error("视频文件不存在");
+  if (!stat.isFile()) throw new Error(kind === "audio" ? "音频文件不存在" : "视频文件不存在");
   return filePath;
 }
+async function localVideoPath(source) { return localMediaPath(source, "video"); }
 
 function validClipSecond(value, fallback = 0) {
   const number = Number(value);
@@ -603,7 +648,9 @@ async function persistGeneratedImage(job, item, index) {
 }
 
 async function persistGeneratedMedia(job, item, index) {
-  const outputType = extensionForOutputType(item?.outputType);
+  const itemUrl = String(item?.url || "");
+  const urlExtension = path.extname(new URL(itemUrl, "http://127.0.0.1").pathname).slice(1);
+  const outputType = extensionForOutputType(item?.outputType || item?.fileType || urlExtension || "mp4");
   const file = item?.b64_json
     ? { buffer: Buffer.from(item.b64_json, "base64"), mime: mimeTypes[`.${outputType}`] || "application/octet-stream" }
     : item?.url ? await fetchRemoteFile(item.url, mimeTypes[`.${outputType}`] || "application/octet-stream") : null;
@@ -804,19 +851,28 @@ function runningHubNodeInfo(nodeId, fieldName, fieldValue) {
   return { nodeId: String(nodeId), fieldName: String(fieldName), fieldValue: fieldValue ?? "" };
 }
 
-function runningHubVideoWorkflowForMode(value, quality) {
-  const profiles = runningHubVideoWorkflows[String(value || "")];
-  if (!profiles) return null;
-  return profiles[quality === "clear" ? "clear" : "standard"] || null;
-}
+function runningHubVideoWorkflowForMode(value) { return runningHubVideoWorkflows[String(value || "")] || null; }
 
 function runningHubLengthExpression(seconds) {
   const value = Math.min(15, Math.max(5, Math.round(Number(seconds) || 5)));
   return `max(5, round(${value} * 24)) + (5 - (max(5, round(${value} * 24)) % 17)) % 17`;
 }
 
-async function uploadRunningHubReference(apiKey, dataUrl, index) {
-  const source = parseStoredImage(dataUrl, `第 ${index + 1} 张视频参考图`);
+function runningHubAspectLabel(value) {
+  const labels = { "1:1": "1:1 (Square)", "4:3": "4:3 (Standard)", "3:2": "3:2 (Classic)", "16:9": "16:9 (Widescreen)", "2:1": "2:1 (Ultrawide)", "9:16": "9:16 (Portrait)", "3:4": "3:4 (Portrait)", "2:3": "2:3 (Portrait)" };
+  return labels[String(value || "16:9")] || labels["16:9"];
+}
+
+async function uploadRunningHubResource(apiKey, sourceValue, index, kind) {
+  let source;
+  if (kind === "image") source = parseStoredImage(sourceValue, `第 ${index + 1} 张视频参考图`);
+  else {
+    const filePath = await localMediaPath(sourceValue, kind);
+    const buffer = await fs.readFile(filePath);
+    const extension = path.extname(filePath).slice(1).toLowerCase();
+    const mime = mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream";
+    source = { buffer, extension, mime };
+  }
   const form = new FormData();
   form.append("file", new Blob([source.buffer], { type: source.mime }), `reference-${index + 1}.${source.extension}`);
   const response = await fetch(`${runningHubBaseUrl}/openapi/v2/media/upload/binary`, {
@@ -834,18 +890,16 @@ async function uploadRunningHubReference(apiKey, dataUrl, index) {
 }
 
 async function requestRunningHubGeneration(job) {
-  const { apiKey, prompt, seconds, workflowId, referenceNodes, width, height, widthNode, heightNode, references = [] } = job.request;
+  const { apiKey, prompt, seconds, workflowId, imageNodes, videoNode, audioNode, aspect, megapixels, references = [], videoReference = "", audioReference = "" } = job.request;
   const nodeInfoList = [
-    runningHubNodeInfo("59", "value", prompt),
-    // RunningHub serializes nodeInfoList values as strings. Keep the duration
-    // expression override, but leave H3 width/height as the workflow's native
-    // integer inputs; overriding easy-int nodes turns them into strings inside
-    // MiniMaxH3ImageToVideo and fails before generation starts.
-    runningHubNodeInfo("13", "expression", runningHubLengthExpression(seconds))
+    runningHubNodeInfo("138", "value", prompt),
+    runningHubNodeInfo("131", "expression", runningHubLengthExpression(seconds)),
+    runningHubNodeInfo("115", "aspect_ratio", runningHubAspectLabel(aspect)),
+    runningHubNodeInfo("115", "megapixels", megapixels)
   ];
   let uploadedReferences;
   try {
-    uploadedReferences = await Promise.all(references.slice(0, referenceNodes.length).map((reference, index) => uploadRunningHubReference(apiKey, reference, index)));
+    uploadedReferences = await Promise.all(references.slice(0, imageNodes.length).map((reference, index) => uploadRunningHubResource(apiKey, reference, index, "image")));
     updateRunningHubDiagnostic(job, { stage: "上传参考图", httpStatus: 200, referenceCount: uploadedReferences.length });
   } catch (error) {
     const diagnostic = { stage: "上传参考图", httpStatus: error?.diagnostic?.httpStatus || 0, errorCode: error?.code || "", errorMessage: diagnosticText(error?.message || "RunningHub 视频参考图上传失败") };
@@ -853,7 +907,10 @@ async function requestRunningHubGeneration(job) {
     error.diagnostic = diagnostic;
     throw error;
   }
-  uploadedReferences.forEach((fileName, index) => nodeInfoList.push(runningHubNodeInfo(referenceNodes[index], "image", fileName)));
+  uploadedReferences.forEach((fileName, index) => nodeInfoList.push(runningHubNodeInfo(imageNodes[index], "image", fileName)));
+  if (job.cancelRequested) throw Object.assign(new Error("视频任务已停止"), { code: "CANCELED" });
+  if (videoReference) nodeInfoList.push(runningHubNodeInfo(videoNode, "video", await uploadRunningHubResource(apiKey, videoReference, 0, "video")));
+  if (audioReference) nodeInfoList.push(runningHubNodeInfo(audioNode, "audio", await uploadRunningHubResource(apiKey, audioReference, 0, "audio")));
   const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
   const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${workflowId}`, {
     method: "POST",
@@ -867,6 +924,7 @@ async function requestRunningHubGeneration(job) {
   const submitDiagnostic = runningHubDiagnostic("提交工作流", submitResponse.status, submitted, submitRaw);
   updateRunningHubDiagnostic(job, submitDiagnostic);
   if (!submitResponse.ok || !submitted?.taskId) throw runningHubRequestError("提交工作流", submitResponse.status, submitted, submitRaw, "RunningHub 工作流提交失败");
+  job.remoteTaskId = String(submitted.taskId);
   await persistJobs();
   const startedAt = Date.now();
   let lastStatus = submitted;
@@ -879,8 +937,11 @@ async function requestRunningHubGeneration(job) {
     updateRunningHubDiagnostic(job, queryDiagnostic);
     if (!response.ok) throw runningHubRequestError("查询任务", response.status, status, raw, "RunningHub 任务查询失败");
     lastStatus = status;
+    if (job.cancelRequested) throw Object.assign(new Error("视频任务已停止"), { code: "CANCELED" });
+    const previewUrl = Array.isArray(status.results) ? status.results.find(item => item?.url)?.url : status.previewUrl || status.preview_url;
+    if (previewUrl && typeof previewUrl === "string") { job.previewRemoteUrl = previewUrl; await persistJobs(); }
     if (status.status === "SUCCESS") {
-      const results = Array.isArray(status.results) ? status.results.filter(item => item?.url || item?.text) : [];
+      const results = Array.isArray(status.results) ? status.results.filter(item => item?.url) : [];
       if (!results.length) throw gatewayError(502, "RunningHub 任务成功但没有可下载结果");
       return { items: results, mode: "workflow", mediaType: "video", taskId: submitted.taskId, referencesUsed: uploadedReferences.length };
     }
@@ -954,14 +1015,36 @@ async function executeJob(job) {
     job.finishedAt = Date.now();
   } catch (error) {
     const failure = classifyError(error);
-    job.status = "failed";
-    job.errorCode = failure.code;
-    job.error = failure.message;
+    job.status = failure.code === "CANCELED" || job.cancelRequested ? "canceled" : "failed";
+    job.errorCode = job.status === "canceled" ? "CANCELED" : failure.code;
+    job.error = job.status === "canceled" ? "视频任务已停止" : failure.message;
     job.finishedAt = Date.now();
   } finally {
     delete job.request;
     await persistJobs();
-    await writeJobLog(job, job.status === "succeeded" ? "completed" : "failed");
+    await writeJobLog(job, job.status === "succeeded" ? "completed" : job.status === "canceled" ? "canceled" : "failed");
+  }
+}
+
+async function cancelJob(req, res, jobId) {
+  const job = jobs.get(jobId);
+  if (!job || job.provider !== "runninghub-h3") return sendJson(res, 404, { error: "视频任务不存在" });
+  if (["succeeded", "failed", "canceled"].includes(job.status)) return sendJson(res, 200, { job: jobView(job), canceled: job.status === "canceled" });
+  job.cancelRequested = true;
+  const remoteTaskId = job.remoteTaskId || job.runningHub?.taskId || "";
+  try {
+    if (remoteTaskId && job.request?.apiKey) {
+      const response = await fetch(`${runningHubBaseUrl}/task/openapi/cancel`, { method: "POST", headers: { Authorization: `Bearer ${job.request.apiKey}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: job.request.apiKey, taskId: remoteTaskId }), signal: AbortSignal.timeout(30_000) });
+      const raw = await response.text(); let result; try { result = JSON.parse(raw); } catch { result = {}; }
+      updateRunningHubDiagnostic(job, runningHubDiagnostic("取消任务", response.status, result, raw));
+      if (!response.ok || Number(result?.code) !== 0) throw runningHubRequestError("取消任务", response.status, result, raw, "RunningHub 任务取消失败");
+    }
+    job.status = "canceled"; job.errorCode = "CANCELED"; job.error = "视频任务已停止"; job.finishedAt = Date.now();
+    await persistJobs(); await writeJobLog(job, "canceled");
+    return sendJson(res, 200, { job: jobView(job), canceled: true });
+  } catch (error) {
+    delete job.cancelRequested;
+    return sendJson(res, 502, { error: error?.message || "RunningHub 任务取消失败", code: error?.code || "GATEWAY" });
   }
 }
 
@@ -1067,19 +1150,18 @@ async function createRunningHubJob(req, res, body) {
     if (!apiKey) return sendJson(res, 401, { error: "未配置 RunningHub API Key，请在设置中保存密钥" });
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
-    const videoMode = String(body.videoMode || "first-frame");
-    const videoQuality = String(body.videoQuality || "standard") === "clear" ? "clear" : "standard";
-    const workflow = runningHubVideoWorkflowForMode(videoMode, videoQuality);
-    if (!workflow) return sendJson(res, 400, { error: "当前仅已接入首帧生视频，请先选择首帧生视频模式" });
-    const requiredReferences = 1;
-    const maxReferences = workflow.referenceNodes.length;
+    const videoMode = "reference";
+    const workflow = runningHubVideoWorkflowForMode(videoMode);
+    if (!workflow) return sendJson(res, 500, { error: "RunningHub 多图参考工作流未配置" });
+    const maxReferences = workflow.imageNodes.length;
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, maxReferences);
-    if (references.length < requiredReferences) return sendJson(res, 400, { error: "首帧生视频至少需要连接 1 张参考图" });
-    const width = Math.min(4096, Math.max(32, Number(body.width) || workflow.width));
-    const height = Math.min(4096, Math.max(32, Number(body.height) || workflow.height));
-    if (width !== workflow.width || height !== workflow.height) return sendJson(res, 400, { error: `当前首帧工作流固定为 ${workflow.width} × ${workflow.height}，其他比例与清晰度将在对应工作流接入后开放` });
-    const seconds = Math.min(workflow.maxSeconds, Math.max(workflow.minSeconds, Math.round(Number(body.seconds) || workflow.minSeconds)));
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, videoQuality, request: { apiKey, prompt, seconds, workflowId: workflow.id, referenceNodes: workflow.referenceNodes, width: workflow.width, height: workflow.height, widthNode: "46", heightNode: "78", references } };
+    if (!references.length) return sendJson(res, 400, { error: "多图参考生视频至少需要 1 张参考图" });
+    const aspect = /^(?:1:1|3:2|4:3|16:9|2:1|9:16|3:4|2:3)$/.test(String(body.aspect || "")) ? String(body.aspect) : workflow.defaultAspect;
+    const megapixels = Math.min(2, Math.max(0.2, Number(body.megapixels) || workflow.defaultMegapixels));
+    const seconds = Math.min(workflow.maxSeconds, Math.max(workflow.minSeconds, Math.round(Number(body.seconds) || 6)));
+    const videoReference = /^\/(?:api\/(?:video-assets|generated|video-edited))\/[A-Za-z0-9._%()\-]+$/.test(String(body.videoReference || "")) ? String(body.videoReference) : "";
+    const audioReference = /^\/api\/audio-assets\/[A-Za-z0-9._%()\-]+$/.test(String(body.audioReference || "")) ? String(body.audioReference) : "";
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, videoAspect: aspect, videoMegapixels: megapixels, videoSeconds: seconds, request: { apiKey, prompt, seconds, workflowId: workflow.id, imageNodes: workflow.imageNodes, videoNode: workflow.videoNode, audioNode: workflow.audioNode, aspect, megapixels, references, videoReference, audioReference } };
     jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
   } catch (error) {
     const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
@@ -1302,6 +1384,7 @@ async function serveGenerated(req, res, filename) { return serveStoredMedia(req,
 async function serveAsset(req, res, filename) { return serveStoredMedia(req, res, assetsDir, filename); }
 async function serveVideoAsset(req, res, filename) { return serveStoredMedia(req, res, videoAssetsDir, filename); }
 async function serveEditedVideo(req, res, filename) { return serveStoredMedia(req, res, editedVideoDir, filename); }
+async function serveAudioAsset(req, res, filename) { return serveStoredMedia(req, res, audioAssetsDir, filename); }
 
 function generatedImageFilename(value) {
   const filename = String(value || "");
@@ -1494,6 +1577,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/restart") return restartLocalService(req, res);
   if (req.method === "POST" && url.pathname === "/api/assets") return storeAsset(req, res);
   if (req.method === "POST" && url.pathname === "/api/video-assets") return storeVideoUpload(req, res);
+  if (req.method === "POST" && url.pathname === "/api/audio-assets") return storeAudioUpload(req, res);
   if (req.method === "POST" && url.pathname === "/api/video-compose") return composeVideo(req, res);
   if (req.method === "POST" && url.pathname === "/api/generate") return createJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/respond") return createResponse(req, res);
@@ -1502,6 +1586,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/generated/open-folder") return openGeneratedFolder(req, res);
   const mjUpscaleMatch = req.method === "POST" && /^\/api\/jobs\/([^/]+)\/midjourney\/upscale$/.exec(url.pathname);
   if (mjUpscaleMatch) return createMjUpscaleJob(req, res, decodeURIComponent(mjUpscaleMatch[1]));
+  const cancelJobMatch = req.method === "POST" && /^\/api\/jobs\/([^/]+)\/cancel$/.exec(url.pathname);
+  if (cancelJobMatch) return cancelJob(req, res, decodeURIComponent(cancelJobMatch[1]));
   if (req.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
     const job = jobs.get(decodeURIComponent(url.pathname.slice("/api/jobs/".length)));
     return job ? sendJson(res, 200, { job: jobView(job) }) : sendJson(res, 404, { error: "生成任务不存在，可能已被清理" });
@@ -1509,6 +1595,7 @@ const server = http.createServer(async (req, res) => {
   if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/generated/")) return serveGenerated(req, res, decodeURIComponent(url.pathname.slice("/api/generated/".length)));
   if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/assets/")) return serveAsset(req, res, decodeURIComponent(url.pathname.slice("/api/assets/".length)));
   if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/video-assets/")) return serveVideoAsset(req, res, decodeURIComponent(url.pathname.slice("/api/video-assets/".length)));
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/audio-assets/")) return serveAudioAsset(req, res, decodeURIComponent(url.pathname.slice("/api/audio-assets/".length)));
   if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/video-edited/")) return serveEditedVideo(req, res, decodeURIComponent(url.pathname.slice("/api/video-edited/".length)));
   if (req.method === "GET" || req.method === "HEAD") return serveStatic(req, res, decodeURIComponent(url.pathname));
   sendJson(res, 405, { error: "不支持的请求方法" });
