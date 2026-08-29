@@ -1169,7 +1169,7 @@ function renderWorkspace() {
   ensureScriptFlow();
   $("#projectName").textContent = state.projectName;
   $$(".library-tabs .tab").forEach(tab => tab.classList.toggle("is-active", tab.dataset.libraryTab === state.libraryTab));
-  renderCanvas(); renderScriptFlow(); renderLibrary(); renderInspector(); setActiveTool(state.tool || "select"); updateViewport(); updateHistoryButtons(); renderFlowMode(); refreshIcons();
+  renderCanvas(); renderScriptFlow(); renderLibrary(); renderInspector(); setActiveTool(state.tool || "select"); updateViewport(); syncVideoGeneratorPortPositions(); renderEdges(); updateHistoryButtons(); renderFlowMode(); refreshIcons();
 }
 function renderFlowMode() {
   if (!state) return;
@@ -2554,13 +2554,11 @@ function videoGeneratorVideoPortTop(node) { return 534 + Math.max(0, node.prompt
 function syncVideoGeneratorPortPositions() {
   $$(".video-generator-node").forEach(element => {
     const node = findNode(element.dataset.nodeId); if (!node) return;
-    const rows = [...element.querySelectorAll(".generator-inputs .input-slot")];
     const elementRect = element.getBoundingClientRect();
     const scale = Math.max(0.01, Number(state?.viewport?.scale) || 1);
     element.querySelectorAll(":scope > .node-port-wrap.input").forEach(wrap => {
       const portId = wrap.querySelector(".node-port")?.dataset.portId || "";
-      const rowIndex = portId === "video-reference" ? node.promptSlots + node.inputSlots : portId === "prompt" ? 0 : /^prompt-\d+$/.test(portId) ? Number(portId.split("-")[1]) || 0 : /^image-\d+$/.test(portId) ? node.promptSlots + (Number(portId.split("-")[1]) || 0) : -1;
-      const row = rows[rowIndex]; if (!row) return;
+      const row = element.querySelector(`.generator-inputs .input-slot[data-video-input-port="${CSS.escape(portId)}"]`); if (!row) return;
       const rowRect = row.getBoundingClientRect();
       wrap.style.top = `${(rowRect.top - elementRect.top + rowRect.height / 2) / scale}px`;
     });
