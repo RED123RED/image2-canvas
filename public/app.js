@@ -1021,6 +1021,16 @@ function videoResultProfileLabel(node) {
   const height = Number(node.videoHeight) || 0;
   return width && height ? `${node.videoAspect || "视频"} · ${width} × ${height}` : String(node.videoAspect || "");
 }
+function generatedVideoFilename(source) {
+  try {
+    const url = new URL(String(source || ""), window.location.origin);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/api/generated/")) return "";
+    const filename = decodeURIComponent(url.pathname.slice("/api/generated/".length));
+    return /^job-[a-z0-9-]+-\d+\.(?:mp4|webm|mov|gif)$/i.test(filename) ? filename : "";
+  } catch {
+    return "";
+  }
+}
 function refreshGenerationElapsedClock() {
   const elements = $$('[data-generation-elapsed]');
   if (!elements.length) {
@@ -2271,8 +2281,8 @@ function portPoint(node, portId) {
   if (node.type === "generator") {
     if (portId === "image" || portId === "video") return { x: node.x + node.width, y: node.y + 76 };
     if (node.mediaType === "video") {
-      if (portId === "prompt" || /^prompt-\d+$/.test(portId)) { const index = portId === "prompt" ? 0 : Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + 202 + index * 30 }; }
-      if (/^image-\d+$/.test(portId)) return { x: node.x, y: node.y + 232 + Math.max(0, node.promptSlots - 1) * 30 + (Number(portId.split("-")[1]) || 0) * 30 };
+      if (portId === "prompt" || /^prompt-\d+$/.test(portId)) { const index = portId === "prompt" ? 0 : Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + 184 + index * 30 }; }
+      if (/^image-\d+$/.test(portId)) return { x: node.x, y: node.y + 214 + Math.max(0, node.promptSlots - 1) * 30 + (Number(portId.split("-")[1]) || 0) * 30 };
       if (portId === "video-reference") return { x: node.x, y: node.y + 394 + Math.max(0, node.promptSlots - 1) * 30 };
     }
     if (portId === "prompt" || /^prompt-\d+$/.test(portId)) { const index = portId === "prompt" ? 0 : Number(portId.split("-")[1]) || 0; return { x: node.x, y: node.y + generatorPromptPortTop(index) }; }
@@ -3120,10 +3130,10 @@ function renderNodeInspector(node) {
   if (node.type === "generator" && node.mediaType !== "video") { const imageInputs = state.edges.filter(edge => edge.target === node.id && edge.type === "image").length; const provider = generatorProviderForNode(node); specific = `<div class="summary-row"><span>模型</span><strong>${provider.model}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>参考图</span><strong>${imageInputs}/${node.inputSlots}</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>`; }
   if (node.mediaType === "video") { const dimensions = runningHubVideoDimensions(node); specific = `<div class="summary-row"><span>模型</span><strong>${runningHubVideoProvider.model}</strong></div><div class="summary-row"><span>生成方式</span><strong>${runningHubVideoMode(node).label}</strong></div><div class="summary-row"><span>提示词</span><strong>${incomingEdge(node.id, "prompt") ? "已连接" : "未连接"}</strong></div><div class="summary-row"><span>像素</span><strong>${Number(node.videoMegapixels || 0.9).toFixed(1)} MP</strong></div><div class="summary-row"><span>尺寸</span><strong>${dimensions.width} × ${dimensions.height}</strong></div><div class="summary-row"><span>时长</span><strong>${node.videoSeconds} 秒</strong></div><div class="summary-row"><span>输出结果</span><strong>${node.lastResultIds?.length || 0}</strong></div>${node.lastError ? `<div class="summary-row"><span>最近错误</span><strong>${escapeHtml(node.lastError)}</strong></div>` : ""}`; }
   if (node.type === "frame") { const contained = frameContainedNodes(node).length; specific = `<div class="summary-row"><span>包含节点</span><strong>${contained}</strong></div><div class="summary-row"><span>画板尺寸</span><strong>${Math.round(node.width)} × ${Math.round(node.height)}</strong></div><p class="field-note">把节点拖入虚线范围后，拖动画板边框即可整体移动这些节点。右下角手柄可以调整画板大小。</p>`; }
-  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">名称</div><input class="text-input" id="nodeNameInput" value="${escapeHtml(node.name)}"></section><section class="control-section">${specific}</section><section class="control-section"><div class="action-list">${node.type === "generator" ? `<button class="action-row" type="button" data-inspector-action="run">${icon("play")}<strong>运行此节点</strong><small>${node.mediaType === "video" ? "MP4 视频" : `${node.batch} 张`}</small></button>` : ""}${node.type === "video-editor" ? `<button class="action-row" type="button" data-inspector-action="import-video">${icon("video")}<strong>导入视频</strong><small>保存到本机 E 盘</small></button>` : ""}${node.type === "image" ? (node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载图片</strong><small>原始文件</small></button>` : `<button class="action-row" type="button" data-inspector-action="upload">${icon("image-plus")}<strong>上传图像</strong><small>本地参考图</small></button>`) : ""}${(node.type === "video" && node.src) || (node.type === "video-preview" && videoPreviewFrame(node)) ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>${node.type === "video-preview" ? "导出并下载视频" : "下载视频"}</strong><small>${node.type === "video-preview" ? "按需生成 MP4" : escapeHtml(node.outputType || "mp4")}</small></button>` : ""}${node.type === "image" && generatedImageFilename(node.src) ? `<button class="action-row danger-action" type="button" data-inspector-action="delete-generated-file">${icon("trash-2")}<strong>同步删除生成文件</strong><small>删除画布节点与本地图片，不可撤销</small></button>` : ""}<button class="action-row" type="button" data-inspector-action="duplicate">${icon("copy")}<strong>复制模块</strong><small>保留当前参数</small></button><button class="action-row danger-action" type="button" data-inspector-action="delete">${icon("trash-2")}<strong>删除模块</strong><small>仅删除画布节点，保留本地文件</small></button></div></section>`;
+  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">名称</div><input class="text-input" id="nodeNameInput" value="${escapeHtml(node.name)}"></section><section class="control-section">${specific}</section><section class="control-section"><div class="action-list">${node.type === "generator" ? `<button class="action-row" type="button" data-inspector-action="run">${icon("play")}<strong>运行此节点</strong><small>${node.mediaType === "video" ? "MP4 视频" : `${node.batch} 张`}</small></button>` : ""}${node.type === "video-editor" ? `<button class="action-row" type="button" data-inspector-action="import-video">${icon("video")}<strong>导入视频</strong><small>保存到本机 E 盘</small></button>` : ""}${node.type === "image" ? (node.src ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>下载图片</strong><small>原始文件</small></button>` : `<button class="action-row" type="button" data-inspector-action="upload">${icon("image-plus")}<strong>上传图像</strong><small>本地参考图</small></button>`) : ""}${(node.type === "video" && node.src) || (node.type === "video-preview" && videoPreviewFrame(node)) ? `<button class="action-row" type="button" data-inspector-action="download">${icon("download")}<strong>${node.type === "video-preview" ? "导出并下载视频" : "下载视频"}</strong><small>${node.type === "video-preview" ? "按需生成 MP4" : escapeHtml(node.outputType || "mp4")}</small></button>` : ""}${node.type === "image" && generatedImageFilename(node.src) ? `<button class="action-row danger-action" type="button" data-inspector-action="delete-generated-file">${icon("trash-2")}<strong>同步删除生成文件</strong><small>删除画布节点与本地图片，不可撤销</small></button>` : ""}${node.type === "video" && generatedVideoFilename(node.src) ? `<button class="action-row danger-action" type="button" data-inspector-action="delete-generated-video-file">${icon("trash-2")}<strong>同步删除生成文件</strong><small>删除画布节点与本地视频，不可撤销</small></button>` : ""}<button class="action-row" type="button" data-inspector-action="duplicate">${icon("copy")}<strong>复制模块</strong><small>保留当前参数</small></button><button class="action-row danger-action" type="button" data-inspector-action="delete">${icon("trash-2")}<strong>删除模块</strong><small>仅删除画布节点，保留本地文件</small></button></div></section>`;
   $("#nodeNameInput").addEventListener("change", event => { const value = event.target.value.trim(); if (!value || value === node.name) return; recordHistory(); node.name = value; renderCanvas(); renderLibrary(); scheduleSave(); });
   $$("#inspectorContent [data-upload-node]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); triggerReferenceUpload(button.dataset.uploadNode); }));
-   $$('[data-inspector-action]').forEach(button => button.addEventListener("click", () => { const action = button.dataset.inspectorAction; if (action === "run") runGeneratorNode(node.id); if (action === "upload") triggerReferenceUpload(node.id); if (action === "import-video") { pendingVideoImportNodeId = node.id; videoFileInput.value = ""; videoFileInput.click(); } if (action === "download") { if (node.type === "video-preview") void exportVideoPreview(node.id); else downloadNode(node); } if (action === "delete-generated-file") void deleteGeneratedImageNodeWithFile(node.id); if (action === "duplicate") duplicateSelected(); if (action === "delete") deleteSelection(); }));
+   $$('[data-inspector-action]').forEach(button => button.addEventListener("click", () => { const action = button.dataset.inspectorAction; if (action === "run") runGeneratorNode(node.id); if (action === "upload") triggerReferenceUpload(node.id); if (action === "import-video") { pendingVideoImportNodeId = node.id; videoFileInput.value = ""; videoFileInput.click(); } if (action === "download") { if (node.type === "video-preview") void exportVideoPreview(node.id); else downloadNode(node); } if (action === "delete-generated-file") void deleteGeneratedImageNodeWithFile(node.id); if (action === "delete-generated-video-file") void deleteGeneratedVideoNodeWithFile(node.id); if (action === "duplicate") duplicateSelected(); if (action === "delete") deleteSelection(); }));
   refreshIcons();
 }
 async function handleCanvasPaste(event) {
@@ -3188,6 +3198,24 @@ async function importVideosIntoEditor(nodeId, files) {
     recordHistory(); editor.clips.push(...imported); editor.status = "idle"; editor.outputSrc = ""; editor.lastError = ""; state.selectedIds = [editor.id];
     renderWorkspace(); scheduleSave(); toast(`已导入 ${imported.length} 条视频`);
   } catch (error) { toast(error?.message || "视频导入失败", true); }
+}
+async function deleteGeneratedVideoNodeWithFile(nodeId) {
+  const node = findNode(nodeId); const filename = node?.type === "video" ? generatedVideoFilename(node.src) : "";
+  if (!node || !filename) return toast("该节点不是本地生成视频，普通删除不会清理磁盘文件", true);
+  const sameProjectFiles = new Set();
+  state.nodes.filter(item => item.id !== nodeId).forEach(item => [item.src, item.originalSrc, item.previewSrc].forEach(source => { const value = generatedVideoFilename(source); if (value) sameProjectFiles.add(value); }));
+  const projects = await dbGetAll("projects"); const sharedFiles = new Set();
+  projects.filter(project => project?.id && project.id !== state.id).forEach(project => (project.nodes || []).forEach(item => [item.src, item.originalSrc, item.previewSrc].forEach(source => { const value = generatedVideoFilename(source); if (value) sharedFiles.add(value); })));
+  const canDeleteFile = !sameProjectFiles.has(filename) && !sharedFiles.has(filename);
+  const fileNote = canDeleteFile ? "并删除对应的本地生成视频。此操作不可撤销。" : "。该视频仍被当前项目或其他项目使用，磁盘文件会保留。";
+  if (!window.confirm(`删除画布节点“${node.name}”${fileNote}`)) return;
+  if (canDeleteFile) {
+    try { await removeGeneratedImageFiles([filename]); }
+    catch (error) { return toast(`本地视频删除失败，已保留画布节点：${error.message || "未知错误"}`, true); }
+  }
+  state.nodes = state.nodes.filter(item => item.id !== nodeId); state.edges = state.edges.filter(edge => edge.source !== nodeId && edge.target !== nodeId); state.recentIds = state.recentIds.filter(id => id !== nodeId); state.selectedIds = []; selectedEdgeId = null;
+  undoStack = []; redoStack = []; updateHistoryButtons(); renderWorkspace(); scheduleSave();
+  toast(canDeleteFile ? "已同步删除画布节点和本地生成视频" : "已删除画布节点；共享本地视频已保留");
 }
 async function uploadVideoReferenceIntoNode(nodeId, file) {
   const node = findNode(nodeId); if (!node || node.mediaType !== "video" || !file) return;

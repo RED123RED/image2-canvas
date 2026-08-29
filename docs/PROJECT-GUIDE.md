@@ -67,6 +67,7 @@
 11. 任务恢复文件保留全部排队/运行任务及最近 240 条终态任务；裁剪只影响可恢复的历史记录，不删除生成媒体、上传素材或任务日志。
 12. H3 视频节点的持久化字段包括 `videoMode: "reference"`、`videoAspect`、`videoMegapixels`、`videoSeconds`、`localVideoReference`、`localAudioReference` 和 `previewSrc`；旧 H3 节点打开时自动归一化为新六图参考结构，原有提示词和已连接参考图保持可用。
 13. H3 参考视频和参考音频只允许使用本机画布资源路径；音频保存于 `output/audio-assets/`，视频保存于 `output/video-assets/` 或既有生成/剪辑目录。密钥、远程任务 ID 和上传文件名不得写入项目导出文件。
+14. 视频结果节点的检查器支持“同步删除生成文件”：仅当生成文件没有被当前项目其他节点或其他项目引用时才从 `output/generated/` 删除；普通删除仍只移除画布节点并保留文件。
 
 ## 推荐的跨窗口流程
 

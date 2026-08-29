@@ -1390,11 +1390,15 @@ function generatedImageFilename(value) {
   const filename = String(value || "");
   return filename === path.basename(filename) && /^job-[a-z0-9-]+-\d+\.(?:png|jpe?g|webp)$/i.test(filename) ? filename : "";
 }
+function generatedMediaFilename(value) {
+  const filename = String(value || "");
+  return filename === path.basename(filename) && /^job-[a-z0-9-]+-\d+\.(?:png|jpe?g|webp|mp4|webm|mov|gif)$/i.test(filename) ? filename : "";
+}
 
 async function deleteGeneratedImages(req, res) {
   try {
     const body = await readJson(req, 256 * 1024);
-    const filenames = [...new Set((Array.isArray(body?.filenames) ? body.filenames : []).map(generatedImageFilename).filter(Boolean))].slice(0, 256);
+    const filenames = [...new Set((Array.isArray(body?.filenames) ? body.filenames : []).map(generatedMediaFilename).filter(Boolean))].slice(0, 256);
     let deleted = 0; let missing = 0;
     for (const filename of filenames) {
       try { await fs.unlink(path.join(generatedDir, filename)); deleted += 1; }
@@ -1402,7 +1406,7 @@ async function deleteGeneratedImages(req, res) {
     }
     return sendJson(res, 200, { deleted, missing });
   } catch (error) {
-    return sendJson(res, 500, { error: error?.message || "本地生成图片删除失败" });
+    return sendJson(res, 500, { error: error?.message || "本地生成媒体删除失败" });
   }
 }
 
