@@ -865,6 +865,13 @@ async function removeGeneratedImageFiles(filenames) {
   if (!unique.length) return { deleted: 0, missing: 0 };
   return requestJson("/api/generated/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filenames: unique }) }, 60_000);
 }
+function assertGeneratedMediaDeletion(result, filenames, label = "生成媒体") {
+  const requested = new Set((filenames || []).filter(Boolean)).size;
+  const deleted = Number(result?.deleted) || 0;
+  const missing = Number(result?.missing) || 0;
+  if (deleted + missing < requested) throw new Error(`${label}删除未完成：服务端未确认任何文件已删除`);
+  return { deleted, missing };
+}
 function formatStorageSize(bytes) {
   const value = Math.max(0, Number(bytes) || 0);
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
@@ -3258,7 +3265,7 @@ async function deleteGeneratedVideoNodeWithFile(nodeId) {
   const fileNote = canDeleteFile ? "并删除对应的本地生成视频。此操作不可撤销。" : "。该视频仍被当前项目或其他项目使用，磁盘文件会保留。";
   if (!window.confirm(`删除画布节点“${node.name}”${fileNote}`)) return;
   if (canDeleteFile) {
-    try { await removeGeneratedImageFiles([filename]); }
+    try { assertGeneratedMediaDeletion(await removeGeneratedImageFiles([filename]), [filename], "本地生成视频"); }
     catch (error) { return toast(`本地视频删除失败，已保留画布节点：${error.message || "未知错误"}`, true); }
   }
   state.nodes = state.nodes.filter(item => item.id !== nodeId); state.edges = state.edges.filter(edge => edge.source !== nodeId && edge.target !== nodeId); state.recentIds = state.recentIds.filter(id => id !== nodeId); state.selectedIds = []; selectedEdgeId = null;

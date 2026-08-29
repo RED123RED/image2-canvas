@@ -1398,7 +1398,10 @@ function generatedMediaFilename(value) {
 async function deleteGeneratedImages(req, res) {
   try {
     const body = await readJson(req, 256 * 1024);
-    const filenames = [...new Set((Array.isArray(body?.filenames) ? body.filenames : []).map(generatedMediaFilename).filter(Boolean))].slice(0, 256);
+    const requested = [...new Set(Array.isArray(body?.filenames) ? body.filenames.map(value => String(value || "")).filter(Boolean) : [])].slice(0, 256);
+    const filenames = requested.map(generatedMediaFilename).filter(Boolean);
+    if (!requested.length) return sendJson(res, 400, { error: "未提供可删除的生成媒体文件名" });
+    if (filenames.length !== requested.length) return sendJson(res, 400, { error: "包含不支持的生成媒体文件名" });
     let deleted = 0; let missing = 0;
     for (const filename of filenames) {
       try { await fs.unlink(path.join(generatedDir, filename)); deleted += 1; }
