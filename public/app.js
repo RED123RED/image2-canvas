@@ -1176,7 +1176,7 @@ function renderWorkspace() {
   ensureScriptFlow();
   $("#projectName").textContent = state.projectName;
   $$(".library-tabs .tab").forEach(tab => tab.classList.toggle("is-active", tab.dataset.libraryTab === state.libraryTab));
-  renderCanvas(); renderScriptFlow(); renderLibrary(); renderInspector(); setActiveTool(state.tool || "select"); updateViewport(); syncVideoGeneratorPortPositions(); renderEdges(); updateHistoryButtons(); renderFlowMode(); refreshIcons();
+  renderCanvas(); renderLibrary(); renderInspector(); setActiveTool(state.tool || "select"); updateViewport(); syncVideoGeneratorPortPositions(); renderEdges(); updateHistoryButtons(); renderFlowMode(); refreshIcons();
 }
 function renderFlowMode() {
   if (!state) return;
@@ -1187,7 +1187,16 @@ function renderFlowMode() {
   $("#workspaceView").classList.toggle("is-script-mode", scriptMode);
   $("#scriptFlowStage").hidden = !scriptMode;
   applyPanelWidths();
-  if (mode === "script") renderScriptFlow();
+  if (scriptMode) {
+    // Render after the stage is visible so script item and edge geometry uses real bounds.
+    renderScriptFlow();
+  } else {
+    // Workflow nodes are hidden in script mode; remeasure DOM-backed ports only after
+    // restoring the workflow layer, otherwise hidden H3 ports resolve to zero coordinates.
+    updateViewport();
+    syncVideoGeneratorPortPositions();
+    renderEdges();
+  }
 }
 function setFlowMode(mode) {
   if (!state || state.flowMode === mode) return;
