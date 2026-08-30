@@ -71,6 +71,7 @@
 15. 最终视频结果节点的预览区域必须跟随节点宽高自由伸缩，保持 `object-fit: contain` 不变形；此规则不影响 H3 生成节点、视频剪辑节点或成片预览节点。
 16. 生图和 H3 生成节点缩小时，最小高度按运行按钮及其状态行的实际 DOM 底部计算并保留少量间距；向下拉伸不设额外上限，避免按钮被裁切。
 17. 工作流与剧本流切换时，必须先切换对应画布层的可见状态，再测量节点端口和重绘连线；工作流隐藏期间不得使用端口的零尺寸 `getBoundingClientRect()` 作为边线坐标。
+18. H3 请求提交到 RunningHub 时，`aspect_ratio` 必须使用工作流 `ResolutionSelector` 接受的完整选项文本：`9:16` 为 `9:16 (Portrait Widescreen)`，不能提交旧的 `9:16 (Portrait)`，否则远端会返回 `prompt_outputs_failed_validation` / `Value not in list`。
 
 ## 推荐的跨窗口流程
 

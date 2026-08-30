@@ -859,7 +859,7 @@ function runningHubLengthExpression(seconds) {
 }
 
 function runningHubAspectLabel(value) {
-  const labels = { "1:1": "1:1 (Square)", "4:3": "4:3 (Standard)", "3:2": "3:2 (Classic)", "16:9": "16:9 (Widescreen)", "2:1": "2:1 (Ultrawide)", "9:16": "9:16 (Portrait)", "3:4": "3:4 (Portrait)", "2:3": "2:3 (Portrait)" };
+  const labels = { "1:1": "1:1 (Square)", "4:3": "4:3 (Standard)", "3:2": "3:2 (Photo)", "16:9": "16:9 (Widescreen)", "2:1": "21:9 (Ultrawide)", "9:16": "9:16 (Portrait Widescreen)", "3:4": "3:4 (Portrait Standard)", "2:3": "2:3 (Portrait Photo)" };
   return labels[String(value || "16:9")] || labels["16:9"];
 }
 
