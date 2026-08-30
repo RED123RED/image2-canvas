@@ -61,6 +61,12 @@ const runningHubVideo16x9Dimensions = Object.freeze({
   1.8: { width: 1824, height: 1024 },
   2: { width: 1920, height: 1088 }
 });
+const runningHubVideo9x16Dimensions = Object.freeze(Object.fromEntries(
+  Object.entries(runningHubVideo16x9Dimensions).map(([megapixels, dimensions]) => [
+    megapixels,
+    { width: dimensions.height, height: dimensions.width }
+  ])
+));
 const runningHubReferenceWorkflowId = "2093564802919649281";
 const runningHubVideoProvider = Object.freeze({ label: "海螺 H3 视频", model: "RunningHub · API plus" });
 const runningHubKrea2Provider = Object.freeze({ label: "K2 白玉", model: "Krea2 White Marble" });
@@ -103,6 +109,7 @@ function runningHubVideoDimensions(node) {
   const [ratioWidth, ratioHeight] = aspect.split(":").map(Number);
   const megapixels = runningHubVideoMegapixelOptions.some(option => option.value === Number(node?.videoMegapixels)) ? Number(node.videoMegapixels) : 0.9;
   if (aspect === "16:9" && runningHubVideo16x9Dimensions[megapixels]) return runningHubVideo16x9Dimensions[megapixels];
+  if (aspect === "9:16" && runningHubVideo9x16Dimensions[megapixels]) return runningHubVideo9x16Dimensions[megapixels];
   const area = megapixels * 1_000_000; const ratio = ratioWidth / ratioHeight;
   const round32 = value => Math.max(32, Math.round(value / 32) * 32);
   return { width: round32(Math.sqrt(area * ratio)), height: round32(Math.sqrt(area / ratio)) };
