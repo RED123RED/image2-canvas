@@ -3199,6 +3199,57 @@ function imageUniformScaleControl() {
   const value = imageUniformScaleValue(images); const dimensions = imageUniformScaleDimensions(value);
   return `<section class="control-section image-uniform-scale-control"><div class="control-title">参考图统一比例 <span>快捷操作</span></div><p class="field-note">统一所有参考图节点的显示大小；不会影响单个节点后续手动拉伸。</p><div class="image-uniform-scale-row"><input type="range" min="0" max="100" value="${value}" data-image-uniform-scale aria-label="参考图统一比例"><output data-image-uniform-scale-value>${value}</output></div><div class="summary-row"><span>统一尺寸</span><strong data-image-uniform-scale-size>${dimensions.width} × ${dimensions.height}</strong></div><button class="button button-quiet" type="button" data-confirm-image-uniform-scale${images.length ? "" : " disabled"}>${icon("check")} 确认统一比例</button></section>`;
 }
+function crossProjectImageSource(node) { return node?.previewSrc || node?.src || node?.originalSrc || ""; }
+function crossProjectImageOriginalSource(node) { return node?.originalSrc || node?.src || node?.previewSrc || ""; }
+function crossProjectImageLibraryHtml() {
+  return `<section class="control-section cross-project-images-control"><div class="control-title">其他项目图片 <span>点击获取</span></div><label class="field-label" for="crossProjectSelect">来源项目</label><select class="select-input" id="crossProjectSelect"><option value="">正在读取项目…</option></select><div class="cross-project-image-list" id="crossProjectImageList"><p class="field-note">选择项目后，这里会显示可复用的图片。</p></div></section>`;
+}
+async function bindCrossProjectImageLibrary() {
+  const select = $("#crossProjectSelect"); const list = $("#crossProjectImageList");
+  if (!select || !list || !state?.id) return;
+  try {
+    const projects = (await dbGetAll("projects")).filter(project => project?.id && project.id !== state.id).sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    if (!projects.length) {
+      select.innerHTML = `<option value="">暂无其他项目</option>`;
+      list.innerHTML = `<p class="field-note">新建其他项目并添加图片后，可在这里复用。</p>`;
+      return;
+    }
+    select.innerHTML = `<option value="">选择一个项目</option>${projects.map(project => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.projectName || "未命名项目")}</option>`).join("")}`;
+    const renderImages = () => {
+      const project = projects.find(item => item.id === select.value);
+      if (!project) { list.innerHTML = `<p class="field-note">选择项目后，这里会显示可复用的图片。</p>`; return; }
+      const images = (project?.nodes || []).filter(node => node?.type === "image" && crossProjectImageSource(node));
+      list.innerHTML = images.length ? images.map(node => `<button class="cross-project-image" type="button" data-cross-project-image="${escapeHtml(node.id)}"><img src="${escapeHtml(crossProjectImageSource(node))}" alt="" loading="lazy" decoding="async"><span>${escapeHtml(node.name || "参考图")}</span><small>点击添加到当前画布</small></button>`).join("") : `<p class="field-note">该项目暂无可复用图片。</p>`;
+      list.querySelectorAll("[data-cross-project-image]").forEach(button => button.addEventListener("click", () => {
+        const sourceNode = project?.nodes?.find(item => item.id === button.dataset.crossProjectImage);
+        if (sourceNode) addCrossProjectImageNode(project, sourceNode);
+      }));
+      refreshIcons();
+    };
+    select.addEventListener("change", renderImages);
+    renderImages();
+  } catch (error) {
+    select.innerHTML = `<option value="">读取失败</option>`;
+    list.innerHTML = `<p class="field-note">无法读取其他项目图片：${escapeHtml(error?.message || "本地项目数据暂时不可用")}</p>`;
+  }
+}
+function addCrossProjectImageNode(project, sourceNode) {
+  const source = crossProjectImageOriginalSource(sourceNode); if (!state || !project || !source) return;
+  const center = sceneCenter(); recordHistory();
+  const node = createReferenceNode(Math.round(center.x - 135), Math.round(center.y - 160));
+  node.name = sourceNode.name || "参考图";
+  node.src = source;
+  node.originalSrc = source;
+  node.previewSrc = crossProjectImageSource(sourceNode);
+  node.source = `来自项目：${project.projectName || "未命名项目"}`;
+  node.ratio = sourceNode.ratio || node.ratio;
+  node.sharedFromProjectId = project.id;
+  node.sharedFromProjectName = project.projectName || "未命名项目";
+  node.sharedFromNodeId = sourceNode.id;
+  node.sharedFromNodeName = sourceNode.name || "参考图";
+  state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null;
+  renderWorkspace(); scheduleSave(); toast(`已从“${project.projectName || "未命名项目"}”获取图片`);
+}
 function applyImageUniformScale(value) {
   const images = state.nodes.filter(node => node.type === "image"); if (!images.length) return;
   const dimensions = imageUniformScaleDimensions(value); recordHistory(); images.forEach(node => { node.width = dimensions.width; node.height = dimensions.height; }); renderWorkspace(); scheduleSave(); toast(`已统一 ${images.length} 个参考图节点：${dimensions.width} × ${dimensions.height}`);
@@ -3215,9 +3266,9 @@ function renderInspector() {
   const prompts = state.nodes.filter(node => node.type === "prompt").length; const compositions = state.nodes.filter(node => node.type === "composition").length; const images = state.nodes.filter(node => node.type === "image").length; const videos = state.nodes.filter(node => node.type === "video").length; const generators = state.nodes.filter(node => node.type === "generator").length; const answers = state.nodes.filter(node => node.type === "answer").length;
   inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">项目结构 <span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词</span><strong>${prompts}</strong></div><div class="summary-row"><span>参数控制</span><strong>${compositions}</strong></div><div class="summary-row"><span>图像素材</span><strong>${images}</strong></div><div class="summary-row"><span>视频结果</span><strong>${videos}</strong></div><div class="summary-row"><span>生图</span><strong>${generators}</strong></div><div class="summary-row"><span>模型回答</span><strong>${answers}</strong></div></section>
     ${imageUniformScaleControl()}
-    <section class="control-section"><div class="control-title">数据流</div><div class="edge-summary"><span class="edge-swatch prompt"></span><span>Prompt 文本连接</span></div><div class="edge-summary"><span class="edge-swatch composition"></span><span>参数控制连接</span></div><div class="edge-summary"><span class="edge-swatch"></span><span>Image 图像连接</span></div><div class="edge-summary"><span class="edge-swatch video"></span><span>Video 视频连接</span></div></section>
+    ${crossProjectImageLibraryHtml()}
     <section class="control-section"><div class="control-title">界面基调 <span>${themeLabels[state.theme]}</span></div><div class="settings-theme-switch">${themeButtonsHtml()}</div></section>`;
-  bindInspectorThemeButtons(); bindImageUniformScaleControl(); refreshIcons();
+  bindInspectorThemeButtons(); bindImageUniformScaleControl(); void bindCrossProjectImageLibrary(); refreshIcons();
 }
 function renderMultiSelectionInspector(nodes) {
   const generatedImages = nodes.filter(node => node.type === "image" && generatedImageFilename(node.src));

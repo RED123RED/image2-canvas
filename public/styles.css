@@ -326,6 +326,15 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
 .asset-copy strong { font-size: 11px; }
 .asset-copy small { margin-top: 3px; color: var(--muted); font-size: 9px; }
 .asset-kind { padding: 3px 5px; border-radius: 4px; color: var(--blue); background: var(--blue-soft); font-size: 8px; font-weight: 700; }
+.cross-project-images-control .field-label { display: block; margin: 10px 4px 5px; }
+.cross-project-images-control .select-input { width: 100%; }
+.cross-project-image-list { display: grid; max-height: 280px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 10px; overflow: auto; }
+.cross-project-image { display: grid; min-width: 0; gap: 4px; padding: 5px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface-soft); text-align: left; cursor: pointer; }
+.cross-project-image:hover { border-color: var(--primary); background: var(--surface); }
+.cross-project-image img { display: block; width: 100%; aspect-ratio: 1; border-radius: 4px; background: var(--canvas); object-fit: cover; }
+.cross-project-image span, .cross-project-image small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cross-project-image span { font-size: 9px; }
+.cross-project-image small { color: var(--muted); font-size: 8px; }
 .empty-state { padding: 26px 12px; color: var(--muted); text-align: center; }
 .empty-state svg { width: 23px; height: 23px; margin-bottom: 7px; }
 .empty-state p { margin: 0; font-size: 11px; }
