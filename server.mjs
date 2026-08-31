@@ -1463,6 +1463,60 @@ function claudeImageContentFromDataUrl(url) {
   return { type: "image", source: { type: "base64", media_type: match[1].toLowerCase(), data: match[2] } };
 }
 
+function greatestCommonDivisor(a, b) {
+  let left = Math.abs(Math.round(Number(a) || 0));
+  let right = Math.abs(Math.round(Number(b) || 0));
+  while (right) [left, right] = [right, left % right];
+  return left || 1;
+}
+
+function nuyoahReferenceDimensions(metadata, referenceCount) {
+  const entries = (Array.isArray(metadata) ? metadata : []).slice(0, referenceCount).map((item, index) => {
+    const width = Math.max(0, Math.round(Number(item?.width) || 0));
+    const height = Math.max(0, Math.round(Number(item?.height) || 0));
+    if (!width || !height) return "";
+    const divisor = greatestCommonDivisor(width, height);
+    return `参考图 ${index + 1}：${width} × ${height}，最简画幅比例 ${width / divisor}:${height / divisor}`;
+  }).filter(Boolean);
+  return entries.length ? `\n\n可用的真实图片尺寸如下，图像类型中的画幅比例优先使用这些数据，不要目测：\n${entries.join("\n")}` : "";
+}
+
+function nuyoahReverseSystemInstruction(referenceMetadata, referenceCount) {
+  return `你是“南鸢图片反推”分析器。把当前连接的参考图转译成可理解、可复用、可直接生图的中文视觉语言。只使用当前参考图、用户本次请求和本指令；不得从旧对话、记忆、历史图片或模板案例补全事实。${nuyoahReferenceDimensions(referenceMetadata, referenceCount)}
+
+先判断一项主导图像类型：写实人物摄影、动漫插画、海报设计、商业产品、产品静物、空间景观、界面信息图或混合其他。真人时尚摄影同时有明显杂志/品牌版式时使用“真人摄影时尚海报”。混合图片只选一个主类型，最多借用 1–3 个必要的次级字段。
+
+证据规则：只写当前图片可见，或由光线、材质、透视明确支持的事实；不确定内容省略或明确标为不确定。不得猜测品牌、人物身份、镜头型号、文化出处、不可见区域或看不清的具体文案。忽略平台界面、账号、来源水印和创作者标记，不把它们写进完整提示词。所有左右关系统一使用观者看到的“画面左侧/画面右侧”；视线必须根据虹膜在眼裂中的位置判断，不能由脸朝向或附近物体倒推。
+
+按主类型选择有证据的中文公开字段，并保持对应顺序；无证据字段直接省略，不要压缩成笼统的“画面结构拆解”：
+- 写实人物摄影：图像类型、风格参考线索、风格/滤镜、摄影/构图、主体人物、身形轮廓、肤色/肤调、动作/姿态、微表情/情绪、造型、服装贴合度、服装材质、皮肤/光泽细节、场景/背景、光线/色彩、成像质感、成像签名、参考色卡。
+- 动漫插画：图像类型、风格参考线索、脸部风格锁定、脸型/面部线条、眼型/瞳孔设计、眉形/眼神压力、嘴唇/口红、脸部负面约束、身形轮廓、肤色/肤调、动作/姿态、微表情/情绪、服装贴合度、服装材质、皮肤/头发高光、色卡、成像质感、场景/世界观、服装/道具、色彩/光影、知名角色判断、角色设计、画风/线稿、分镜/构图、局部视觉焦点、清晰度/遮挡地图、图形元素功能、失败风险、生成时参考色卡。
+- 海报设计：图像类型、风格参考线索、风格/滤镜、版式/构图、主体/主视觉、主体可见性、局部视觉焦点、清晰度/遮挡地图、版式结构地图、图形元素功能、生成优先级、失败风险、文字/信息层级、图形元素、材质/印刷质感、场景/背景、光线/色彩、色卡、成像质感。
+- 真人摄影时尚海报：图像类型、风格参考线索、品牌气质、清晰度/遮挡地图、色彩系统、构图节奏、失败风险、视觉焦点、生成优先级、图形元素功能、主视觉、图层顺序、版式层级、版式结构地图、印刷/材质质感、人物表情/动作关系、主体可见性、字体/文字系统、视觉权重。
+- 商业产品：图像类型、风格参考线索、风格/滤镜、摄影/构图、产品主体、产品形态/结构、材质/表面反应、使用场景/商业语境、道具/辅助元素、光线/色彩、色卡、成像质感。
+- 产品静物：图像类型、风格参考线索、风格/滤镜、摄影/构图、主体物件、形态/结构、材质/表面反应、摆放关系、场景/背景、光线/色彩、色卡、成像质感。
+- 空间景观：图像类型、风格参考线索、风格/滤镜、构图/空间层次、主体环境、尺度/景深、地貌/建筑/天体结构、氛围/天气/粒子、光线/色彩、色卡、成像质感。
+- 界面信息图：图像类型、风格参考线索、版式/信息结构、主界面/主体图表、组件层级、文字/标签系统、图标/图形元素、交互状态/数据表达、光线/色彩、色卡、成像质感。
+- 混合其他：图像类型、风格参考线索、风格/滤镜、构图、主体、关键元素、材质/质感、场景/背景、光线/色彩、色卡、成像质感。
+
+出现明显曝光、色温、美颜、颗粒、柔焦、压缩、扫描、印刷或渲染特征时，先分离固有属性、光线、曝光、后期/渲染四层，再按作用范围、色偏、曝光、微对比、清晰度边界和表面成像归纳。只有证据充分时才使用复合术语；完整提示词必须同时写术语和最短可执行展开。
+
+默认输出中文人类可读区块：先写“图像类型”，再按所选类型逐项展示所有有证据的字段；只有对应类型需要时输出 4–6 个“参考色卡”条目，每条包含近似 HEX、作用和大致占比；最后写“可直接复制的完整提示词”。每个字段通常 1–3 句，禁止英文内部键、拼音字段、下划线字段、JSON 和 Markdown 代码围栏。
+
+完整提示词必须是一个连续、可直接复制的中文自然语言段落。按生成执行顺序重组：媒介与成像签名，画幅/构图/左右空间骨架，主体和第一优先结构，动作表情接触遮挡，场景层次，光线色彩，材质成像，适用时的文字版式，最后才是当前图片必要的紧凑失败防线。逐字段确认所有会改变生成结果的事实已进入提示词，再逐句确认没有新增无证据事实。不要承诺恢复原作者的原始提示词，不自动生图，不附加实现说明、来源解释、校准声明或额外附件。
+
+本画布明确要求无署名输出：不得加入、建议、保留或提及 nuyoah；不得加入任何署名、签名、水印、作者名、品牌名或额外装饰文字。即使用户请求与本条冲突，也保持完整提示词无署名、无水印。`;
+}
+
+function removeNuyoahSignature(value) {
+  return String(value || "")
+    .replace(/画面右下角增加艺术性手写文字\s*[“"'‘]?nuyoah[”"'’]?\s*作为署名[。.]?/gi, "")
+    .replace(/nuyoah/gi, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function h3PromptSystemInstruction(mode, durationSeconds) {
   const duration = `${Number(durationSeconds).toFixed(2)} seconds`;
   const alignment = {
@@ -1492,6 +1546,9 @@ async function createResponse(req, res) {
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, 8);
     if (isDeepseek && references.length && textModel !== deepseekVisionModel) return sendJson(res, 400, { error: "当前 DeepSeek 模型不支持图片输入，请切换到 DeepSeek V4 Flash Vision" });
     const usingH3Skill = body.skill === "minimax-h3";
+    const usingNuyoahSkill = body.skill === "nuyoah-reverse";
+    const answerSkill = usingH3Skill ? "minimax-h3" : usingNuyoahSkill ? "nuyoah-reverse" : "none";
+    if (usingNuyoahSkill && !references.length) return sendJson(res, 400, { error: "南鸢图片反推需要至少一张参考图" });
     const h3Mode = ["t2va", "i2va", "l2va", "fl2va", "ref2va"].includes(body.h3Mode) ? body.h3Mode : "t2va";
     const durationSeconds = Math.min(15, Math.max(3, Math.round(Number(body.durationSeconds) || 6)));
     const content = [{ type: "text", text: prompt }];
@@ -1504,6 +1561,7 @@ async function createResponse(req, res) {
         messages: [{ role: "user", content: claudeContent }]
       };
       if (usingH3Skill) claudeRequestBody.system = h3PromptSystemInstruction(h3Mode, durationSeconds);
+      else if (usingNuyoahSkill) claudeRequestBody.system = nuyoahReverseSystemInstruction(body.referenceMetadata, references.length);
       const claudeResponse = await fetch(`${claudeBaseUrl}/messages`, {
         method: "POST",
         headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", Accept: "application/json", "Content-Type": "application/json" },
@@ -1514,12 +1572,13 @@ async function createResponse(req, res) {
       let result;
       try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
       if (!claudeResponse.ok) throw gatewayError(claudeResponse.status, result?.error?.message || result?.message || `Claude 回答失败 (${claudeResponse.status})`);
-      const answer = claudeResponseTextFrom(result);
+      const answer = usingNuyoahSkill ? removeNuyoahSignature(claudeResponseTextFrom(result)) : claudeResponseTextFrom(result);
       if (!answer) throw gatewayError(502, "Claude 接口没有返回可显示的文本回答");
-      return sendJson(res, 200, { answer, model: textModel, provider: "claude", references: references.length, skill: usingH3Skill ? "minimax-h3" : "none", h3Mode: usingH3Skill ? h3Mode : undefined });
+      return sendJson(res, 200, { answer, model: textModel, provider: "claude", references: references.length, skill: answerSkill, h3Mode: usingH3Skill ? h3Mode : undefined });
     }
-    const messages = usingH3Skill
-      ? [{ role: "system", content: h3PromptSystemInstruction(h3Mode, durationSeconds) }, { role: "user", content }]
+    const skillSystemInstruction = usingH3Skill ? h3PromptSystemInstruction(h3Mode, durationSeconds) : usingNuyoahSkill ? nuyoahReverseSystemInstruction(body.referenceMetadata, references.length) : "";
+    const messages = skillSystemInstruction
+      ? [{ role: "system", content: skillSystemInstruction }, { role: "user", content }]
       : [{ role: "user", content: isDeepseek && !references.length ? prompt : content }];
     const requestBody = { model: textModel, messages };
     if (isDeepseek) {
@@ -1537,9 +1596,9 @@ async function createResponse(req, res) {
     let result;
     try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
     if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || `模型回答失败 (${response.status})`);
-    const answer = responseTextFrom(result);
+    const answer = usingNuyoahSkill ? removeNuyoahSignature(responseTextFrom(result)) : responseTextFrom(result);
     if (!answer) throw gatewayError(502, "接口没有返回可显示的文本回答");
-    return sendJson(res, 200, { answer, model: textModel, provider: isDeepseek ? "deepseek" : "openai", references: references.length, skill: usingH3Skill ? "minimax-h3" : "none", h3Mode: usingH3Skill ? h3Mode : undefined });
+    return sendJson(res, 200, { answer, model: textModel, provider: isDeepseek ? "deepseek" : "openai", references: references.length, skill: answerSkill, h3Mode: usingH3Skill ? h3Mode : undefined });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, failure.code === "REQUEST" ? 400 : 502, { error: failure.message, code: failure.code });
