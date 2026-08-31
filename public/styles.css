@@ -535,8 +535,10 @@ html[data-edge-motion="static"] .script-relationship-edge { animation: none; fil
 .video-timeline-playhead span { position: absolute; top: -1px; left: 50%; width: 10px; height: 10px; transform: translateX(-50%); clip-path: polygon(0 0, 100% 0, 50% 100%); background: #3e77e8; }
 .video-editor-empty { display: grid; width: 100%; min-width: 260px; place-items: center; align-content: center; gap: 5px; color: var(--muted); font-size: 9px; text-align: center; }
 .video-editor-empty svg { width: 22px; height: 22px; color: #8748b8; }
-.video-preview-node .node-body { display: flex; min-height: 0; flex-direction: column; }
-.video-preview-empty { display: grid; min-height: 150px; flex: 1 1 auto; place-items: center; align-content: center; gap: 5px; border-radius: 5px; color: var(--muted); background: var(--surface-soft); text-align: center; }
+.video-preview-node .node-body { display: flex; min-height: 0; flex-direction: column; overflow: hidden; }
+.video-preview-node .video-preview, .video-preview-node .video-preview-empty { height: 100%; min-height: 0; max-height: none; flex: 1 1 0; }
+.video-preview-empty { display: grid; width: 100%; min-height: 150px; flex: 1 1 auto; place-items: center; align-content: center; gap: 5px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: 5px; color: var(--muted); background: var(--surface-soft); cursor: pointer; text-align: center; }
+.video-preview-empty:hover { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 7%, var(--surface-soft)); }
 .video-preview-empty svg { width: 26px; height: 26px; color: #2f769b; }
 .video-preview-empty strong { color: var(--ink); font-size: 10px; }
 .video-preview-empty span { max-width: 220px; font-size: 9px; line-height: 1.4; }
