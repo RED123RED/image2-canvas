@@ -3219,7 +3219,7 @@ async function bindCrossProjectImageLibrary() {
       const project = projects.find(item => item.id === select.value);
       if (!project) { list.innerHTML = `<p class="field-note">选择项目后，这里会显示可复用的图片。</p>`; return; }
       const images = (project?.nodes || []).filter(node => node?.type === "image" && crossProjectImageSource(node));
-      list.innerHTML = images.length ? images.map(node => `<button class="cross-project-image" type="button" data-cross-project-image="${escapeHtml(node.id)}"><img src="${escapeHtml(crossProjectImageSource(node))}" alt="" loading="lazy" decoding="async"><span>${escapeHtml(node.name || "参考图")}</span><small>点击添加到当前画布</small></button>`).join("") : `<p class="field-note">该项目暂无可复用图片。</p>`;
+      list.innerHTML = images.length ? images.map(node => `<button class="cross-project-image" type="button" data-cross-project-image="${escapeHtml(node.id)}" title="${escapeHtml(node.name || "参考图")} · 点击添加到当前画布"><img src="${escapeHtml(crossProjectImageSource(node))}" alt="" loading="lazy" decoding="async"><span>${escapeHtml(node.name || "参考图")}</span></button>`).join("") : `<p class="field-note">该项目暂无可复用图片。</p>`;
       list.querySelectorAll("[data-cross-project-image]").forEach(button => button.addEventListener("click", () => {
         const sourceNode = project?.nodes?.find(item => item.id === button.dataset.crossProjectImage);
         if (sourceNode) addCrossProjectImageNode(project, sourceNode);
@@ -3263,10 +3263,8 @@ function renderInspector() {
   if (state?.flowMode === "script") return renderScriptInspector();
   if (selectedEdgeId) return renderEdgeInspector(); const selectedNodes = state.selectedIds.map(findNode).filter(Boolean); if (selectedNodes.length > 1) return renderMultiSelectionInspector(selectedNodes); const node = selectedNode(); if (node) return renderNodeInspector(node);
   $("#inspectorEyebrow").textContent = "PROJECT"; $("#inspectorTitle").textContent = "工作流概览";
-  const prompts = state.nodes.filter(node => node.type === "prompt").length; const compositions = state.nodes.filter(node => node.type === "composition").length; const images = state.nodes.filter(node => node.type === "image").length; const videos = state.nodes.filter(node => node.type === "video").length; const generators = state.nodes.filter(node => node.type === "generator").length; const answers = state.nodes.filter(node => node.type === "answer").length;
-  inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">项目结构 <span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词</span><strong>${prompts}</strong></div><div class="summary-row"><span>参数控制</span><strong>${compositions}</strong></div><div class="summary-row"><span>图像素材</span><strong>${images}</strong></div><div class="summary-row"><span>视频结果</span><strong>${videos}</strong></div><div class="summary-row"><span>生图</span><strong>${generators}</strong></div><div class="summary-row"><span>模型回答</span><strong>${answers}</strong></div></section>
+  inspectorContent.innerHTML = `${crossProjectImageLibraryHtml()}
     ${imageUniformScaleControl()}
-    ${crossProjectImageLibraryHtml()}
     <section class="control-section"><div class="control-title">界面基调 <span>${themeLabels[state.theme]}</span></div><div class="settings-theme-switch">${themeButtonsHtml()}</div></section>`;
   bindInspectorThemeButtons(); bindImageUniformScaleControl(); void bindCrossProjectImageLibrary(); refreshIcons();
 }
