@@ -220,7 +220,9 @@ html[data-theme="dark"] .home-header { background: rgba(21, 25, 31, 0.88); backd
 .project-cover-flow::before { top: 67px; left: 88px; width: 55px; transform: rotate(24deg); }
 .project-cover-flow::after { top: 87px; left: 182px; width: 56px; transform: rotate(-31deg); background: var(--edge-image); }
 .project-card-body { padding: 14px; }
+.project-card-title-row { display: flex; min-width: 0; align-items: center; gap: 6px; }
 .project-card-title { margin: 0; overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.project-card-title-row .icon-button { width: 24px; height: 24px; flex: 0 0 auto; }
 .project-meta { justify-content: space-between; gap: 10px; margin-top: 8px; color: var(--muted); font-size: 10px; }
 .project-card-actions { justify-content: space-between; margin-top: 14px; }
 .theme-badge { padding: 4px 7px; border-radius: 4px; color: var(--primary); background: var(--primary-soft); font-size: 9px; font-weight: 700; }

@@ -1103,7 +1103,7 @@ function renderHome() {
       <button class="project-cover" type="button" data-open-project="${meta.id}" aria-label="打开 ${escapeHtml(meta.projectName)}">
         ${meta.cover ? `<img src="${escapeHtml(meta.cover)}" alt="" loading="lazy" decoding="async">` : `<span class="project-cover-flow"><span></span><span></span><span></span></span>`}
       </button>
-      <div class="project-card-body"><h2 class="project-card-title">${escapeHtml(meta.projectName)}</h2>
+      <div class="project-card-body"><div class="project-card-title-row"><h2 class="project-card-title">${escapeHtml(meta.projectName)}</h2><button class="icon-button" type="button" data-rename-project="${meta.id}" aria-label="编辑项目名称" data-tooltip="编辑名称">${icon("pencil")}</button></div>
         <div class="project-meta"><span>${meta.nodeCount} 个模块 · ${meta.edgeCount} 条连接</span><span>${formatDate(meta.updatedAt)}</span></div>
         <div class="project-card-actions"><span class="theme-badge">${themeLabels[meta.theme] || themeLabels.light}</span><div class="card-menu-actions">
           <button class="icon-button" type="button" data-duplicate-project="${meta.id}" aria-label="复制项目" data-tooltip="复制"><i data-lucide="copy"></i></button>
@@ -1116,6 +1116,8 @@ function renderHome() {
 function bindHomeCards() {
   const grid = $("#projectGrid");
   grid.onclick = event => {
+    const renameButton = event.target.closest("[data-rename-project]");
+    if (renameButton) { event.stopPropagation(); return void renameProject(renameButton.dataset.renameProject); }
     const duplicateButton = event.target.closest("[data-duplicate-project]");
     if (duplicateButton) return duplicateProject(duplicateButton.dataset.duplicateProject);
     const deleteButton = event.target.closest("[data-delete-project]");
@@ -1123,6 +1125,19 @@ function bindHomeCards() {
     const card = event.target.closest("[data-project-id]");
     if (card) openProject(card.dataset.projectId);
   };
+}
+async function renameProject(id) {
+  const project = await dbGet("projects", id);
+  if (!project) return toast("项目不存在", true);
+  const current = String(project.projectName || "未命名项目");
+  const next = window.prompt("项目名称", current)?.trim();
+  if (!next || next === current) return;
+  project.projectName = next;
+  project.updatedAt = Date.now();
+  await dbPutBoth(project);
+  projectMetas = projectMetas.map(meta => meta.id === id ? projectMeta(project) : meta);
+  renderHome();
+  toast("项目名称已更新");
 }
 async function openProject(id) {
   if (!id || projectOpeningId) return;
