@@ -3471,11 +3471,11 @@ function imageSourceFromNode(node) {
 }
 function videoSourceFromNode(node, seen = new Set()) {
   if (!node || node.disabled || seen.has(node.id)) return "";
+  if (node.type === "video-preview") return videoPreviewSource(node, seen);
   seen.add(node.id);
   if (node.type === "video" || node.type === "loading") return node.originalSrc || node.src || "";
   if (node.type === "generator") { const result = node.lastResultIds?.map(findNode).find(item => item?.mediaType === "video" && item.src); return result?.src || ""; }
   if (node.type === "video-editor") return node.outputSrc || "";
-  if (node.type === "video-preview") return videoPreviewSource(node, seen);
   return "";
 }
 async function requestJson(url, options = {}, timeoutMs = 30_000) {
