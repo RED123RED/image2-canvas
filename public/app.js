@@ -2656,7 +2656,7 @@ function renderVideoNodeHtml(node, selected, style) {
   const videoPreload = selected.includes("is-selected") ? "metadata" : "none";
   const actions = hasSource ? `<button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载视频" data-tooltip="下载视频">${icon("download")}</button>` : "";
   const preview = hasSource
-    ? `<video class="video-preview node-interactive" data-preview-video="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" controls preload="${videoPreload}"></video>`
+    ? `<video class="video-preview node-interactive" data-preview-video="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" controls playsinline preload="${videoPreload}"></video>`
     : `<div class="loading-preview">${icon("video")}<span>视频结果不可用</span></div>`;
   const resultMeta = generationDuration
     ? `<span class="video-result-meta"><span>${escapeHtml(node.outputType || "mp4")}${profileLabel ? ` · ${escapeHtml(profileLabel)}` : ""}</span><span class="video-generation-time" title="包含云端排队、生成、回传和本地保存">生成耗时 ${escapeHtml(generationDuration)}</span></span>`
@@ -3314,6 +3314,21 @@ async function handleCanvasPaste(event) {
   const target = event.target instanceof Element ? event.target : null;
   const isEditable = Boolean(target?.matches("input, textarea, select, [contenteditable=true]"));
   if (!state || isEditable) return;
+  const clipboardFiles = [...(event.clipboardData?.files || [])];
+  const videoFiles = [...(event.clipboardData?.items || [])]
+    .filter(item => item.kind === "file" && isSupportedVideoFile(item.getAsFile?.()))
+    .map(item => item.getAsFile())
+    .filter(Boolean);
+  const pastedVideos = [...new Map([...clipboardFiles, ...videoFiles].map(file => [`${file.name}:${file.size}:${file.lastModified}`, file])).values()]
+    .filter(isSupportedVideoFile)
+    .slice(0, 24);
+  if (pastedVideos.length) {
+    event.preventDefault();
+    if (state.flowMode === "script") return toast("请切换到工作流画布粘贴视频", true);
+    try { await importVideosAsPreviewNodes(pastedVideos, { source: "剪贴板", placeAtViewport: true }); }
+    catch (error) { toast(`粘贴视频失败：${error?.message || "无法保存视频"}`, true); }
+    return;
+  }
   const imageFiles = [...(event.clipboardData?.items || [])]
     .filter(item => item.kind === "file" && /^image\/(png|jpeg|webp)$/i.test(item.type))
     .map(item => item.getAsFile())
