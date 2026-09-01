@@ -81,14 +81,17 @@ const answerModelOptions = Object.freeze([
   { value: "deepseek-v4-flash-vision-exp", label: "DeepSeek V4 Flash Vision", provider: "deepseek", vision: true },
   { value: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "deepseek", vision: false },
   { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek", vision: false },
-  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "claude", vision: true }
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "claude", vision: true },
+  { value: "kimi-k3", label: "Kimi K3", provider: "kimi", vision: true }
 ]);
 const deepseekAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "deepseek").map(option => option.value));
 const deepseekVisionAnswerModel = "deepseek-v4-flash-vision-exp";
 const claudeAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "claude").map(option => option.value));
+const kimiAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "kimi").map(option => option.value));
 function answerModelOption(value) { return answerModelOptions.find(option => option.value === value) || answerModelOptions[1]; }
 function answerModelIsDeepseek(value) { return deepseekAnswerModels.includes(String(value || "")); }
 function answerModelIsClaude(value) { return claudeAnswerModels.includes(String(value || "")); }
+function answerModelIsKimi(value) { return kimiAnswerModels.includes(String(value || "")); }
 function normalizedAnswerModel(value) { return answerModelOptions.some(option => option.value === value) ? value : "gpt-5.6"; }
 function normalizedDeepseekThinking(value) { return value === "disabled" ? "disabled" : "enabled"; }
 function normalizedDeepseekReasoningEffort(value) { return value === "max" ? "max" : "high"; }
@@ -3812,9 +3815,10 @@ async function runAnswerNode(nodeId) {
   if (!prompt && !nuyoahEnabled) { selectNode(nodeId); return toast("请连接至少一个有内容且已启用的提示词模块", true); }
   const usesDeepseek = answerModelIsDeepseek(node.model);
   const usesClaude = answerModelIsClaude(node.model);
+  const usesKimi = answerModelIsKimi(node.model);
   try {
     const status = await requestJson("/api/status", {}, 8_000);
-    if (usesDeepseek ? !status.deepseek?.ready : usesClaude ? !status.claude?.ready : !status.ready && !apiKey) { openSettings(); return toast(usesDeepseek ? "请先在设置中保存 DeepSeek API Key" : usesClaude ? "请先在设置中保存 Claude API Key" : "请先连接 API", true); }
+    if (usesDeepseek ? !status.deepseek?.ready : usesClaude ? !status.claude?.ready : usesKimi ? !status.kimi?.ready : !status.ready && !apiKey) { openSettings(); return toast(usesDeepseek ? "请先在设置中保存 DeepSeek API Key" : usesClaude ? "请先在设置中保存 Claude API Key" : usesKimi ? "请先在设置中保存 Kimi API Key" : "请先连接 API", true); }
   } catch { openSettings(); return toast("本机服务不可用，无法检查模型配置", true); }
   const imageEdges = state.edges.filter(edge => edge.target === nodeId && edge.type === "image" && edge.targetPort.startsWith("image-") && !findNode(edge.source)?.disabled).sort((a, b) => Number(a.targetPort.split("-")[1]) - Number(b.targetPort.split("-")[1]));
   const sources = imageEdges.map(edge => imageSourceFromNode(findNode(edge.source))).filter(Boolean).slice(0, 8);
@@ -3826,7 +3830,7 @@ async function runAnswerNode(nodeId) {
     const referenceMetadata = nuyoahEnabled ? await Promise.all(originalReferences.map(async dataUrl => { try { return await readImageDimensions(dataUrl); } catch { return null; } })) : undefined;
     const references = usesClaude ? await Promise.all(originalReferences.map(sourceToClaudeDataUrl)) : originalReferences;
     const h3Enabled = node.answerSkill === "minimax-h3";
-    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && !usesClaude && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt: prompt || "请对连接的参考图进行完整图片反推。", model: node.model, references, referenceMetadata, skill: node.answerSkill, h3Mode: h3Enabled ? resolveH3AnswerMode(node, references.length) : undefined, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined }) }, 165_000);
+    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && !usesClaude && !usesKimi && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt: prompt || "请对连接的参考图进行完整图片反推。", model: node.model, references, referenceMetadata, skill: node.answerSkill, h3Mode: h3Enabled ? resolveH3AnswerMode(node, references.length) : undefined, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined, kimiReasoningEffort: usesKimi ? "max" : undefined }) }, 165_000);
     node.answer = String(result.answer || ""); node.model = result.model || node.model; node.status = "idle";
     toast("模型回答已完成");
   } catch (error) {
@@ -4019,9 +4023,14 @@ async function refreshClaudeSettingsStatus() {
   try { const result = await requestJson("/api/status", {}, 5_000); statusElement.textContent = result.claude?.ready ? `已配置 · ${result.claude.model}` : "尚未配置，保存密钥后即可在模型回答节点中选择 Claude Sonnet 4.6。"; }
   catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
 }
+async function refreshKimiSettingsStatus() {
+  const statusElement = $("#kimiKeyStatus"); if (!statusElement) return;
+  try { const result = await requestJson("/api/status", {}, 5_000); statusElement.textContent = result.kimi?.ready ? `已配置 · ${result.kimi.model}` : "尚未配置，保存密钥后即可在模型回答节点中选择 Kimi K3。"; }
+  catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
+}
 function applyLineMotionPreference(value = lineMotion) { lineMotion = value === "static" ? "static" : "dynamic"; document.documentElement.dataset.edgeMotion = lineMotion; $$("#lineMotionSwitch [data-line-motion]").forEach(button => button.classList.toggle("is-active", button.dataset.lineMotion === lineMotion)); }
 function setLineMotion(value) { applyLineMotionPreference(value); localStorage.setItem("image2-canvas-line-motion", lineMotion); }
-function openSettings() { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); applyLineMotionPreference(); const input = $("#geminiApiKeyInput"); if (input) input.value = ""; const midjourneyInput = $("#midjourneyApiKeyInput"); if (midjourneyInput) midjourneyInput.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; const deepseekInput = $("#deepseekApiKeyInput"); if (deepseekInput) deepseekInput.value = ""; const claudeInput = $("#claudeApiKeyInput"); if (claudeInput) claudeInput.value = ""; settingsDialog.showModal(); void refreshGeminiSettingsStatus(); void refreshMidjourneySettingsStatus(); void refreshRunningHubSettingsStatus(); void refreshDeepseekSettingsStatus(); void refreshClaudeSettingsStatus(); }
+function openSettings() { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); applyLineMotionPreference(); const input = $("#geminiApiKeyInput"); if (input) input.value = ""; const midjourneyInput = $("#midjourneyApiKeyInput"); if (midjourneyInput) midjourneyInput.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; const deepseekInput = $("#deepseekApiKeyInput"); if (deepseekInput) deepseekInput.value = ""; const claudeInput = $("#claudeApiKeyInput"); if (claudeInput) claudeInput.value = ""; const kimiInput = $("#kimiApiKeyInput"); if (kimiInput) kimiInput.value = ""; settingsDialog.showModal(); void refreshGeminiSettingsStatus(); void refreshMidjourneySettingsStatus(); void refreshRunningHubSettingsStatus(); void refreshDeepseekSettingsStatus(); void refreshClaudeSettingsStatus(); void refreshKimiSettingsStatus(); }
 function bindStaticEvents() {
   $("#newProjectButton").addEventListener("click", () => {
     $("#newProjectName").value = ""; const radio = $(`#newProjectThemes input[value="${globalTheme}"]`); if (radio) radio.checked = true;
@@ -4107,6 +4116,7 @@ function bindStaticEvents() {
   $("#revealRunningHubKeyButton").addEventListener("click", () => { const input = $("#runningHubApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $("#revealDeepseekKeyButton").addEventListener("click", () => { const input = $("#deepseekApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $("#revealClaudeKeyButton").addEventListener("click", () => { const input = $("#claudeApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
+  $("#revealKimiKeyButton").addEventListener("click", () => { const input = $("#kimiApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.addEventListener("click", () => { setTheme(button.dataset.themeValue); $$("#settingsThemeSwitch [data-theme-value]").forEach(item => item.classList.toggle("is-active", item.dataset.themeValue === button.dataset.themeValue)); }));
   $("#saveSettingsButton").addEventListener("click", async event => {
     event.preventDefault();
@@ -4116,6 +4126,7 @@ function bindStaticEvents() {
     const runningHubKey = $("#runningHubApiKeyInput").value.trim();
     const deepseekKey = $("#deepseekApiKeyInput").value.trim();
     const claudeKey = $("#claudeApiKeyInput").value.trim();
+    const kimiKey = $("#kimiApiKeyInput").value.trim();
     if (geminiKey) {
       try { await requestJson("/api/providers/gemini", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: geminiKey }) }, 10_000); }
       catch (error) { return toast(error.message || "Gemini 密钥保存失败", true); }
@@ -4136,7 +4147,11 @@ function bindStaticEvents() {
       try { await requestJson("/api/providers/claude", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: claudeKey }) }, 10_000); }
       catch (error) { return toast(error.message || "Claude 密钥保存失败", true); }
     }
-    settingsDialog.close(); checkApiStatus(); toast(claudeKey ? "Claude 密钥已安全保存" : deepseekKey ? "DeepSeek 密钥已安全保存" : runningHubKey ? "RunningHub 密钥已安全保存" : midjourneyKey ? "Midjourney 密钥已安全保存" : geminiKey ? "Gemini 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "设置已保存"));
+    if (kimiKey) {
+      try { await requestJson("/api/providers/kimi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: kimiKey }) }, 10_000); }
+      catch (error) { return toast(error.message || "Kimi 密钥保存失败", true); }
+    }
+    settingsDialog.close(); checkApiStatus(); toast(kimiKey ? "Kimi 密钥已安全保存" : claudeKey ? "Claude 密钥已安全保存" : deepseekKey ? "DeepSeek 密钥已安全保存" : runningHubKey ? "RunningHub 密钥已安全保存" : midjourneyKey ? "Midjourney 密钥已安全保存" : geminiKey ? "Gemini 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "设置已保存"));
   });
   $("#projectName").addEventListener("click", () => { const next = window.prompt("项目名称", state.projectName)?.trim(); if (!next || next === state.projectName) return; recordHistory(); state.projectName = next; renderWorkspace(); scheduleSave(); });
   $("#closeDialogueScriptButton").addEventListener("click", closeStoryDialogue);

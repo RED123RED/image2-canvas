@@ -30,6 +30,9 @@ const deepseekVisionModel = "deepseek-v4-flash-vision-exp";
 const claudeBaseUrl = (process.env.CLAUDE_NUODA_BASE_URL || "https://api.nuoda.vip/v1").replace(/\/$/, "");
 const claudeModels = Object.freeze(["claude-sonnet-4-6"]);
 const claudeDefaultModel = claudeModels[0];
+const kimiBaseUrl = (process.env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, "");
+const kimiModels = Object.freeze(["kimi-k3"]);
+const kimiDefaultModel = kimiModels[0];
 const geminiBaseUrl = (process.env.GEMINI_MOYU_BASE_URL || "https://www.moyu.info").replace(/\/$/, "");
 const mjBaseUrl = (process.env.MJ_API_BASE_URL || "https://key.34ku.com").replace(/\/$/, "");
 const mjFastModel = "mj_fast_imagine";
@@ -471,6 +474,14 @@ async function resolveClaudeApiKey(req) {
   if (process.env.CLAUDE_NUODA_API_KEY) return process.env.CLAUDE_NUODA_API_KEY.trim();
   const config = await readProviderConfig();
   return typeof config?.claude?.apiKey === "string" ? config.claude.apiKey.trim() : "";
+}
+
+async function resolveKimiApiKey(req) {
+  const explicit = req.headers["x-kimi-api-key"];
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  if (process.env.KIMI_API_KEY) return process.env.KIMI_API_KEY.trim();
+  const config = await readProviderConfig();
+  return typeof config?.kimi?.apiKey === "string" ? config.kimi.apiKey.trim() : "";
 }
 
 function parseDataUrl(dataUrl, index) {
@@ -1250,6 +1261,23 @@ async function checkClaudeGateway(req, res) {
   }
 }
 
+async function checkKimiGateway(req, res) {
+  const apiKey = await resolveKimiApiKey(req);
+  if (!apiKey) return sendJson(res, 401, { ready: false, gateway: "missing_key", message: "未配置 Kimi API Key" });
+  try {
+    const response = await fetch(`${kimiBaseUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw gatewayError(response.status, "Kimi 网关鉴权失败");
+    const result = await response.json().catch(() => ({}));
+    const listedModels = Array.isArray(result.data) ? new Set(result.data.map(item => item?.id)) : null;
+    const availableModels = listedModels ? kimiModels.filter(id => listedModels.has(id)) : kimiModels;
+    const available = availableModels.length > 0;
+    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: kimiDefaultModel, models: availableModels, baseUrl: kimiBaseUrl, checkedAt: Date.now() });
+  } catch (error) {
+    const failure = classifyError(error);
+    return sendJson(res, 502, { ready: false, gateway: failure.code.toLowerCase(), message: failure.message, checkedAt: Date.now() });
+  }
+}
+
 async function saveGeminiProvider(req, res) {
   try {
     const body = await readJson(req, 64 * 1024);
@@ -1312,6 +1340,19 @@ async function saveClaudeProvider(req, res) {
     return sendJson(res, 200, { ready: true, provider: "claude", model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl });
   } catch (error) {
     return sendJson(res, 400, { error: error?.message || "Claude 设置保存失败" });
+  }
+}
+
+async function saveKimiProvider(req, res) {
+  try {
+    const body = await readJson(req, 64 * 1024);
+    const apiKey = String(body.apiKey || "").trim();
+    if (!apiKey) return sendJson(res, 400, { error: "Kimi API Key 不能为空" });
+    const previous = await readProviderConfig();
+    await saveProviderConfig({ ...previous, kimi: { ...(previous.kimi || {}), apiKey, baseUrl: kimiBaseUrl, model: kimiDefaultModel, updatedAt: Date.now() } });
+    return sendJson(res, 200, { ready: true, provider: "kimi", model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl });
+  } catch (error) {
+    return sendJson(res, 400, { error: error?.message || "Kimi 设置保存失败" });
   }
 }
 
@@ -1540,9 +1581,10 @@ async function createResponse(req, res) {
     const requestedModel = String(body.model || "gpt-5.6");
     const isDeepseek = deepseekModels.includes(requestedModel);
     const isClaude = claudeModels.includes(requestedModel);
-    const textModel = isDeepseek || isClaude ? requestedModel : ["gpt-5.5", "gpt-5.6"].includes(requestedModel) ? requestedModel : "gpt-5.6";
-    const apiKey = isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : await resolveApiKey(req);
-    if (!apiKey) return sendJson(res, 401, { error: isDeepseek ? "未配置 DeepSeek API Key，请在设置中保存密钥" : isClaude ? "未配置 Claude API Key，请在设置中保存密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
+    const isKimi = kimiModels.includes(requestedModel);
+    const textModel = isDeepseek || isClaude || isKimi ? requestedModel : ["gpt-5.5", "gpt-5.6"].includes(requestedModel) ? requestedModel : "gpt-5.6";
+    const apiKey = isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : isKimi ? await resolveKimiApiKey(req) : await resolveApiKey(req);
+    if (!apiKey) return sendJson(res, 401, { error: isDeepseek ? "未配置 DeepSeek API Key，请在设置中保存密钥" : isClaude ? "未配置 Claude API Key，请在设置中保存密钥" : isKimi ? "未配置 Kimi API Key，请在设置中保存密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, 8);
     if (isDeepseek && references.length && textModel !== deepseekVisionModel) return sendJson(res, 400, { error: "当前 DeepSeek 模型不支持图片输入，请切换到 DeepSeek V4 Flash Vision" });
     const usingH3Skill = body.skill === "minimax-h3";
@@ -1552,7 +1594,7 @@ async function createResponse(req, res) {
     const h3Mode = ["t2va", "i2va", "l2va", "fl2va", "ref2va"].includes(body.h3Mode) ? body.h3Mode : "t2va";
     const durationSeconds = Math.min(15, Math.max(3, Math.round(Number(body.durationSeconds) || 6)));
     const content = [{ type: "text", text: prompt }];
-    references.forEach(url => content.push({ type: "image_url", image_url: { url, detail: "auto" } }));
+    references.forEach(url => content.push({ type: "image_url", image_url: isKimi ? { url } : { url, detail: "auto" } }));
     if (isClaude) {
       const claudeContent = [...references.map(claudeImageContentFromDataUrl).filter(Boolean), { type: "text", text: prompt }];
       const claudeRequestBody = {
@@ -1586,7 +1628,8 @@ async function createResponse(req, res) {
       requestBody.thinking = { type: thinking };
       if (thinking === "enabled") requestBody.reasoning_effort = body.deepseekReasoningEffort === "max" ? "max" : "high";
     }
-    const response = await fetch(`${isDeepseek ? deepseekBaseUrl : baseUrl}/chat/completions`, {
+    if (isKimi) requestBody.reasoning_effort = ["low", "high", "max"].includes(body.kimiReasoningEffort) ? body.kimiReasoningEffort : "max";
+    const response = await fetch(`${isDeepseek ? deepseekBaseUrl : isKimi ? kimiBaseUrl : baseUrl}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
@@ -1598,7 +1641,7 @@ async function createResponse(req, res) {
     if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || `模型回答失败 (${response.status})`);
     const answer = usingNuyoahSkill ? removeNuyoahSignature(responseTextFrom(result)) : responseTextFrom(result);
     if (!answer) throw gatewayError(502, "接口没有返回可显示的文本回答");
-    return sendJson(res, 200, { answer, model: textModel, provider: isDeepseek ? "deepseek" : "openai", references: references.length, skill: answerSkill, h3Mode: usingH3Skill ? h3Mode : undefined });
+    return sendJson(res, 200, { answer, model: textModel, provider: isDeepseek ? "deepseek" : isKimi ? "kimi" : "openai", references: references.length, skill: answerSkill, h3Mode: usingH3Skill ? h3Mode : undefined });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, failure.code === "REQUEST" ? 400 : 502, { error: failure.message, code: failure.code });
@@ -1628,18 +1671,21 @@ const server = http.createServer(async (req, res) => {
     const runningHubKey = await resolveRunningHubApiKey(req);
     const deepseekKey = await resolveDeepseekApiKey(req);
     const claudeKey = await resolveClaudeApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, jobs: jobs.size });
+    const kimiKey = await resolveKimiApiKey(req);
+    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/gemini/health") return checkGeminiGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/midjourney/health") return checkMjGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/deepseek/health") return checkDeepseekGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/claude/health") return checkClaudeGateway(req, res);
+  if (req.method === "GET" && url.pathname === "/api/providers/kimi/health") return checkKimiGateway(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/gemini") return saveGeminiProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/midjourney") return saveMjProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/runninghub") return saveRunningHubProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/deepseek") return saveDeepseekProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/claude") return saveClaudeProvider(req, res);
+  if (req.method === "POST" && url.pathname === "/api/providers/kimi") return saveKimiProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/restart") return restartLocalService(req, res);
   if (req.method === "POST" && url.pathname === "/api/assets") return storeAsset(req, res);
   if (req.method === "POST" && url.pathname === "/api/video-assets") return storeVideoUpload(req, res);
