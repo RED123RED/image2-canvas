@@ -987,7 +987,12 @@ async function requestRunningHubKrea2Generation(job) {
   const submitDiagnostic = runningHubDiagnostic("提交 Krea2 工作流", submitResponse.status, submitted, submitRaw);
   updateRunningHubDiagnostic(job, submitDiagnostic);
   if (!submitResponse.ok || !submitted?.taskId) throw runningHubRequestError("提交 Krea2 工作流", submitResponse.status, submitted, submitRaw, "RunningHub Krea2 工作流提交失败");
+  job.remoteTaskId = String(submitted.taskId);
   await persistJobs();
+  if (job.cancelRequested) {
+    await fetch(`${runningHubBaseUrl}/task/openapi/cancel`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ apiKey, taskId: submitted.taskId }), signal: AbortSignal.timeout(30_000) });
+    throw Object.assign(new Error("K2 白玉任务已停止"), { code: "CANCELED" });
+  }
   const startedAt = Date.now();
   let lastStatus = submitted;
   while (Date.now() - startedAt < 45 * 60_000) {
@@ -999,6 +1004,7 @@ async function requestRunningHubKrea2Generation(job) {
     updateRunningHubDiagnostic(job, queryDiagnostic);
     if (!response.ok) throw runningHubRequestError("查询 Krea2 任务", response.status, status, raw, "RunningHub Krea2 任务查询失败");
     lastStatus = status;
+    if (job.cancelRequested) throw Object.assign(new Error("K2 白玉任务已停止"), { code: "CANCELED" });
     if (status.status === "SUCCESS") {
       const results = Array.isArray(status.results) ? status.results.filter(item => item?.url || item?.text).slice(0, n) : [];
       if (!results.length) throw gatewayError(502, "Krea2 工作流成功但没有可下载图片");
@@ -1028,7 +1034,7 @@ async function executeJob(job) {
     const failure = classifyError(error);
     job.status = failure.code === "CANCELED" || job.cancelRequested ? "canceled" : "failed";
     job.errorCode = job.status === "canceled" ? "CANCELED" : failure.code;
-    job.error = job.status === "canceled" ? "视频任务已停止" : failure.message;
+    job.error = job.status === "canceled" ? (job.provider === "runninghub-krea2" ? "K2 白玉任务已停止" : "视频任务已停止") : failure.message;
     job.finishedAt = Date.now();
   } finally {
     delete job.request;
@@ -1039,7 +1045,9 @@ async function executeJob(job) {
 
 async function cancelJob(req, res, jobId) {
   const job = jobs.get(jobId);
-  if (!job || job.provider !== "runninghub-h3") return sendJson(res, 404, { error: "视频任务不存在" });
+  const cancelable = job?.provider === "runninghub-h3" || job?.provider === "runninghub-krea2";
+  const taskLabel = job?.provider === "runninghub-krea2" ? "K2 白玉" : "视频";
+  if (!job || !cancelable) return sendJson(res, 404, { error: `${taskLabel}任务不存在` });
   if (["succeeded", "failed", "canceled"].includes(job.status)) return sendJson(res, 200, { job: jobView(job), canceled: job.status === "canceled" });
   job.cancelRequested = true;
   const remoteTaskId = job.remoteTaskId || job.runningHub?.taskId || "";
@@ -1050,7 +1058,7 @@ async function cancelJob(req, res, jobId) {
       updateRunningHubDiagnostic(job, runningHubDiagnostic("取消任务", response.status, result, raw));
       if (!response.ok || Number(result?.code) !== 0) throw runningHubRequestError("取消任务", response.status, result, raw, "RunningHub 任务取消失败");
     }
-    job.status = "canceled"; job.errorCode = "CANCELED"; job.error = "视频任务已停止"; job.finishedAt = Date.now();
+    job.status = "canceled"; job.errorCode = "CANCELED"; job.error = `${taskLabel}任务已停止`; job.finishedAt = Date.now();
     await persistJobs(); await writeJobLog(job, "canceled");
     return sendJson(res, 200, { job: jobView(job), canceled: true });
   } catch (error) {

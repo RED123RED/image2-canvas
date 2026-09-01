@@ -2635,6 +2635,9 @@ function renderGeneratorNodeHtml(node, selected, style) {
   const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, generatorPromptPortId(index)); const promptNode = findNode(edge?.source); const label = edge ? sourceLabelForEdge(edge) : "未连接"; return `<div class="input-slot${edge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>${index ? `提示词 ${index + 1}` : "提示词"}</span><span>${escapeHtml(label)}</span></div>`; }).join("");
   const slots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); const imageNode = findNode(edge?.source); return `<div class="input-slot${edge ? " is-connected" : ""}${imageNode?.disabled ? " is-disabled" : ""}"><span>参考图 ${index + 1}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
   const statusLabel = node.status === "running" ? "生成中" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个结果` : "待运行";
+  const isRunning = node.status === "running";
+  const canCancel = isRunning && isRunningHubKrea2;
+  const runLabel = canCancel ? `停止 ${provider.label}` : isRunning ? `${provider.label} 处理中` : `运行 ${provider.label}`;
   return `<article class="canvas-node generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "sparkles")}<div class="node-body generator-body">
     <div class="node-field generator-provider-field"><label>生图模型</label><select class="node-select node-interactive" data-generator-field="providerModel" data-node-id="${node.id}" aria-label="生图模型"><option value="image2"${node.provider === "image2" ? " selected" : ""}>Image2 · GPT Image 2</option>${geminiImageModels.map(item => `<option value="${item.id}"${node.provider === "gemini" && node.geminiModel === item.id ? " selected" : ""}>Gemini · ${item.label}</option>`).join("")}${seedreamImageModels.map(item => `<option value="${item.id}"${node.provider === "moyu" && node.moyuModel === item.id ? " selected" : ""}>豆包 · ${item.label}</option>`).join("")}${midjourneyImageModels.map(item => `<option value="${item.id}"${isMidjourney ? " selected" : ""}>Midjourney · ${item.label}</option>`).join("")}<option value="runninghub-krea2"${isRunningHubKrea2 ? " selected" : ""}>RunningHub · K2 白玉</option></select></div>
     <div class="node-field-row"><div class="node-field"><label>比例</label>${isRunningHubKrea2 ? `<div class="node-static-field">自定义</div>` : `<select class="node-select node-interactive" data-generator-field="aspect" data-node-id="${node.id}" aria-label="图像比例">${Object.keys(sizeMap).map(value => `<option value="${value}"${node.aspect === value ? " selected" : ""}>${value}</option>`).join("")}</select>`}</div>
@@ -2642,7 +2645,7 @@ function renderGeneratorNodeHtml(node, selected, style) {
     <div class="node-field"><label>${isMidjourney ? "候选图" : "张数"}</label>${batchControl}</div>
     <div class="node-field"><label>${isMidjourney ? "单图输出" : "输出尺寸"}</label>${outputControl}</div></div>${krea2SizeControl}
     <div class="generator-inputs">${promptSlots}${slots}</div><div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-input="${node.id}"${node.inputSlots >= generatorReferenceLimit(node) ? " disabled" : ""}>${icon("image-plus")} 添加图片输入</button></div>
-    <button class="run-node-button node-interactive" type="button" data-run-node="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "play")} ${node.status === "running" ? `${escapeHtml(provider.label)} 处理中` : `运行 ${escapeHtml(provider.label)}`}</button>
+    <button class="run-node-button node-interactive${canCancel ? " is-cancel" : ""}" type="button" data-run-node="${node.id}"${isRunning && !canCancel ? " disabled" : ""}>${icon(canCancel ? "square" : isRunning ? "loader-circle" : "play")} ${escapeHtml(runLabel)}</button>
     <div class="node-run-state"><span>${escapeHtml(provider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}">${statusLabel}</span></div>
     </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `提示词 ${index + 1}` : "提示词", generatorPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", `参考图 ${index + 1}`, generatorImagePortTop(node, index))).join("")}${portHtml(node, "image", "image", "output", "Image", 76)}</article>`;
 }
@@ -3737,7 +3740,7 @@ function resumeGenerationJobs() {
 }
 async function runGeneratorNode(nodeId) {
   const generator = findNode(nodeId); if (!generator || generator.type !== "generator" || isGenerating) return;
-  if (generator.activeJobId && generator.mediaType !== "video") return;
+  if (generator.activeJobId && generator.mediaType !== "video") return generator.provider === "runninghub-krea2" ? cancelGeneratorNode(generator) : undefined;
   if (generator.mediaType === "video" || generator.provider === "runninghub-h3") return runVideoGeneratorNode(generator);
   const promptEdges = state.edges.filter(edge => edge.target === nodeId && edge.type === "prompt" && (edge.targetPort === "prompt" || /^prompt-\d+$/.test(edge.targetPort))).sort((a, b) => (a.targetPort === "prompt" ? 0 : Number(a.targetPort.split("-")[1]) || 0) - (b.targetPort === "prompt" ? 0 : Number(b.targetPort.split("-")[1]) || 0));
   const prompt = promptEdges.map(edge => findNode(edge.source)).filter(node => node?.type === "prompt" && !node.disabled).map(node => node.content?.trim()).filter(Boolean).join("\n\n");
@@ -3997,6 +4000,18 @@ async function cancelVideoGeneratorNode(generator) {
     else toast("视频任务已停止");
   } catch (error) {
     toast(error?.message || "停止视频任务失败", true);
+  }
+}
+async function cancelGeneratorNode(generator) {
+  const jobId = generator?.activeJobId;
+  if (!jobId) return;
+  const label = generator.provider === "runninghub-krea2" ? "K2 白玉" : generatorProviderForNode(generator).label;
+  try {
+    const result = await requestJson(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }, 45_000);
+    if (result.job) finishGenerationJob(generator.id, result.job);
+    else toast(`${label}任务已停止`);
+  } catch (error) {
+    toast(error?.message || `停止${label}任务失败`, true);
   }
 }
 async function refreshGeminiSettingsStatus() {
