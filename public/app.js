@@ -262,6 +262,7 @@ let promptLayoutResizeSession = null;
 let promptReferenceClickTimer = null;
 const promptQuickSelection = new Map();
 let selectedEdgeId = null;
+let crossProjectSourceProjectId = "";
 let scriptDragSession = null;
 let scriptPanSession = null;
 let scriptConnectionDraft = null;
@@ -3218,7 +3219,9 @@ async function bindCrossProjectImageLibrary() {
       return;
     }
     select.innerHTML = `<option value="">选择一个项目</option>${projects.map(project => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.projectName || "未命名项目")}</option>`).join("")}`;
+    if (crossProjectSourceProjectId && projects.some(project => project.id === crossProjectSourceProjectId)) select.value = crossProjectSourceProjectId;
     const renderImages = () => {
+      crossProjectSourceProjectId = select.value || "";
       const project = projects.find(item => item.id === select.value);
       if (!project) { list.innerHTML = `<p class="field-note">选择项目后，这里会显示可复用的图片。</p>`; return; }
       const images = (project?.nodes || []).filter(node => node?.type === "image" && crossProjectImageSource(node));
@@ -3250,7 +3253,7 @@ function addCrossProjectImageNode(project, sourceNode) {
   node.sharedFromProjectName = project.projectName || "未命名项目";
   node.sharedFromNodeId = sourceNode.id;
   node.sharedFromNodeName = sourceNode.name || "参考图";
-  state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null;
+  state.nodes.push(node);
   renderWorkspace(); scheduleSave(); toast(`已从“${project.projectName || "未命名项目"}”获取图片`);
 }
 function applyImageUniformScale(value) {
