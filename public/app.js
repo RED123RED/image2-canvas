@@ -3384,7 +3384,9 @@ async function importVideosAsPreviewNodes(files, options = {}) {
     return node;
   });
   state.nodes.push(...nodes); state.selectedIds = nodes.map(node => node.id); selectedEdgeId = null; renderWorkspace(); scheduleSave();
-  toast(failed ? `已创建 ${nodes.length} 个成片预览节点，${failed} 个视频导入失败` : `已创建 ${nodes.length} 个成片预览节点`, Boolean(failed));
+  const converted = uploaded.filter(({ result }) => result.transcoded).length;
+  const conversionNote = converted ? `，${converted} 个 HEVC 视频已转为 H.264` : "";
+  toast(failed ? `已创建 ${nodes.length} 个成片预览节点${conversionNote}，${failed} 个视频导入失败` : `已创建 ${nodes.length} 个成片预览节点${conversionNote}`, Boolean(failed));
   return nodes.length;
 }
 function triggerReferenceUpload(nodeId) {
@@ -3413,13 +3415,15 @@ async function importVideosIntoEditor(nodeId, files) {
   if (!editor || editor.type !== "video-editor" || !accepted.length) return;
   try {
     const imported = [];
+    let converted = 0;
     for (const file of accepted.slice(0, 24)) {
       const result = await requestJson("/api/video-assets", { method: "POST", headers: { "Content-Type": file.type || "video/mp4", "x-file-name": encodeURIComponent(file.name || "导入视频.mp4") }, body: file }, 10 * 60_000);
+      if (result.transcoded) converted += 1;
       imported.push({ id: uid("clip"), name: (file.name || "导入视频").replace(/\.[^.]+$/, ""), src: result.url, start: 0, end: 0, duration: 0, origin: "imported" });
     }
     if (!imported.length) return;
     recordHistory(); editor.clips.push(...imported); editor.status = "idle"; editor.outputSrc = ""; editor.lastError = ""; state.selectedIds = [editor.id];
-    renderWorkspace(); scheduleSave(); toast(`已导入 ${imported.length} 条视频`);
+    renderWorkspace(); scheduleSave(); toast(`已导入 ${imported.length} 条视频${converted ? `，${converted} 条 HEVC 视频已转为 H.264` : ""}`);
   } catch (error) { toast(error?.message || "视频导入失败", true); }
 }
 async function deleteGeneratedVideoNodeWithFile(nodeId) {
@@ -3443,7 +3447,7 @@ async function deleteGeneratedVideoNodeWithFile(nodeId) {
 async function uploadVideoReferenceIntoNode(nodeId, file) {
   const node = findNode(nodeId); if (!node || node.mediaType !== "video" || !file) return;
   const result = await requestJson("/api/video-assets", { method: "POST", headers: { "Content-Type": file.type || "video/mp4", "x-file-name": encodeURIComponent(file.name || "参考视频.mp4") }, body: file }, 10 * 60_000);
-  recordHistory(); node.localVideoReference = result.url; renderWorkspace(); scheduleSave(); toast("参考视频已上传");
+  recordHistory(); node.localVideoReference = result.url; renderWorkspace(); scheduleSave(); toast(result.transcoded ? "参考视频已上传并转为 H.264" : "参考视频已上传");
 }
 async function uploadVideoIntoPreview(nodeId, file) {
   const node = findNode(nodeId); if (!node || node.type !== "video-preview" || !file) return;
@@ -3451,7 +3455,7 @@ async function uploadVideoIntoPreview(nodeId, file) {
   recordHistory();
   state.edges = state.edges.filter(edge => !(edge.target === node.id && edge.targetPort === "video"));
   node.localVideoSrc = result.url; node.localVideoName = result.name || file.name || "本地视频"; node.outputType = String(result.filename || file.name || "").split(".").pop()?.toLowerCase() || "mp4";
-  state.selectedIds = [node.id]; selectedEdgeId = null; renderWorkspace(); scheduleSave(); toast("本地视频已上传，可连接到 H3 参考视频");
+  state.selectedIds = [node.id]; selectedEdgeId = null; renderWorkspace(); scheduleSave(); toast(result.transcoded ? "本地视频已上传并转为 H.264，可连接到 H3 参考视频" : "本地视频已上传，可连接到 H3 参考视频");
 }
 async function uploadAudioReferenceIntoNode(nodeId, file) {
   const node = findNode(nodeId); if (!node || node.mediaType !== "video" || !file) return;

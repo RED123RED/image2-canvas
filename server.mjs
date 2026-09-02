@@ -241,10 +241,36 @@ async function storeVideoUpload(req, res) {
     await handle.close(); handle = null;
     if (!size) throw new Error("上传的视频为空");
     await fs.rename(temporary, target);
-    return sendJson(res, 201, { filename, name: originalName, size, url: `/api/video-assets/${encodeURIComponent(filename)}` });
+    let storedFilename = filename;
+    let storedSize = size;
+    let transcoded = false;
+    let sourceCodec = "";
+    const tools = await localVideoTools();
+    if (tools) {
+      sourceCodec = await probeVideoCodec(tools, target);
+      if (["hevc", "h265"].includes(sourceCodec)) {
+        const compatibilityFilename = `${path.parse(filename).name}-h264.mp4`;
+        const compatibilityTemp = path.join(videoAssetsDir, `${compatibilityFilename}.building.mp4`);
+        const compatibilityTarget = path.join(videoAssetsDir, compatibilityFilename);
+        try {
+          await transcodeVideoToH264(tools, target, compatibilityTemp);
+          const convertedStat = await fs.stat(compatibilityTemp);
+          if (!convertedStat.isFile() || convertedStat.size <= 0) throw new Error("转码结果为空");
+          await fs.rename(compatibilityTemp, compatibilityTarget);
+          await fs.rm(target, { force: true });
+          storedFilename = compatibilityFilename;
+          storedSize = convertedStat.size;
+          transcoded = true;
+        } finally {
+          await fs.rm(compatibilityTemp, { force: true }).catch(() => undefined);
+        }
+      }
+    }
+    return sendJson(res, 201, { filename: storedFilename, name: originalName, size: storedSize, url: `/api/video-assets/${encodeURIComponent(storedFilename)}`, transcoded, sourceCodec: sourceCodec || undefined });
   } catch (error) {
     await handle?.close().catch(() => undefined);
     await fs.rm(temporary, { force: true }).catch(() => undefined);
+    await fs.rm(target, { force: true }).catch(() => undefined);
     return sendJson(res, 400, { error: error?.message || "视频导入失败" });
   }
 }
@@ -299,19 +325,50 @@ async function localVideoTools() {
   catch { return { ffmpeg, ffprobe: "" }; }
 }
 
-function runVideoTool(executable, args) {
+function runVideoTool(executable, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { windowsHide: true });
     let stdout = ""; let stderr = ""; let startupError = null;
+    let settled = false;
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 0;
+    const timer = timeoutMs ? setTimeout(() => {
+      child.kill();
+      if (!settled) {
+        settled = true;
+        reject(new Error("本机视频处理超时"));
+      }
+    }, timeoutMs) : null;
     child.stdout?.on("data", chunk => { if (stdout.length < 64 * 1024) stdout += chunk.toString(); });
     child.stderr?.on("data", chunk => { if (stderr.length < 64 * 1024) stderr += chunk.toString(); });
     child.on("error", error => { startupError = error; });
     child.on("close", code => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
       if (!startupError && code === 0) return resolve({ stdout, stderr });
       const error = startupError || new Error(stderr.trim().split("\n").at(-1) || `视频处理失败 (${code ?? "未知"})`);
       reject(error);
     });
   });
+}
+
+async function probeVideoCodec(tools, source) {
+  if (!tools?.ffprobe) return "";
+  try {
+    const result = await runVideoTool(tools.ffprobe, ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", source], { timeoutMs: 30_000 });
+    return String(result.stdout || "").trim().split(/\s+/)[0].toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+async function transcodeVideoToH264(tools, source, destination) {
+  await runVideoTool(tools.ffmpeg, [
+    "-hide_banner", "-y", "-i", source,
+    "-map", "0:v:0", "-map", "0:a?",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", destination
+  ], { timeoutMs: 30 * 60_000 });
 }
 
 async function localMediaPath(source, kind = "video") {
