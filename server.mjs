@@ -18,6 +18,7 @@ const videoTempDir = path.join(outputDir, "video-temp");
 const localFfmpegPath = path.join(__dirname, "tools", "ffmpeg", "bin", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
 const localFfprobePath = path.join(__dirname, "tools", "ffmpeg", "bin", process.platform === "win32" ? "ffprobe.exe" : "ffprobe");
 const maxVideoUploadBytes = 2 * 1024 * 1024 * 1024;
+const compatibilityJobs = new Map();
 const maxAudioUploadBytes = 512 * 1024 * 1024;
 const jobsPath = path.join(outputDir, "image2-generation-jobs.json");
 const generationLogPath = path.join(outputDir, "image2-generation.log");
@@ -371,6 +372,37 @@ async function transcodeVideoToH264(tools, source, destination) {
   ], { timeoutMs: 30 * 60_000 });
 }
 
+async function ensureBrowserCompatibleVideo(source) {
+  const sourcePath = String(source || "");
+  if (!sourcePath) return sourcePath;
+  const tools = await localVideoTools();
+  if (!tools) return sourcePath;
+  const codec = await probeVideoCodec(tools, sourcePath);
+  if (!["hevc", "h265"].includes(codec)) return sourcePath;
+  const parsed = path.parse(sourcePath);
+  const target = path.join(parsed.dir, `${parsed.name}-h264.mp4`);
+  try {
+    const targetStat = await fs.stat(target);
+    if (targetStat.isFile() && targetStat.size > 0) return target;
+  } catch { /* convert below */ }
+  if (!compatibilityJobs.has(sourcePath)) {
+    compatibilityJobs.set(sourcePath, (async () => {
+      const temporary = `${target}.building.mp4`;
+      try {
+        await transcodeVideoToH264(tools, sourcePath, temporary);
+        const convertedStat = await fs.stat(temporary);
+        if (!convertedStat.isFile() || convertedStat.size <= 0) throw new Error("转码结果为空");
+        await fs.rename(temporary, target);
+      } finally {
+        await fs.rm(temporary, { force: true }).catch(() => undefined);
+      }
+      return target;
+    })().finally(() => compatibilityJobs.delete(sourcePath)));
+  }
+  try { return await compatibilityJobs.get(sourcePath); }
+  catch { return sourcePath; }
+}
+
 async function localMediaPath(source, kind = "video") {
   const pathname = decodeURIComponent(new URL(String(source || ""), "http://127.0.0.1").pathname);
   const locations = kind === "audio"
@@ -385,7 +417,10 @@ async function localMediaPath(source, kind = "video") {
   if (!stat.isFile()) throw new Error(kind === "audio" ? "音频文件不存在" : "视频文件不存在");
   return filePath;
 }
-async function localVideoPath(source) { return localMediaPath(source, "video"); }
+async function localVideoPath(source) {
+  const filePath = await localMediaPath(source, "video");
+  return ensureBrowserCompatibleVideo(filePath);
+}
 
 function validClipSecond(value, fallback = 0) {
   const number = Number(value);
@@ -1488,7 +1523,16 @@ async function serveStoredMedia(req, res, directory, filename) {
 }
 async function serveGenerated(req, res, filename) { return serveStoredMedia(req, res, generatedDir, filename); }
 async function serveAsset(req, res, filename) { return serveStoredMedia(req, res, assetsDir, filename); }
-async function serveVideoAsset(req, res, filename) { return serveStoredMedia(req, res, videoAssetsDir, filename); }
+async function serveVideoAsset(req, res, filename) {
+  const safeName = path.basename(filename);
+  if (!safeName || safeName !== filename) return sendJson(res, 403, { error: "禁止访问" });
+  try {
+    const filePath = await ensureBrowserCompatibleVideo(path.join(videoAssetsDir, safeName));
+    return serveStoredMedia(req, res, path.dirname(filePath), path.basename(filePath));
+  } catch {
+    return serveStoredMedia(req, res, videoAssetsDir, filename);
+  }
+}
 async function serveEditedVideo(req, res, filename) { return serveStoredMedia(req, res, editedVideoDir, filename); }
 async function serveAudioAsset(req, res, filename) { return serveStoredMedia(req, res, audioAssetsDir, filename); }
 
