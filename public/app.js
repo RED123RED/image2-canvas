@@ -3074,14 +3074,35 @@ function handlePointerUp(event) {
     renderLibrary(); renderInspector(); updateHistoryButtons();
   }
 }
+function nativeWheelScrollTarget(target) {
+  let element = target instanceof Element ? target : target?.parentElement;
+  while (element && element !== workspace) {
+    const style = window.getComputedStyle(element);
+    const overflowX = ["auto", "scroll", "overlay"].includes(style.overflowX);
+    const overflowY = ["auto", "scroll", "overlay"].includes(style.overflowY);
+    const canScrollX = overflowX && element.scrollWidth > element.clientWidth + 1;
+    const canScrollY = overflowY && element.scrollHeight > element.clientHeight + 1;
+    if (canScrollX || canScrollY) return { canScrollX, canScrollY };
+    element = element.parentElement;
+  }
+  return null;
+}
+function shouldUseNativeWheelScroll(event) {
+  const target = nativeWheelScrollTarget(event.target);
+  if (!target) return false;
+  const hasHorizontalDelta = Math.abs(Number(event.deltaX) || 0) > 0;
+  const hasVerticalDelta = Math.abs(Number(event.deltaY) || 0) > 0;
+  return (hasHorizontalDelta && target.canScrollX) || (hasVerticalDelta && target.canScrollY) || (!hasHorizontalDelta && !hasVerticalDelta);
+}
 function handleWheel(event) {
-  if (event.target instanceof Element && event.target.closest(".answer-response, .prompt-node .node-textarea")) return;
+  if (shouldUseNativeWheelScroll(event)) return;
   event.preventDefault(); const rect = workspace.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const mouseY = event.clientY - rect.top;
   const beforeX = (mouseX - state.viewport.x) / state.viewport.scale; const beforeY = (mouseY - state.viewport.y) / state.viewport.scale;
   const nextScale = Math.min(WORKFLOW_ZOOM_MAX, Math.max(WORKFLOW_ZOOM_MIN, state.viewport.scale * Math.exp(-event.deltaY * 0.0015)));
   state.viewport.x = mouseX - beforeX * nextScale; state.viewport.y = mouseY - beforeY * nextScale; state.viewport.scale = nextScale; updateViewport(); scheduleSave();
 }
 function handleScriptWheel(event) {
+  if (shouldUseNativeWheelScroll(event)) return;
   event.preventDefault();
   const rect = scriptFlowStage.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const mouseY = event.clientY - rect.top;
   const viewport = scriptViewport(); const beforeX = (mouseX - viewport.x) / viewport.scale; const beforeY = (mouseY - viewport.y) / viewport.scale;
