@@ -18,6 +18,8 @@ const videoTempDir = path.join(outputDir, "video-temp");
 const localFfmpegPath = path.join(__dirname, "tools", "ffmpeg", "bin", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
 const localFfprobePath = path.join(__dirname, "tools", "ffmpeg", "bin", process.platform === "win32" ? "ffprobe.exe" : "ffprobe");
 const maxVideoUploadBytes = 2 * 1024 * 1024 * 1024;
+const maxRemoteImageBytes = 50 * 1024 * 1024;
+const maxRemoteMediaBytes = 512 * 1024 * 1024;
 const compatibilityJobs = new Map();
 const maxAudioUploadBytes = 512 * 1024 * 1024;
 const jobsPath = path.join(outputDir, "image2-generation-jobs.json");
@@ -34,7 +36,7 @@ const claudeDefaultModel = claudeModels[0];
 const kimiBaseUrl = (process.env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, "");
 const kimiModels = Object.freeze(["kimi-k3"]);
 const kimiDefaultModel = kimiModels[0];
-const geminiBaseUrl = (process.env.GEMINI_MOYU_BASE_URL || "https://www.moyu.info").replace(/\/$/, "");
+const seedreamBaseUrl = (process.env.SEEDREAM_BASE_URL || "https://www.moyu.info").replace(/\/$/, "");
 const mjBaseUrl = (process.env.MJ_API_BASE_URL || "https://key.34ku.com").replace(/\/$/, "");
 const mjFastModel = "mj_fast_imagine";
 const runningHubBaseUrl = (process.env.RUNNINGHUB_BASE_URL || "https://www.runninghub.cn").replace(/\/$/, "");
@@ -67,30 +69,13 @@ const runningHubKrea2Workflow = Object.freeze({
 });
 const runningHubWorkflowId = runningHubVideoWorkflows.reference.id;
 const runningHubInstanceType = "plus";
-const geminiImageModels = Object.freeze([
-  "gemini-3-pro-image-preview",
-  "gemini-3.1-flash-image-preview"
-]);
 const seedreamImageModels = Object.freeze([
   "doubao-seedream-5-0-pro-260628"
 ]);
-const moyuImageModels = Object.freeze([...geminiImageModels, ...seedreamImageModels]);
-const geminiDefaultModel = geminiImageModels.includes(process.env.GEMINI_MOYU_MODEL)
-  ? process.env.GEMINI_MOYU_MODEL
-  : geminiImageModels[0];
-function normalizeMoyuModel(value) {
-  return moyuImageModels.includes(String(value || "")) ? String(value) : geminiDefaultModel;
-}
-function moyuReferenceLimit(modelName) {
-  return seedreamImageModels.includes(String(modelName || "")) ? 6 : 14;
-}
-function normalizeMoyuOutputSize(modelName, value) {
-  const modelId = String(modelName || "");
-  if (modelId === "gemini-3-pro-image-preview") return ["1K", "2K", "4K"].includes(value) ? value : "4K";
-  if (modelId === "gemini-3.1-flash-image-preview") return "1K";
-  if (seedreamImageModels.includes(modelId)) return "2K";
-  return "1K";
-}
+const seedreamDefaultModel = seedreamImageModels[0];
+function normalizeSeedreamModel(value) { return seedreamImageModels.includes(String(value || "")) ? String(value) : seedreamDefaultModel; }
+function seedreamReferenceLimit() { return 6; }
+function normalizeSeedreamOutputSize() { return "2K"; }
 const providerConfigDir = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "image2-canvas");
 const providerConfigPath = path.join(providerConfigDir, "providers.json");
 const jobs = new Map();
@@ -98,6 +83,7 @@ const pendingJobIds = [];
 let workerRunning = false;
 let jobPersistQueue = Promise.resolve();
 const maxStoredTerminalJobs = 240;
+const maxGenerationLogBytes = 10 * 1024 * 1024;
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -159,6 +145,10 @@ function persistJobs() {
 
 async function writeJobLog(job, event) {
   await fs.mkdir(outputDir, { recursive: true });
+  try {
+    const stat = await fs.stat(generationLogPath);
+    if (stat.size >= maxGenerationLogBytes) await fs.rename(generationLogPath, `${generationLogPath}.1`).catch(() => undefined);
+  } catch { /* log file may not exist yet */ }
   const runningHub = job.runningHub || {};
   const entry = {
     at: new Date().toISOString(), id: job.id, event, status: job.status, code: job.errorCode || "", durationMs: job.finishedAt && job.startedAt ? job.finishedAt - job.startedAt : 0,
@@ -528,12 +518,23 @@ async function saveProviderConfig(nextConfig) {
   await fs.rename(temporaryPath, providerConfigPath);
 }
 
-async function resolveGeminiApiKey(req) {
-  const explicit = req.headers["x-gemini-api-key"];
+async function resolveSeedreamApiKey(req) {
+  const explicit = req.headers["x-seedream-api-key"];
   if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
-  if (process.env.GEMINI_MOYU_API_KEY) return process.env.GEMINI_MOYU_API_KEY;
+  if (process.env.SEEDREAM_API_KEY) return process.env.SEEDREAM_API_KEY;
   const config = await readProviderConfig();
-  return typeof config?.gemini?.apiKey === "string" ? config.gemini.apiKey.trim() : "";
+  return typeof config?.seedream?.apiKey === "string" ? config.seedream.apiKey.trim() : "";
+}
+
+async function migrateLegacyGeminiConfig() {
+  const config = await readProviderConfig();
+  if (!config?.gemini) return;
+  const next = { ...config };
+  if (!next.seedream && config.gemini?.apiKey) {
+    next.seedream = { ...config.gemini, baseUrl: seedreamBaseUrl, model: seedreamDefaultModel, updatedAt: Date.now() };
+  }
+  delete next.gemini;
+  await saveProviderConfig(next);
 }
 
 async function resolveMjApiKey(req) {
@@ -685,7 +686,11 @@ async function fetchResultImage(url) {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
       if (!response.ok) throw gatewayError(response.status, "生成成功，但读取返回图片失败");
-      return { buffer: Buffer.from(await response.arrayBuffer()), mime: response.headers.get("content-type") || "image/png" };
+      const length = Number(response.headers.get("content-length"));
+      if (Number.isFinite(length) && length > maxRemoteImageBytes) throw new Error("返回图片超过 50 MB 限制");
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length > maxRemoteImageBytes) throw new Error("返回图片超过 50 MB 限制");
+      return { buffer, mime: response.headers.get("content-type") || "image/png" };
     } catch (error) {
       lastError = error;
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
@@ -700,7 +705,11 @@ async function fetchRemoteFile(url, fallbackMime = "application/octet-stream") {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
       if (!response.ok) throw gatewayError(response.status, "生成成功，但读取返回文件失败");
-      return { buffer: Buffer.from(await response.arrayBuffer()), mime: response.headers.get("content-type") || fallbackMime };
+      const length = Number(response.headers.get("content-length"));
+      if (Number.isFinite(length) && length > maxRemoteMediaBytes) throw new Error("返回媒体超过 512 MB 限制");
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length > maxRemoteMediaBytes) throw new Error("返回媒体超过 512 MB 限制");
+      return { buffer, mime: response.headers.get("content-type") || fallbackMime };
     } catch (error) {
       lastError = error;
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
@@ -810,14 +819,13 @@ async function requestImage2Generation(job) {
   return { items, mode: references.length ? "edit" : "generate", referencesUsed: references.length };
 }
 
-async function requestGeminiGeneration(job) {
+async function requestSeedreamGeneration(job) {
   const { apiKey, prompt, size, outputSize, n, references } = job.request;
-  const modelName = normalizeMoyuModel(job.model);
-  const selectedReferences = references.slice(0, moyuReferenceLimit(modelName));
+  const modelName = normalizeSeedreamModel(job.model);
+  const selectedReferences = references.slice(0, seedreamReferenceLimit());
   const requestOnce = async (count, index) => {
     const payload = { model: modelName, prompt, size, n: count };
-    if (job.provider === "gemini") payload.quality = normalizeMoyuOutputSize(modelName, outputSize);
-    if (job.provider === "moyu") payload.watermark = false;
+    payload.watermark = false;
     // The gateway accepts one reference as a string and multiple references as an array.
     if (selectedReferences.length === 1) payload.image = selectedReferences[0];
     else if (selectedReferences.length > 1) payload.image = selectedReferences;
@@ -825,7 +833,7 @@ async function requestGeminiGeneration(job) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const response = await fetch(`${geminiBaseUrl}/v1/images/generations`, {
+        const response = await fetch(`${seedreamBaseUrl}/v1/images/generations`, {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
@@ -835,7 +843,7 @@ async function requestGeminiGeneration(job) {
         let result;
         try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
         if (!response.ok) {
-          lastError = gatewayError(response.status, result?.error?.message || result?.message || `Gemini 请求失败 (${response.status})`);
+          lastError = gatewayError(response.status, result?.error?.message || result?.message || `Seedream 请求失败 (${response.status})`);
           if (response.status < 500 && response.status !== 429) throw lastError;
         } else {
           return Array.isArray(result.data) ? result.data : [];
@@ -846,9 +854,9 @@ async function requestGeminiGeneration(job) {
       }
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1200 * (attempt + 1)));
     }
-    throw lastError || gatewayError(502, "魔芋图像接口请求失败");
+    throw lastError || gatewayError(502, "Seedream 图像接口请求失败");
   };
-  // Gemini 3 and the configured Seedream gateway return one image per generation request.
+  // The configured Seedream gateway returns one image per generation request.
   const items = await collectRequestedImageItems(n, requestOnce);
   return { items, mode: selectedReferences.length ? "edit" : "generate", referencesUsed: selectedReferences.length };
 }
@@ -970,7 +978,7 @@ async function uploadRunningHubResource(apiKey, sourceValue, index, kind) {
   let source;
   if (kind === "image") source = parseStoredImage(sourceValue, `第 ${index + 1} 张视频参考图`);
   else {
-    const filePath = await localMediaPath(sourceValue, kind);
+    const filePath = kind === "video" ? await localVideoPath(sourceValue) : await localMediaPath(sourceValue, kind);
     const buffer = await fs.readFile(filePath);
     const extension = path.extname(filePath).slice(1).toLowerCase();
     const mime = mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream";
@@ -1114,7 +1122,7 @@ async function executeJob(job) {
   await persistJobs();
   await writeJobLog(job, "started");
   try {
-    const result = job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "runninghub-krea2" ? await requestRunningHubKrea2Generation(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : ["gemini", "moyu"].includes(job.provider) ? await requestGeminiGeneration(job) : await requestImage2Generation(job);
+    const result = job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "runninghub-krea2" ? await requestRunningHubKrea2Generation(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : job.provider === "moyu" ? await requestSeedreamGeneration(job) : await requestImage2Generation(job);
     if (result.mediaType === "video") job.media = await Promise.all(result.items.map((item, index) => persistGeneratedMedia(job, item, index)));
     else job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
     job.status = "succeeded";
@@ -1175,27 +1183,24 @@ async function drainJobs() {
 async function createJob(req, res) {
   try {
     const body = await readJson(req);
-    const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "runninghub-krea2" ? "runninghub-krea2" : body.provider === "gemini" ? "gemini" : body.provider === "moyu" ? "moyu" : body.provider === "midjourney" ? "midjourney" : "image2";
+    if (body.provider === "gemini") return sendJson(res, 400, { error: "Gemini 已移除，请选择 Image2 或 Seedream" });
+    const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "runninghub-krea2" ? "runninghub-krea2" : body.provider === "moyu" ? "moyu" : body.provider === "midjourney" ? "midjourney" : "image2";
     if (provider === "runninghub-h3") return createRunningHubJob(req, res, body);
     if (provider === "runninghub-krea2") return createRunningHubKrea2Job(req, res, body);
-    const usesMoyu = ["gemini", "moyu"].includes(provider);
-    if (usesMoyu && body.model && !moyuImageModels.includes(String(body.model))) return sendJson(res, 400, { error: "不支持的魔芋图像模型" });
+    const usesSeedream = provider === "moyu";
+    if (usesSeedream && body.model && !seedreamImageModels.includes(String(body.model))) return sendJson(res, 400, { error: "不支持的 Seedream 图像模型" });
     const isMj = provider === "midjourney";
-    const apiKey = isMj ? await resolveMjApiKey(req) : usesMoyu ? await resolveGeminiApiKey(req) : await resolveApiKey(req);
-    if (!apiKey) return sendJson(res, 401, { error: isMj ? "未配置 Midjourney API Key，请在设置中保存密钥" : usesMoyu ? "未配置魔芋 API Key，请在设置中保存 Gemini 密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
+    const apiKey = isMj ? await resolveMjApiKey(req) : usesSeedream ? await resolveSeedreamApiKey(req) : await resolveApiKey(req);
+    if (!apiKey) return sendJson(res, 401, { error: isMj ? "未配置 Midjourney API Key，请在设置中保存密钥" : usesSeedream ? "未配置 Seedream API Key，请在设置中保存密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
     const quality = ["low", "medium", "high"].includes(body.quality) ? body.quality : "high";
-    const size = provider === "moyu"
-      ? (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024")
-      : provider === "gemini"
-        ? (/[0-9]+:[0-9]+/.test(body.size || "") ? body.size : "1:1")
-        : (/^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024");
+    const size = /^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024";
     const aspect = /^(?:1:1|3:4|4:3|16:9|9:16)$/.test(String(body.aspect || "")) ? String(body.aspect) : "1:1";
-    const selectedModel = isMj ? mjFastModel : usesMoyu ? normalizeMoyuModel(body.model) : model;
-    const outputSize = usesMoyu ? normalizeMoyuOutputSize(selectedModel, String(body.outputSize || "")) : "current";
+    const selectedModel = isMj ? mjFastModel : usesSeedream ? normalizeSeedreamModel(body.model) : model;
+    const outputSize = usesSeedream ? normalizeSeedreamOutputSize() : "current";
     const n = isMj ? 1 : Math.min(4, Math.max(1, Number(body.n) || 1));
-    const maxReferences = isMj ? 4 : provider === "moyu" || provider === "gemini" ? 14 : 8;
+    const maxReferences = isMj ? 4 : provider === "moyu" ? 6 : 8;
     const references = Array.isArray(body.references) ? body.references.slice(0, maxReferences) : [];
     const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, aspect, outputSize, n, references } };
     jobs.set(job.id, job);
@@ -1294,17 +1299,17 @@ async function checkGateway(req, res) {
   }
 }
 
-async function checkGeminiGateway(req, res) {
-  const apiKey = await resolveGeminiApiKey(req);
-  if (!apiKey) return sendJson(res, 401, { ready: false, gateway: "missing_key", message: "未配置 Gemini API Key" });
+async function checkSeedreamGateway(req, res) {
+  const apiKey = await resolveSeedreamApiKey(req);
+  if (!apiKey) return sendJson(res, 401, { ready: false, gateway: "missing_key", message: "未配置 Seedream API Key" });
   try {
-    const response = await fetch(`${geminiBaseUrl}/v1/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
-    if (!response.ok) throw gatewayError(response.status, "Gemini 网关鉴权失败");
+    const response = await fetch(`${seedreamBaseUrl}/v1/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw gatewayError(response.status, "Seedream 网关鉴权失败");
     const result = await response.json().catch(() => ({}));
     const listedModels = Array.isArray(result.data) ? new Set(result.data.map(item => item?.id)) : null;
-    const availableModels = listedModels ? moyuImageModels.filter(id => listedModels.has(id)) : moyuImageModels;
+    const availableModels = listedModels ? seedreamImageModels.filter(id => listedModels.has(id)) : seedreamImageModels;
     const available = availableModels.length > 0;
-    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: geminiDefaultModel, models: availableModels, baseUrl: geminiBaseUrl, checkedAt: Date.now() });
+    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: seedreamDefaultModel, models: availableModels, baseUrl: seedreamBaseUrl, checkedAt: Date.now() });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, 502, { ready: false, gateway: failure.code.toLowerCase(), message: failure.message, checkedAt: Date.now() });
@@ -1378,17 +1383,22 @@ async function checkKimiGateway(req, res) {
   }
 }
 
-async function saveGeminiProvider(req, res) {
+async function saveSeedreamProvider(req, res) {
   try {
     const body = await readJson(req, 64 * 1024);
     const apiKey = String(body.apiKey || "").trim();
-    if (!apiKey) return sendJson(res, 400, { error: "Gemini API Key 不能为空" });
+    if (!apiKey) return sendJson(res, 400, { error: "Seedream API Key 不能为空" });
     const previous = await readProviderConfig();
-    await saveProviderConfig({ ...previous, gemini: { ...(previous.gemini || {}), apiKey, baseUrl: geminiBaseUrl, model: geminiDefaultModel, updatedAt: Date.now() } });
-    return sendJson(res, 200, { ready: true, provider: "moyu", model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl });
+    await saveProviderConfig({ ...previous, seedream: { ...(previous.seedream || {}), apiKey, baseUrl: seedreamBaseUrl, model: seedreamDefaultModel, updatedAt: Date.now() } });
+    return sendJson(res, 200, { ready: true, provider: "moyu", model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl });
   } catch (error) {
-    return sendJson(res, 400, { error: error?.message || "Gemini 设置保存失败" });
+    return sendJson(res, 400, { error: error?.message || "Seedream 设置保存失败" });
   }
+}
+
+function safeDecodePath(value) {
+  try { return decodeURIComponent(String(value || "")); }
+  catch { return null; }
 }
 
 async function saveMjProvider(req, res) {
@@ -1775,21 +1785,21 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   if (req.method === "GET" && url.pathname === "/api/status") {
     const key = await resolveApiKey(req);
-    const geminiKey = await resolveGeminiApiKey(req);
+    const seedreamKey = await resolveSeedreamApiKey(req);
     const mjKey = await resolveMjApiKey(req);
     const runningHubKey = await resolveRunningHubApiKey(req);
     const deepseekKey = await resolveDeepseekApiKey(req);
     const claudeKey = await resolveClaudeApiKey(req);
     const kimiKey = await resolveKimiApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, gemini: { ready: Boolean(geminiKey), model: geminiDefaultModel, models: moyuImageModels, baseUrl: geminiBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
-  if (req.method === "GET" && url.pathname === "/api/providers/gemini/health") return checkGeminiGateway(req, res);
+  if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/midjourney/health") return checkMjGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/deepseek/health") return checkDeepseekGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/claude/health") return checkClaudeGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/kimi/health") return checkKimiGateway(req, res);
-  if (req.method === "POST" && url.pathname === "/api/providers/gemini") return saveGeminiProvider(req, res);
+  if (req.method === "POST" && url.pathname === "/api/providers/seedream") return saveSeedreamProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/midjourney") return saveMjProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/runninghub") return saveRunningHubProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/deepseek") return saveDeepseekProvider(req, res);
@@ -1806,22 +1816,25 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/generated/cleanup-unused") return cleanupUnusedGeneratedImages(req, res);
   if (req.method === "POST" && url.pathname === "/api/generated/open-folder") return openGeneratedFolder(req, res);
   const mjUpscaleMatch = req.method === "POST" && /^\/api\/jobs\/([^/]+)\/midjourney\/upscale$/.exec(url.pathname);
-  if (mjUpscaleMatch) return createMjUpscaleJob(req, res, decodeURIComponent(mjUpscaleMatch[1]));
+  if (mjUpscaleMatch) { const id = safeDecodePath(mjUpscaleMatch[1]); return id === null ? sendJson(res, 400, { error: "任务地址无效" }) : createMjUpscaleJob(req, res, id); }
   const cancelJobMatch = req.method === "POST" && /^\/api\/jobs\/([^/]+)\/cancel$/.exec(url.pathname);
-  if (cancelJobMatch) return cancelJob(req, res, decodeURIComponent(cancelJobMatch[1]));
+  if (cancelJobMatch) { const id = safeDecodePath(cancelJobMatch[1]); return id === null ? sendJson(res, 400, { error: "任务地址无效" }) : cancelJob(req, res, id); }
   if (req.method === "GET" && url.pathname.startsWith("/api/jobs/")) {
-    const job = jobs.get(decodeURIComponent(url.pathname.slice("/api/jobs/".length)));
+    const id = safeDecodePath(url.pathname.slice("/api/jobs/".length));
+    if (id === null) return sendJson(res, 400, { error: "任务地址无效" });
+    const job = jobs.get(id);
     return job ? sendJson(res, 200, { job: jobView(job) }) : sendJson(res, 404, { error: "生成任务不存在，可能已被清理" });
   }
-  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/generated/")) return serveGenerated(req, res, decodeURIComponent(url.pathname.slice("/api/generated/".length)));
-  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/assets/")) return serveAsset(req, res, decodeURIComponent(url.pathname.slice("/api/assets/".length)));
-  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/video-assets/")) return serveVideoAsset(req, res, decodeURIComponent(url.pathname.slice("/api/video-assets/".length)));
-  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/audio-assets/")) return serveAudioAsset(req, res, decodeURIComponent(url.pathname.slice("/api/audio-assets/".length)));
-  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/video-edited/")) return serveEditedVideo(req, res, decodeURIComponent(url.pathname.slice("/api/video-edited/".length)));
-  if (req.method === "GET" || req.method === "HEAD") return serveStatic(req, res, decodeURIComponent(url.pathname));
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/generated/")) { const name = safeDecodePath(url.pathname.slice("/api/generated/".length)); return name === null ? sendJson(res, 400, { error: "资源地址无效" }) : serveGenerated(req, res, name); }
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/assets/")) { const name = safeDecodePath(url.pathname.slice("/api/assets/".length)); return name === null ? sendJson(res, 400, { error: "资源地址无效" }) : serveAsset(req, res, name); }
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/video-assets/")) { const name = safeDecodePath(url.pathname.slice("/api/video-assets/".length)); return name === null ? sendJson(res, 400, { error: "资源地址无效" }) : serveVideoAsset(req, res, name); }
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/audio-assets/")) { const name = safeDecodePath(url.pathname.slice("/api/audio-assets/".length)); return name === null ? sendJson(res, 400, { error: "资源地址无效" }) : serveAudioAsset(req, res, name); }
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/api/video-edited/")) { const name = safeDecodePath(url.pathname.slice("/api/video-edited/".length)); return name === null ? sendJson(res, 400, { error: "资源地址无效" }) : serveEditedVideo(req, res, name); }
+  if (req.method === "GET" || req.method === "HEAD") { const pathname = safeDecodePath(url.pathname); return pathname === null ? sendJson(res, 400, { error: "资源地址无效" }) : serveStatic(req, res, pathname); }
   sendJson(res, 405, { error: "不支持的请求方法" });
 });
 
+await migrateLegacyGeminiConfig();
 await initializeJobs();
 server.listen(port, "127.0.0.1", () => {
   console.log(`Image2 Canvas: http://127.0.0.1:${port}`);
