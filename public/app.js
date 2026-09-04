@@ -1473,10 +1473,46 @@ function applyPanelWidths() {
   const widths = activePanelWidths();
   shell.style.setProperty("--library-width", `${widths.library}px`);
   shell.style.setProperty("--inspector-width", `${widths.inspector}px`);
+  shell.style.setProperty("--library-layout-width", shell.classList.contains("is-library-collapsed") ? "0px" : `${widths.library}px`);
+  shell.style.setProperty("--inspector-layout-width", shell.classList.contains("is-inspector-collapsed") ? "0px" : `${widths.inspector}px`);
   if (state.flowMode === "script") {
     shell.style.setProperty("--script-library-scale", Math.min(1.45, Math.max(.84, widths.library / 238)).toFixed(3));
     shell.style.setProperty("--script-inspector-scale", Math.min(1.35, Math.max(.86, widths.inspector / 286)).toFixed(3));
   } else { shell.style.removeProperty("--script-library-scale"); shell.style.removeProperty("--script-inspector-scale"); }
+}
+function sidebarIsCompact() { return window.matchMedia?.("(max-width: 920px)").matches === true; }
+function setSidebarCollapsed(side, collapsed) {
+  const shell = $("#workspaceView"); if (!shell) return;
+  const className = side === "library" ? "is-library-collapsed" : "is-inspector-collapsed";
+  shell.classList.toggle(className, Boolean(collapsed));
+  const panel = side === "library" ? $("#libraryPanel") : $("#inspectorPanel");
+  const toggle = side === "library" ? $("#toggleLibraryButton") : $("#toggleInspectorButton");
+  const show = side === "library" ? $("#showLibraryButton") : $("#showInspectorButton");
+  const label = side === "library" ? "左侧栏" : "右侧栏";
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute("aria-label", `${collapsed ? "显示" : "收起"}${label}`);
+    toggle.dataset.tooltip = `${collapsed ? "显示" : "收起"}${label}`;
+    toggle.innerHTML = icon(collapsed ? (side === "library" ? "panel-left-open" : "panel-right-open") : (side === "library" ? "panel-left-close" : "panel-right-close"));
+  }
+  if (show) show.hidden = !collapsed;
+  if (panel && !collapsed && sidebarIsCompact()) panel.classList.remove("is-open");
+  applyPanelWidths();
+  refreshIcons();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!state) return;
+    if (state.flowMode === "script") renderScriptFlow();
+    else { syncVideoGeneratorPortPositions(); renderEdges(); }
+  }));
+}
+function toggleSidebar(side) {
+  const shell = $("#workspaceView"); if (!shell) return;
+  if (sidebarIsCompact()) {
+    const panel = side === "library" ? $("#libraryPanel") : $("#inspectorPanel");
+    panel?.classList.toggle("is-open");
+    return;
+  }
+  setSidebarCollapsed(side, !shell.classList.contains(side === "library" ? "is-library-collapsed" : "is-inspector-collapsed"));
 }
 function startPanelResize(event, side) {
   if (!state || event.button !== 0) return;
@@ -4249,6 +4285,10 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   $("#mobileLibraryButton").addEventListener("click", () => $("#libraryPanel").classList.toggle("is-open"));
   $("#mobileInspectorButton").addEventListener("click", () => $("#inspectorPanel").classList.toggle("is-open"));
   $("#closeInspectorButton").addEventListener("click", () => $("#inspectorPanel").classList.remove("is-open"));
+  $("#toggleLibraryButton").addEventListener("click", () => toggleSidebar("library"));
+  $("#toggleInspectorButton").addEventListener("click", () => toggleSidebar("inspector"));
+  $("#showLibraryButton").addEventListener("click", () => setSidebarCollapsed("library", false));
+  $("#showInspectorButton").addEventListener("click", () => setSidebarCollapsed("inspector", false));
   $("#openGeneratedFolderButton").addEventListener("click", () => void openGeneratedFolder());
 
   window.addEventListener("paste", handleCanvasPaste);

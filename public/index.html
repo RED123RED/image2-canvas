@@ -76,7 +76,10 @@
     <aside class="library-panel" id="libraryPanel">
       <div class="panel-heading">
         <div><span class="eyebrow">WORKFLOW</span><h2>模块与素材</h2></div>
-        <button class="icon-button" id="importButton" type="button" aria-label="导入图片" data-tooltip="导入图片"><i data-lucide="plus"></i></button>
+        <div class="panel-heading-actions">
+          <button class="icon-button" id="importButton" type="button" aria-label="导入图片" data-tooltip="导入图片"><i data-lucide="plus"></i></button>
+          <button class="icon-button panel-toggle-button" id="toggleLibraryButton" type="button" aria-label="收起左侧栏" data-tooltip="收起左侧栏" aria-expanded="true"><i data-lucide="panel-left-close"></i></button>
+        </div>
       </div>
       <div class="library-tabs" role="tablist">
         <button class="tab is-active" type="button" data-library-tab="modules">模块</button>
@@ -139,6 +142,8 @@
       </div>
       <button class="mobile-panel-button mobile-left" id="mobileLibraryButton" type="button" aria-label="打开模块"><i data-lucide="panel-left"></i></button>
       <button class="mobile-panel-button mobile-right" id="mobileInspectorButton" type="button" aria-label="打开属性"><i data-lucide="sliders-horizontal"></i></button>
+      <button class="sidebar-reopen sidebar-reopen-left" id="showLibraryButton" type="button" aria-label="显示左侧栏" data-tooltip="显示左侧栏"><i data-lucide="panel-left-open"></i></button>
+      <button class="sidebar-reopen sidebar-reopen-right" id="showInspectorButton" type="button" aria-label="显示右侧栏" data-tooltip="显示右侧栏"><i data-lucide="panel-right-open"></i></button>
 
     </main>
 
@@ -147,6 +152,7 @@
         <div><span class="eyebrow" id="inspectorEyebrow">PROJECT</span><h2 id="inspectorTitle">工作流概览</h2></div>
         <div class="inspector-heading-actions">
           <button class="icon-button" id="openGeneratedFolderButton" type="button" aria-label="打开生成图片文件夹" data-tooltip="打开生成图片文件夹"><i data-lucide="folder-open"></i></button>
+          <button class="icon-button panel-toggle-button" id="toggleInspectorButton" type="button" aria-label="收起右侧栏" data-tooltip="收起右侧栏" aria-expanded="true"><i data-lucide="panel-right-close"></i></button>
           <button class="icon-button close-mobile" id="closeInspectorButton" type="button" aria-label="关闭属性"><i data-lucide="x"></i></button>
         </div>
       </div>
