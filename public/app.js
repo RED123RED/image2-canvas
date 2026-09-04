@@ -1377,7 +1377,7 @@ function createCanvasElementAt(kind, clientX, clientY) {
   recordHistory(); state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null; renderWorkspace(); scheduleSave();
 }
 function showCanvasContextMenu(event) {
-  if (!state || state.flowMode === "script" || event.target.closest(".tool-rail, .flow-switch, .canvas-status, .mobile-panel-button, input, textarea, [contenteditable=true]")) return;
+  if (!state || state.flowMode === "script" || event.target.closest(".flow-switch, .canvas-status, .mobile-panel-button, input, textarea, [contenteditable=true]")) return;
   event.preventDefault(); closeConnectionMenu(); closeCanvasContextMenu();
   const choices = [
     { kind: "prompt", title: "提示词", icon: "text-cursor-input" },
@@ -4154,7 +4154,7 @@ function bindStaticEvents() {
   workspace.addEventListener("pointerdown", event => {
     closeConnectionMenu();
     if (state?.flowMode === "script") return;
-    if (event.target.closest(".flow-switch, .tool-rail, .canvas-status, .mobile-panel-button")) return;
+    if (event.target.closest(".flow-switch, .canvas-status, .mobile-panel-button")) return;
     if (event.target.closest(".canvas-node, .node-port, .node-interactive")) return;
     if (event.button === 2) return;
     // Left-drag pans the empty canvas; Shift keeps the existing box-selection workflow available.
@@ -4175,11 +4175,7 @@ function bindStaticEvents() {
   $("#redoButton").addEventListener("click", redo);
   $("#fitButton").addEventListener("click", fitContent);
   $("#zoomButton").addEventListener("click", () => { if (state.flowMode === "script") { const viewport = scriptViewport(); viewport.x = 0; viewport.y = 0; viewport.scale = 1; updateScriptViewport(); } else { state.viewport.scale = 1; updateViewport(); } scheduleSave(); });
-  $$('[data-tool]').forEach(button => button.addEventListener("click", () => setActiveTool(button.dataset.tool)));
   $$("[data-flow-mode]").forEach(button => button.addEventListener("click", () => setFlowMode(button.dataset.flowMode)));
-  $$('[data-add-node]').forEach(button => button.addEventListener("click", () => addNode(button.dataset.addNode)));
-  $("#addFrameButton").addEventListener("click", addFrame);
-  $("#toolUploadButton").addEventListener("click", () => imageFileInput.click());
   $("#importButton").addEventListener("click", () => imageFileInput.click());
   imageFileInput.addEventListener("change", async event => { const files = [...event.target.files || []]; const pending = pendingImageUploadNodeId; pendingImageUploadNodeId = null; if (pending) { if (files[0]) await uploadImageIntoNode(pending, files[0]); event.target.value = ""; return; } await importImages(event.target.files); event.target.value = ""; });
   videoFileInput.addEventListener("change", async event => {
