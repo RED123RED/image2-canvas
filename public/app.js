@@ -1496,7 +1496,7 @@ function setSidebarCollapsed(side, collapsed) {
     toggle.innerHTML = icon(collapsed ? (side === "library" ? "panel-left-open" : "panel-right-open") : (side === "library" ? "panel-left-close" : "panel-right-close"));
   }
   if (show) show.hidden = !collapsed;
-  if (panel && !collapsed && sidebarIsCompact()) panel.classList.remove("is-open");
+  if (panel && sidebarIsCompact()) panel.classList.toggle("is-open", !collapsed);
   applyPanelWidths();
   refreshIcons();
   requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -1508,8 +1508,9 @@ function setSidebarCollapsed(side, collapsed) {
 function toggleSidebar(side) {
   const shell = $("#workspaceView"); if (!shell) return;
   if (sidebarIsCompact()) {
-    const panel = side === "library" ? $("#libraryPanel") : $("#inspectorPanel");
-    panel?.classList.toggle("is-open");
+    const className = side === "library" ? "is-library-collapsed" : "is-inspector-collapsed";
+    if (shell.classList.contains(className)) setSidebarCollapsed(side, false);
+    else setSidebarCollapsed(side, true);
     return;
   }
   setSidebarCollapsed(side, !shell.classList.contains(side === "library" ? "is-library-collapsed" : "is-inspector-collapsed"));
@@ -4282,8 +4283,8 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   cropDialog.addEventListener("cancel", event => { event.preventDefault(); closeCropDialog(); });
   cropDialog.addEventListener("click", event => { if (event.target === cropDialog) closeCropDialog(); });
   previewDialog.addEventListener("click", event => { if (event.target === previewDialog) { previewVideo.pause(); previewVideo.removeAttribute("src"); previewDialog.close(); } });
-  $("#mobileLibraryButton").addEventListener("click", () => $("#libraryPanel").classList.toggle("is-open"));
-  $("#mobileInspectorButton").addEventListener("click", () => $("#inspectorPanel").classList.toggle("is-open"));
+  $("#mobileLibraryButton").addEventListener("click", () => toggleSidebar("library"));
+  $("#mobileInspectorButton").addEventListener("click", () => toggleSidebar("inspector"));
   $("#closeInspectorButton").addEventListener("click", () => $("#inspectorPanel").classList.remove("is-open"));
   $("#toggleLibraryButton").addEventListener("click", () => toggleSidebar("library"));
   $("#toggleInspectorButton").addEventListener("click", () => toggleSidebar("inspector"));
