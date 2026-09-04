@@ -354,7 +354,7 @@ body.is-resizing-panel, body.is-resizing-panel * { cursor: col-resize !important
   -webkit-user-select: none;
   touch-action: none;
 }
-.sidebar-reopen { position: fixed; z-index: 45; top: calc(var(--topbar-height) + 16px); display: none; width: 34px; height: 34px; place-items: center; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: var(--surface); box-shadow: var(--shadow); cursor: pointer; }
+.sidebar-reopen[data-tooltip] { position: fixed; z-index: 45; top: calc(var(--topbar-height) + 16px); display: none; width: 34px; height: 34px; place-items: center; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: var(--surface); box-shadow: var(--shadow); cursor: pointer; }
 .sidebar-reopen:hover { color: var(--ink); background: var(--surface-soft); }
 .sidebar-reopen svg { width: 17px; height: 17px; }
 .sidebar-reopen-left { left: 16px; }
