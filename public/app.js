@@ -235,11 +235,47 @@ let connectionMenuDraft = null;
 let connectionMenuDragSession = null;
 let connectionMenuResizeSession = null;
 let canvasContextMenu = null;
+let canvasResizeObserver = null;
+let observedWorkspaceSize = null;
 function clearWorkflowInteractionState() {
   dragSession?.elements?.forEach(item => { if (item.element) { item.element.style.transform = ""; item.element.style.willChange = ""; item.element.classList.remove("is-dragging"); } });
   dragSession = null; resizeSession = null; panSession = null; selectionSession = null; connectionDraft = null;
   workspace?.classList.remove("is-flow-interacting", "is-panning");
   if (selectionRect) selectionRect.hidden = true;
+}
+function resetInterruptedInteractionState() {
+  const scriptSessions = [scriptDragSession, scriptPanSession, scriptConnectionDraft, scriptSelectionSession, scriptPanelResizeSession, scriptStoryResizeSession, scriptEmotionPointSession, scriptEmotionBoardDragSession, scriptEmotionResizeSession, scriptFrameResizeSession, scriptCharacterArcPointSession, scriptCharacterArcResizeSession, scriptGoalPointSession, scriptGoalResizeSession, scriptAssistantResizeSession, scriptNoteResizeSession, scriptFloatingPanelSession, scriptManagerRoleDragSession, scriptManagerSegmentDragSession, scriptManagerActResizeSession];
+  const hadInteraction = Boolean(dragSession || resizeSession || panSession || selectionSession || connectionDraft || scriptSessions.some(Boolean));
+  if (!hadInteraction) {
+    spacePressed = false;
+    workspace?.classList.remove("is-flow-interacting", "is-panning");
+    scriptFlowStage?.classList.remove("is-interacting");
+    return;
+  }
+  dragSession?.elements?.forEach(item => {
+    if (!item.element) return;
+    item.element.style.transform = "";
+    item.element.style.willChange = "";
+    item.element.classList.remove("is-dragging");
+  });
+  [resizeSession, scriptFloatingPanelSession, scriptGoalResizeSession, scriptNoteResizeSession, scriptAssistantResizeSession, scriptCharacterArcResizeSession, scriptFrameResizeSession, scriptEmotionResizeSession, scriptEmotionBoardDragSession, scriptStoryResizeSession].forEach(session => { if (session?.element) session.element.style.willChange = ""; });
+  clearWorkflowInteractionState();
+  scriptDragSession = null; scriptPanSession = null; scriptConnectionDraft = null; scriptSelectionSession = null;
+  scriptPanelResizeSession = null; scriptStoryResizeSession = null; scriptEmotionPointSession = null; scriptEmotionBoardDragSession = null; scriptEmotionResizeSession = null;
+  scriptFrameResizeSession = null; scriptCharacterArcPointSession = null; scriptCharacterArcResizeSession = null; scriptGoalPointSession = null; scriptGoalResizeSession = null;
+  scriptAssistantResizeSession = null; scriptNoteResizeSession = null; scriptFloatingPanelSession = null; scriptManagerRoleDragSession = null; scriptManagerSegmentDragSession = null; scriptManagerActResizeSession = null;
+  workspace?.classList.remove("is-flow-interacting", "is-panning");
+  scriptFlowStage?.classList.remove("is-interacting");
+  if (selectionRect) selectionRect.hidden = true;
+  spacePressed = false;
+  if (!state) return;
+  if (state.flowMode === "script") {
+    renderScriptFlow(); renderLibrary(); renderInspector();
+  } else {
+    renderCanvas(); renderCanvasSelection(); syncVideoGeneratorPortPositions(); renderEdges(); renderInspector();
+  }
+  updateHistoryButtons();
+  scheduleSave();
 }
 let pendingImageUploadNodeId = null;
 let suppressReferenceUploadNodeId = null;
@@ -3147,6 +3183,29 @@ function handleScriptWheel(event) {
   viewport.x = mouseX - beforeX * nextScale; viewport.y = mouseY - beforeY * nextScale; viewport.scale = nextScale; updateScriptViewport(); scheduleSave();
 }
 function updateViewport() { if (!state) return; canvasScene.style.transform = `translate(${state.viewport.x}px, ${state.viewport.y}px) scale(${state.viewport.scale})`; canvasScene.getBoundingClientRect(); if (state.flowMode !== "script") $("#zoomButton").textContent = `${Math.round(state.viewport.scale * 100)}%`; }
+function syncViewportAfterWorkspaceResize(rect) {
+  if (!rect || rect.width <= 0 || rect.height <= 0) { observedWorkspaceSize = null; return; }
+  const previous = observedWorkspaceSize;
+  observedWorkspaceSize = { width: rect.width, height: rect.height };
+  if (!state || !previous) return;
+  const dx = rect.width - previous.width;
+  const dy = rect.height - previous.height;
+  if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+  if (state.flowMode === "script") {
+    const viewport = scriptViewport();
+    viewport.x += dx / 2; viewport.y += dy / 2;
+    updateScriptViewport(); requestScriptEdgeRender();
+  } else {
+    state.viewport.x += dx / 2; state.viewport.y += dy / 2;
+    updateViewport(); syncVideoGeneratorPortPositions(); requestEdgeRender();
+  }
+  scheduleSave();
+}
+function initCanvasResizeObserver() {
+  if (canvasResizeObserver || typeof ResizeObserver !== "function") return;
+  canvasResizeObserver = new ResizeObserver(() => syncViewportAfterWorkspaceResize(workspace.getBoundingClientRect()));
+  canvasResizeObserver.observe(workspace);
+}
 function fitScriptContent() {
   const flow = ensureScriptFlow(); const rect = scriptFlowStage.getBoundingClientRect(); const viewport = scriptViewport();
   const bounds = [...flow.characters.map(role => ({ x: role.x, y: role.y, width: 148, height: 183 })), ...flow.storyCards.map(card => ({ x: card.x, y: card.y, width: card.width, height: card.height })), ...flow.storyFrames.map(frame => ({ x: frame.x, y: frame.y, width: frame.width, height: frame.height }))];
@@ -4131,6 +4190,7 @@ function applyLineMotionPreference(value = lineMotion) { lineMotion = value === 
 function setLineMotion(value) { applyLineMotionPreference(value); localStorage.setItem("image2-canvas-line-motion", lineMotion); }
 function openSettings(focusProvider = "") { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); applyLineMotionPreference(); const input = $("#seedreamApiKeyInput"); if (input) input.value = ""; const midjourneyInput = $("#midjourneyApiKeyInput"); if (midjourneyInput) midjourneyInput.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; const deepseekInput = $("#deepseekApiKeyInput"); if (deepseekInput) deepseekInput.value = ""; const claudeInput = $("#claudeApiKeyInput"); if (claudeInput) claudeInput.value = ""; const kimiInput = $("#kimiApiKeyInput"); if (kimiInput) kimiInput.value = ""; settingsDialog.showModal(); void refreshSeedreamSettingsStatus(); void refreshMidjourneySettingsStatus(); void refreshRunningHubSettingsStatus(); void refreshDeepseekSettingsStatus(); void refreshClaudeSettingsStatus(); void refreshKimiSettingsStatus(); if (focusProvider === "kimi") setTimeout(() => { const target = $("#kimiApiKeyInput"); target?.scrollIntoView({ block: "center" }); target?.focus(); }, 50); }
 function bindStaticEvents() {
+  initCanvasResizeObserver();
   $("#newProjectButton").addEventListener("click", () => {
     $("#newProjectName").value = ""; const radio = $(`#newProjectThemes input[value="${globalTheme}"]`); if (radio) radio.checked = true;
     newProjectDialog.showModal(); setTimeout(() => $("#newProjectName").focus(), 50);
@@ -4171,6 +4231,7 @@ function bindStaticEvents() {
   });
   window.addEventListener("pointermove", handlePointerMove);
   window.addEventListener("pointerup", handlePointerUp);
+  window.addEventListener("pointercancel", resetInterruptedInteractionState);
   $("#undoButton").addEventListener("click", undo);
   $("#redoButton").addEventListener("click", redo);
   $("#fitButton").addEventListener("click", fitContent);
@@ -4315,9 +4376,9 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
     if (event.key === "Delete" || event.key === "Backspace") { state.flowMode === "script" ? deleteScriptSelection() : deleteSelection(); }
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { const node = selectedNode(); if (node?.type === "generator") runGeneratorNode(node.id); }
   });
-  window.addEventListener("blur", () => { workspace.classList.remove("is-flow-interacting", "is-panning"); });
+  window.addEventListener("blur", resetInterruptedInteractionState);
   window.addEventListener("keyup", event => { if (event.code === "Space" && state) { spacePressed = false; workspace.style.cursor = state.tool === "hand" ? "grab" : "default"; } });
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && saveTimer) void saveProjectNow(); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { resetInterruptedInteractionState(); if (saveTimer) void saveProjectNow(); } });
   workspace.addEventListener("contextmenu", showCanvasContextMenu);
   workspace.addEventListener("dragover", event => { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"; });
   workspace.addEventListener("drop", async event => {
