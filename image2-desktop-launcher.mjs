@@ -71,7 +71,7 @@ if (!(await isServiceReady())) {
   startServer();
   const ready = await waitForService();
   if (!ready) {
-    console.error(`Image2 Canvas service did not start: ${statusUrl}`);
+    console.error(`万物维 · Image2 Canvas service did not start: ${statusUrl}`);
     process.exitCode = 1;
     process.exit();
   }

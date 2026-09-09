@@ -1837,5 +1837,5 @@ const server = http.createServer(async (req, res) => {
 await migrateLegacyGeminiConfig();
 await initializeJobs();
 server.listen(port, "127.0.0.1", () => {
-  console.log(`Image2 Canvas: http://127.0.0.1:${port}`);
+  console.log(`万物维 · Image2 Canvas: http://127.0.0.1:${port}`);
 });

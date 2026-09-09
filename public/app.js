@@ -1951,7 +1951,7 @@ function downloadDialogueText() {
     if (entry.type === "speech") { const role = roles.find(item => item.id === entry.roleId); return `${role ? scriptCharacterLabel(role) : "已移除角色"}：${entry.content || ""}`; }
     return `${entry.type === "action" ? "【动作】" : "【旁白】"}${entry.content || ""}`;
   });
-  const content = [`项目：${state?.projectName || "造像台"}`, cardTitle, "", ...entries].join("\r\n");
+  const content = [`项目：${state?.projectName || "万物维"}`, cardTitle, "", ...entries].join("\r\n");
   const blob = new Blob([`\uFEFF${content}`], { type: "text/plain;charset=utf-8" }); const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${dialogueDownloadName(`${state?.projectName || "项目"}-${cardTitle}`)}.txt`; anchor.hidden = true;
   document.body.append(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); toast("对话文本已下载");

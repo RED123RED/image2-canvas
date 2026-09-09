@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">万物维</title>
+  <desc id="desc">深绿色方形中的白色万字与连接节点</desc>
+  <rect width="64" height="64" rx="14" fill="#167548"/>
+  <path d="M15 17.5h34M21 29.5h22M32 17.5v28.5c0 4.5-4.5 7-12 7M32 36c8 0 13.5 3 16 9" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
+  <circle cx="15" cy="17.5" r="3" fill="#b9efd2"/>
+  <circle cx="49" cy="17.5" r="3" fill="#b9efd2"/>
+  <circle cx="46" cy="45" r="3" fill="#b9efd2"/>
+</svg>

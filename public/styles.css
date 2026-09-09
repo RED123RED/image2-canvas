@@ -134,10 +134,7 @@ html[data-theme="dark"] .home-header { background: rgba(21, 25, 31, 0.88); backd
   flex: 0 0 auto;
   place-items: center;
   border-radius: 7px;
-  color: #ffffff;
-  background: var(--primary);
-  font-size: 16px;
-  font-weight: 700;
+  object-fit: contain;
 }
 .home-header-actions, .projects-heading-actions { gap: 10px; }
 .home-main { width: min(1180px, calc(100% - 48px)); margin: 0 auto; padding: 50px 0 72px; }
