@@ -72,23 +72,27 @@ const answerSkillOptions = Object.freeze([
 const answerModelOptions = Object.freeze([
   { value: "gpt-5.5", label: "GPT-5.5 系列", provider: "openai", vision: true },
   { value: "gpt-5.6", label: "GPT-5.6 系列", provider: "openai", vision: true },
-  { value: "deepseek-v4-flash-vision-exp", label: "DeepSeek V4 Flash Vision", provider: "deepseek", vision: true },
-  { value: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "deepseek", vision: false },
+  { value: "deepseek-flash", label: "DeepSeek V4.1 Flash", provider: "deepseek", vision: true },
   { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek", vision: false },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "claude", vision: true },
   { value: "kimi-k3", label: "Kimi K3", provider: "kimi", vision: true }
 ]);
 const deepseekAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "deepseek").map(option => option.value));
-const deepseekVisionAnswerModel = "deepseek-v4-flash-vision-exp";
+const deepseekVisionAnswerModel = "deepseek-flash";
+const deepseekModelAliases = Object.freeze({
+  "deepseek-v4-flash": deepseekVisionAnswerModel,
+  "deepseek-v4-flash-vision-exp": deepseekVisionAnswerModel
+});
 const claudeAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "claude").map(option => option.value));
 const kimiAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "kimi").map(option => option.value));
 function answerModelOption(value) { return answerModelOptions.find(option => option.value === value) || answerModelOptions[1]; }
-function answerModelIsDeepseek(value) { return deepseekAnswerModels.includes(String(value || "")); }
+function normalizedDeepseekModel(value) { const candidate = String(value || ""); return deepseekModelAliases[candidate] || candidate; }
+function answerModelIsDeepseek(value) { return deepseekAnswerModels.includes(normalizedDeepseekModel(value)); }
 function answerModelIsClaude(value) { return claudeAnswerModels.includes(String(value || "")); }
 function answerModelIsKimi(value) { return kimiAnswerModels.includes(String(value || "")); }
-function normalizedAnswerModel(value) { return answerModelOptions.some(option => option.value === value) ? value : "gpt-5.6"; }
+function normalizedAnswerModel(value) { const normalized = normalizedDeepseekModel(value); return answerModelOptions.some(option => option.value === normalized) ? normalized : "gpt-5.6"; }
 function normalizedDeepseekThinking(value) { return value === "disabled" ? "disabled" : "enabled"; }
-function normalizedDeepseekReasoningEffort(value) { return value === "max" ? "max" : "high"; }
+function normalizedDeepseekReasoningEffort(value) { return ["low", "high", "max"].includes(value) ? value : "high"; }
 const h3AnswerModeOptions = Object.freeze([
   { value: "auto", label: "自动识别" },
   { value: "t2va", label: "文生视频 · T2VA" },
@@ -2796,7 +2800,7 @@ function renderAnswerNodeHtml(node, selected, style) {
   const usingH3Skill = node.answerSkill === "minimax-h3";
   const usingNuyoahSkill = node.answerSkill === "nuyoah-reverse";
   const usingDeepseek = answerModelIsDeepseek(node.model);
-  const deepseekSettings = usingDeepseek ? `<div class="answer-deepseek-settings"><div class="node-field-row"><div class="node-field"><label>思考模式</label><select class="node-select node-interactive" data-answer-deepseek-thinking="${node.id}" aria-label="DeepSeek 思考模式"><option value="enabled"${node.deepseekThinking === "enabled" ? " selected" : ""}>开启</option><option value="disabled"${node.deepseekThinking === "disabled" ? " selected" : ""}>关闭</option></select></div><div class="node-field"><label>思考强度</label><select class="node-select node-interactive" data-answer-deepseek-effort="${node.id}" aria-label="DeepSeek 思考强度"${node.deepseekThinking === "disabled" ? " disabled" : ""}><option value="high"${node.deepseekReasoningEffort === "high" ? " selected" : ""}>High</option><option value="max"${node.deepseekReasoningEffort === "max" ? " selected" : ""}>Max</option></select></div></div><p class="field-note">${modelOption.vision ? "当前模型支持图像识别、截图文字和图表分析。" : "当前模型为纯文本；连接参考图时请切换到 DeepSeek V4 Flash Vision。"}</p></div>` : "";
+  const deepseekSettings = usingDeepseek ? `<div class="answer-deepseek-settings"><div class="node-field-row"><div class="node-field"><label>思考模式</label><select class="node-select node-interactive" data-answer-deepseek-thinking="${node.id}" aria-label="DeepSeek 思考模式"><option value="enabled"${node.deepseekThinking === "enabled" ? " selected" : ""}>开启</option><option value="disabled"${node.deepseekThinking === "disabled" ? " selected" : ""}>关闭</option></select></div><div class="node-field"><label>思考强度</label><select class="node-select node-interactive" data-answer-deepseek-effort="${node.id}" aria-label="DeepSeek 思考强度"${node.deepseekThinking === "disabled" ? " disabled" : ""}><option value="low"${node.deepseekReasoningEffort === "low" ? " selected" : ""}>Low</option><option value="high"${node.deepseekReasoningEffort === "high" ? " selected" : ""}>High</option><option value="max"${node.deepseekReasoningEffort === "max" ? " selected" : ""}>Max</option></select></div></div><p class="field-note">${modelOption.vision ? "当前模型支持图像识别、截图文字和图表分析。" : "当前模型为纯文本；连接参考图时请切换到 DeepSeek V4.1 Flash。"}</p></div>` : "";
   const skillSelect = `<div class="node-field answer-skill-field"><label>提示词 Skill</label><select class="node-select node-interactive" data-answer-skill="${node.id}" aria-label="回答 Skill">${answerSkillOptions.map(item => `<option value="${item.value}"${node.answerSkill === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div>`;
   const skillSettings = usingH3Skill ? `${skillSelect}<div class="node-field-row answer-h3-settings"><div class="node-field"><label>H3 模式</label><select class="node-select node-interactive" data-answer-h3-mode="${node.id}" aria-label="MiniMax H3 模式">${h3AnswerModeOptions.map(item => `<option value="${item.value}"${node.h3Mode === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div><div class="node-field"><label>视频时长</label><select class="node-select node-interactive" data-answer-h3-duration="${node.id}" aria-label="MiniMax H3 视频时长">${Array.from({ length: 13 }, (_, index) => index + 3).map(seconds => `<option value="${seconds}"${node.h3Duration === seconds ? " selected" : ""}>${seconds} 秒</option>`).join("")}</select></div></div><p class="field-note">自动识别：无图为文生视频，1 图为首帧，2 图为首尾帧，3 图及以上为全能多参考。</p>` : usingNuyoahSkill ? `${skillSelect}<p class="field-note">连接至少一张参考图即可反推；输出不会加入署名、水印或额外文字。</p>` : skillSelect;
   const runningText = usingH3Skill ? "正在生成 MiniMax H3 提示词…" : usingNuyoahSkill ? "正在反推图片提示词…" : "模型正在回答…";
@@ -3697,7 +3701,7 @@ async function requestJson(url, options = {}, timeoutMs = 30_000) {
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || `请求失败 (${response.status})`);
+    if (!response.ok) throw new Error(result.error || result.message || `请求失败 (${response.status})`);
     return result;
   } catch (error) {
     if (error?.name === "AbortError") throw new Error("请求超时，请确认本机桌面应用仍在运行");
@@ -3966,10 +3970,21 @@ async function runAnswerNode(nodeId) {
     const status = await requestJson("/api/status", {}, 8_000);
     if (usesDeepseek ? !status.deepseek?.ready : usesClaude ? !status.claude?.ready : usesKimi ? !status.kimi?.ready : !status.ready && !apiKey) { openSettings(usesKimi ? "kimi" : ""); return toast(usesDeepseek ? "请先在设置中保存 DeepSeek API Key" : usesClaude ? "请先在设置中保存 Claude API Key" : usesKimi ? "请在设置中粘贴 Kimi API Key 并点击保存设置" : "请先连接 API", true); }
   } catch { openSettings(); return toast("本机服务不可用，无法检查模型配置", true); }
+  if (usesDeepseek) {
+    try {
+      const health = await requestJson("/api/providers/deepseek/health", {}, 15_000);
+      if (!health.ready || !Array.isArray(health.models) || !health.models.includes(node.model)) {
+        const available = Array.isArray(health.models) && health.models.length ? `当前可用模型：${health.models.join("、")}` : "网关没有返回可用模型";
+        selectNode(nodeId); return toast(`当前 DeepSeek 模型不可用，${available}`, true);
+      }
+    } catch (error) {
+      selectNode(nodeId); return toast(error?.message || "DeepSeek 网关不可用，请检查设置", true);
+    }
+  }
   const imageEdges = state.edges.filter(edge => edge.target === nodeId && edge.type === "image" && edge.targetPort.startsWith("image-") && !findNode(edge.source)?.disabled).sort((a, b) => Number(a.targetPort.split("-")[1]) - Number(b.targetPort.split("-")[1]));
   const sources = imageEdges.map(edge => imageSourceFromNode(findNode(edge.source))).filter(Boolean).slice(0, 8);
   if (nuyoahEnabled && !sources.length) { selectNode(nodeId); return toast("南鸢图片反推需要至少连接一张参考图", true); }
-  if (usesDeepseek && sources.length && node.model !== deepseekVisionAnswerModel) { selectNode(nodeId); return toast("当前 DeepSeek 模型不支持图片输入，请切换到 V4 Flash Vision", true); }
+  if (usesDeepseek && sources.length && node.model !== deepseekVisionAnswerModel) { selectNode(nodeId); return toast("当前 DeepSeek 模型不支持图片输入，请切换到 V4.1 Flash", true); }
   recordHistory(); node.status = "running"; node.error = ""; renderCanvas(); renderInspector();
   try {
     const originalReferences = await Promise.all(sources.map(sourceToDataUrl));
@@ -4173,8 +4188,8 @@ async function refreshRunningHubSettingsStatus() {
 }
 async function refreshDeepseekSettingsStatus() {
   const statusElement = $("#deepseekKeyStatus"); if (!statusElement) return;
-  try { const result = await requestJson("/api/status", {}, 5_000); statusElement.textContent = result.deepseek?.ready ? `已配置 · ${result.deepseek.model}` : "尚未配置，保存密钥后即可在模型回答节点中选择 DeepSeek。"; }
-  catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
+  try { const result = await requestJson("/api/providers/deepseek/health", {}, 15_000); statusElement.textContent = result.ready ? `已配置 · ${result.model} · 可用：${result.models.join("、")}` : "DeepSeek 网关暂未返回可用模型，请检查密钥或网关。"; }
+  catch (error) { statusElement.textContent = error?.message || "DeepSeek 网关暂时不可用，保存后会在服务恢复时生效。"; }
 }
 async function refreshClaudeSettingsStatus() {
   const statusElement = $("#claudeKeyStatus"); if (!statusElement) return;

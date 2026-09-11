@@ -28,8 +28,17 @@ const port = Number(process.env.PORT || 45173);
 const baseUrl = (process.env.IMAGE2_BASE_URL || "https://rehdasu.cn/v1").replace(/\/$/, "");
 const model = process.env.IMAGE2_MODEL || "gpt-image-2";
 const deepseekBaseUrl = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/$/, "");
-const deepseekModels = Object.freeze(["deepseek-v4-flash-vision-exp", "deepseek-v4-flash", "deepseek-v4-pro"]);
-const deepseekVisionModel = "deepseek-v4-flash-vision-exp";
+const deepseekFlashModel = "deepseek-flash";
+const deepseekModels = Object.freeze([deepseekFlashModel, "deepseek-v4-pro"]);
+const deepseekVisionModel = deepseekFlashModel;
+const deepseekModelAliases = Object.freeze({
+  "deepseek-v4-flash": deepseekFlashModel,
+  "deepseek-v4-flash-vision-exp": deepseekFlashModel
+});
+function normalizeDeepseekModel(value) {
+  const candidate = String(value || "").trim();
+  return deepseekModelAliases[candidate] || candidate;
+}
 const claudeBaseUrl = (process.env.CLAUDE_NUODA_BASE_URL || "https://api.nuoda.vip/v1").replace(/\/$/, "");
 const claudeModels = Object.freeze(["claude-sonnet-4-6"]);
 const claudeDefaultModel = claudeModels[0];
@@ -1339,10 +1348,13 @@ async function checkDeepseekGateway(req, res) {
     const response = await fetch(`${deepseekBaseUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
     if (!response.ok) throw gatewayError(response.status, "DeepSeek 网关鉴权失败");
     const result = await response.json().catch(() => ({}));
-    const listedModels = Array.isArray(result.data) ? new Set(result.data.map(item => item?.id)) : null;
+    const listedModels = Array.isArray(result.data)
+      ? new Set(result.data.map(item => normalizeDeepseekModel(item?.id)).filter(Boolean))
+      : null;
     const availableModels = listedModels ? deepseekModels.filter(id => listedModels.has(id)) : deepseekModels;
     const available = availableModels.length > 0;
-    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: deepseekModels[0], models: availableModels, baseUrl: deepseekBaseUrl, checkedAt: Date.now() });
+    const defaultModel = availableModels.includes(deepseekVisionModel) ? deepseekVisionModel : availableModels[0] || deepseekVisionModel;
+    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: defaultModel, visionModel: deepseekVisionModel, models: availableModels, baseUrl: deepseekBaseUrl, checkedAt: Date.now() });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, 502, { ready: false, gateway: failure.code.toLowerCase(), message: failure.message, checkedAt: Date.now() });
@@ -1697,7 +1709,7 @@ async function createResponse(req, res) {
     const body = await readJson(req);
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "请连接并填写至少一个提示词节点" });
-    const requestedModel = String(body.model || "gpt-5.6");
+    const requestedModel = normalizeDeepseekModel(body.model || "gpt-5.6");
     const isDeepseek = deepseekModels.includes(requestedModel);
     const isClaude = claudeModels.includes(requestedModel);
     const isKimi = kimiModels.includes(requestedModel);
@@ -1705,7 +1717,7 @@ async function createResponse(req, res) {
     const apiKey = isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : isKimi ? await resolveKimiApiKey(req) : await resolveApiKey(req);
     if (!apiKey) return sendJson(res, 401, { error: isDeepseek ? "未配置 DeepSeek API Key，请在设置中保存密钥" : isClaude ? "未配置 Claude API Key，请在设置中保存密钥" : isKimi ? "未配置 Kimi API Key，请在设置中保存密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, 8);
-    if (isDeepseek && references.length && textModel !== deepseekVisionModel) return sendJson(res, 400, { error: "当前 DeepSeek 模型不支持图片输入，请切换到 DeepSeek V4 Flash Vision" });
+    if (isDeepseek && references.length && textModel !== deepseekVisionModel) return sendJson(res, 400, { error: "当前 DeepSeek 模型不支持图片输入，请切换到 DeepSeek V4.1 Flash" });
     const usingH3Skill = body.skill === "minimax-h3";
     const usingNuyoahSkill = body.skill === "nuyoah-reverse";
     const answerSkill = usingH3Skill ? "minimax-h3" : usingNuyoahSkill ? "nuyoah-reverse" : "none";
@@ -1745,7 +1757,7 @@ async function createResponse(req, res) {
     if (isDeepseek) {
       const thinking = body.deepseekThinking === "disabled" ? "disabled" : "enabled";
       requestBody.thinking = { type: thinking };
-      if (thinking === "enabled") requestBody.reasoning_effort = body.deepseekReasoningEffort === "max" ? "max" : "high";
+      if (thinking === "enabled") requestBody.reasoning_effort = ["low", "high", "max"].includes(body.deepseekReasoningEffort) ? body.deepseekReasoningEffort : "high";
     }
     if (isKimi) requestBody.reasoning_effort = ["low", "high", "max"].includes(body.kimiReasoningEffort) ? body.kimiReasoningEffort : "max";
     const response = await fetch(`${isDeepseek ? deepseekBaseUrl : isKimi ? kimiBaseUrl : baseUrl}/chat/completions`, {
@@ -1791,7 +1803,7 @@ const server = http.createServer(async (req, res) => {
     const deepseekKey = await resolveDeepseekApiKey(req);
     const claudeKey = await resolveClaudeApiKey(req);
     const kimiKey = await resolveKimiApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);
