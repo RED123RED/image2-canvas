@@ -1187,6 +1187,7 @@ async function openProject(id) {
     if (!nextState?.id || !Array.isArray(nextState.nodes) || !Array.isArray(nextState.edges)) throw new Error("项目数据格式异常");
     restoreWorkspaceSession(nextState, readActiveProjectSession());
     clearWorkflowInteractionState(); state = nextState; selectedEdgeId = null; undoStack = []; redoStack = [];
+    setSidebarCollapsed("library", true); setSidebarCollapsed("inspector", true);
     rememberActiveProject();
     $("#homeView").hidden = true; $("#workspaceView").hidden = false;
     applyTheme(state.theme); renderWorkspace();
