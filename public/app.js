@@ -16,8 +16,38 @@ const seedreamImageModels = Object.freeze([
 const midjourneyImageModels = Object.freeze([
   { id: "mj_fast_imagine", label: "Midjourney Fast" }
 ]);
+const image2Models = Object.freeze([
+  { id: "gpt-image-2.5-sunburst", label: "GPT Image 2.5 Sunburst" },
+  { id: "gpt-image-2.5-flare", label: "GPT Image 2.5 Flare" },
+  { id: "gpt-image-2.5", label: "GPT Image 2.5 · 网关别名" },
+  { id: "gpt-image-2", label: "GPT Image 2" }
+]);
+const image2DefaultModel = "gpt-image-2.5-sunburst";
+const image25ModelIds = Object.freeze(image2Models.filter(item => item.id.startsWith("gpt-image-2.5")).map(item => item.id));
+const image2QualityOptions = Object.freeze([
+  { value: "low", label: "快速" },
+  { value: "medium", label: "标准" },
+  { value: "high", label: "高品质" }
+]);
+const image25QualityOptions = Object.freeze([
+  { value: "auto", label: "自动" },
+  { value: "low", label: "快速" },
+  { value: "medium", label: "标准" },
+  { value: "high", label: "高品质" },
+  { value: "xhigh", label: "超高品质" },
+  { value: "max", label: "最高品质" }
+]);
+const image25OutputSizeOptions = Object.freeze([
+  { value: "1024x1024", label: "方形 · 1024 × 1024", ratioLabel: "1:1" },
+  { value: "1536x1024", label: "横版大图 · 1536 × 1024", ratioLabel: "3:2" },
+  { value: "1024x1536", label: "竖版大图 · 1024 × 1536", ratioLabel: "2:3" }
+]);
 const generatorOutputSizeOptions = Object.freeze({
   image2: [{ value: "current", label: "当前最大" }],
+  "gpt-image-2": [{ value: "current", label: "当前最大" }],
+  "gpt-image-2.5": image25OutputSizeOptions,
+  "gpt-image-2.5-flare": image25OutputSizeOptions,
+  "gpt-image-2.5-sunburst": image25OutputSizeOptions,
   "doubao-seedream-5-0-pro-260628": [{ value: "2K", label: "2K · 当前最大" }],
   mj_fast_imagine: [{ value: "current", label: "MJ 模型控制" }]
 });
@@ -127,12 +157,17 @@ function normalizeRunningHubVideo(node, connectedImageSlots = 0) {
   next.status = node?.activeJobId ? "running" : "idle";
   return next;
 }
-function generatorOutputModelId(node) { return node?.provider === "moyu" ? node.moyuModel : node?.provider === "midjourney" ? midjourneyImageModels[0].id : node?.provider === "runninghub-krea2" ? "krea2-white-marble" : "image2"; }
+function image2ModelForNode(node) { return image2Models.some(item => item.id === node?.image2Model) ? node.image2Model : "gpt-image-2"; }
+function image2ModelLabel(modelId) { return image2Models.find(item => item.id === modelId)?.label || "Image2"; }
+function image25ModelForNode(node) { return node?.provider === "image2" && image25ModelIds.includes(image2ModelForNode(node)); }
+function image25SizeOption(node) { return image25OutputSizeOptions.find(item => item.value === normalizeGeneratorOutputSize(node)) || image25OutputSizeOptions.at(-1); }
+function generatorOutputModelId(node) { return node?.provider === "moyu" ? node.moyuModel : node?.provider === "midjourney" ? midjourneyImageModels[0].id : node?.provider === "runninghub-krea2" ? "krea2-white-marble" : image2ModelForNode(node); }
 function generatorOutputOptions(node) { return generatorOutputSizeOptions[generatorOutputModelId(node)] || generatorOutputSizeOptions.image2; }
 function generatorDefaultOutputSize(node) { return generatorOutputOptions(node).at(-1)?.value || "current"; }
 function normalizeGeneratorOutputSize(node) { const options = generatorOutputOptions(node); return options.some(option => option.value === node?.outputSize) ? node.outputSize : generatorDefaultOutputSize(node); }
 function generatorApiSize(node) {
   if (node?.provider === "midjourney") return sizeMap[node?.aspect] ? node.aspect : fixedGeneratorSettings.aspect;
+  if (image25ModelForNode(node)) return image25SizeOption(node).value;
   if (node?.provider !== "moyu") return sizeMap[node?.aspect]?.api || sizeMap[fixedGeneratorSettings.aspect].api;
   const maximum = { "1:1": "2048x2048", "16:9": "2848x1600", "9:16": "1600x2848" };
   return maximum[node.aspect] || sizeMap[node.aspect]?.api || sizeMap[fixedGeneratorSettings.aspect].api;
@@ -152,9 +187,10 @@ function krea2PresetForNode(node) {
   const dimensions = krea2Dimensions(node);
   return Object.entries(krea2PresetDimensions).find(([, value]) => value[0] === dimensions.width && value[1] === dimensions.height)?.[0] || "";
 }
-const generatorProviders = Object.freeze({ image2: { label: "Image2", model: "gpt-image-2" }, moyu: { label: "豆包 Seedream", model: seedreamImageModels[0].id }, midjourney: { label: "Midjourney Fast", model: midjourneyImageModels[0].id }, "runninghub-krea2": runningHubKrea2Provider });
+const generatorProviders = Object.freeze({ image2: { label: "Image2", model: image2DefaultModel }, moyu: { label: "豆包 Seedream", model: seedreamImageModels[0].id }, midjourney: { label: "Midjourney Fast", model: midjourneyImageModels[0].id }, "runninghub-krea2": runningHubKrea2Provider });
 function generatorModelForNode(node) {
   if (node?.mediaType === "video" || node?.provider === "runninghub-h3") return runningHubVideoProvider.model;
+  if (node?.provider === "image2") return image2ModelForNode(node);
   if (node?.provider === "moyu" && seedreamImageModels.some(item => item.id === node.moyuModel)) return node.moyuModel;
   if (node?.provider === "midjourney") return midjourneyImageModels[0].id;
   if (node?.provider === "runninghub-krea2") return runningHubKrea2Provider.model;
@@ -162,7 +198,7 @@ function generatorModelForNode(node) {
 }
 function generatorProviderForNode(node) { if (node?.mediaType === "video" || node?.provider === "runninghub-h3") return runningHubVideoProvider; const provider = generatorProviders[node?.provider] || generatorProviders.image2; return { ...provider, model: generatorModelForNode(node) }; }
 function generatorModelLabel(modelId, fallback = "Image2") {
-  if (modelId === "gpt-image-2") return "GPT Image 2";
+  if (image2Models.some(item => item.id === modelId)) return image2ModelLabel(modelId);
   if (modelId === "Krea2 White Marble") return "K2 白玉";
   return seedreamImageModels.find(item => item.id === modelId)?.label
     || midjourneyImageModels.find(item => item.id === modelId)?.label
@@ -560,7 +596,7 @@ function applyCompositionToLinkedPrompts(compositionId) {
   const instruction = promptCompositionInstruction(source.composition); linkedPromptsForComposition(compositionId).forEach(prompt => { prompt.content = upsertPromptCompositionInstruction(prompt.content, source.composition, prompt.compositionInstruction); prompt.compositionInstruction = instruction; });
 }
 function createGeneratorNode(x, y) {
-  return { id: uid("image2"), type: "generator", name: "GPT Image 2", provider: "image2", moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: fixedGeneratorSettings.quality, batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
+  return { id: uid("image2"), type: "generator", name: image2ModelLabel(image2DefaultModel), provider: "image2", image2Model: image2DefaultModel, moyuModel: seedreamImageModels[0].id, outputSize: "1024x1536", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: "auto", batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 const promptQuickParamOptions = Object.freeze({
   shotSize: { label: "景别", options: [["", "不指定"], ["extremeWide", "大远景，突出广阔环境与人物尺度"], ["wide", "全景，完整呈现人物动作与环境"], ["medium", "中景，人物腰部以上"], ["mediumClose", "中近景，人物胸部以上"], ["close", "近景，强调人物表情与互动"], ["closeUp", "特写，聚焦面部或关键细节"]] },
@@ -737,7 +773,10 @@ function normalizeProject(project) {
         const slots = Math.min(14, Math.max(1, Number(node.inputSlots) || 4));
         const promptSlots = Math.min(6, Math.max(1, Number(node.promptSlots) || 1));
         const provider = ["moyu", "midjourney", "runninghub-krea2"].includes(node.provider) ? node.provider : "image2";
-        const generatorNormalized = { ...node, provider, moyuModel: seedreamImageModels.some(item => item.id === node.moyuModel) ? node.moyuModel : seedreamImageModels[0].id, width: node.width || 360, promptSlots, inputSlots: provider === "runninghub-krea2" ? 0 : slots, height: Math.max(Number(node.height) || 0, nodeHeight("generator", provider === "runninghub-krea2" ? 0 : slots, promptSlots)), aspect: sizeMap[node.aspect] ? node.aspect : fixedGeneratorSettings.aspect, quality: ["low", "medium", "high"].includes(node.quality) ? node.quality : fixedGeneratorSettings.quality, batch: Math.min(4, Math.max(1, Number(node.batch) || fixedGeneratorSettings.batch)), kreaWidth: krea2Dimensions(node).width, kreaHeight: krea2Dimensions(node).height, status: node.activeJobId ? "running" : "idle" };
+        const image2Model = provider === "image2" ? image2ModelForNode(node) : node.image2Model;
+        const isImage25 = provider === "image2" && image25ModelIds.includes(image2Model);
+        const qualityOptions = isImage25 ? image25QualityOptions : image2QualityOptions;
+        const generatorNormalized = { ...node, provider, image2Model, moyuModel: seedreamImageModels.some(item => item.id === node.moyuModel) ? node.moyuModel : seedreamImageModels[0].id, width: node.width || 360, promptSlots, inputSlots: provider === "runninghub-krea2" ? 0 : slots, height: Math.max(Number(node.height) || 0, nodeHeight("generator", provider === "runninghub-krea2" ? 0 : slots, promptSlots)), aspect: sizeMap[node.aspect] ? node.aspect : fixedGeneratorSettings.aspect, quality: qualityOptions.some(option => option.value === node.quality) ? node.quality : isImage25 ? "auto" : fixedGeneratorSettings.quality, batch: Math.min(4, Math.max(1, Number(node.batch) || fixedGeneratorSettings.batch)), kreaWidth: krea2Dimensions(node).width, kreaHeight: krea2Dimensions(node).height, status: node.activeJobId ? "running" : "idle" };
         generatorNormalized.outputSize = normalizeGeneratorOutputSize(generatorNormalized);
         return generatorNormalized;
       }
@@ -2704,6 +2743,9 @@ function renderGeneratorNodeHtml(node, selected, style) {
   const isMoyu = node.provider === "moyu";
   const isMidjourney = node.provider === "midjourney";
   const isRunningHubKrea2 = node.provider === "runninghub-krea2";
+  const isImage25 = image25ModelForNode(node);
+  const image25Size = isImage25 ? image25SizeOption(node) : null;
+  const qualityOptions = isImage25 ? image25QualityOptions : image2QualityOptions;
   const outputOptions = generatorOutputOptions(node);
   const outputSize = normalizeGeneratorOutputSize(node);
   const outputSizeControl = outputOptions.length > 1
@@ -2720,9 +2762,9 @@ function renderGeneratorNodeHtml(node, selected, style) {
   const canCancel = isRunning && isRunningHubKrea2;
   const runLabel = canCancel ? `停止 ${provider.label}` : isRunning ? `${provider.label} 处理中` : `运行 ${provider.label}`;
     return `<article class="canvas-node generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "sparkles")}<div class="node-body generator-body">
-    <div class="node-field generator-provider-field"><label>生图模型</label><select class="node-select node-interactive" data-generator-field="providerModel" data-node-id="${node.id}" aria-label="生图模型"><option value="image2"${node.provider === "image2" ? " selected" : ""}>Image2 · GPT Image 2</option>${seedreamImageModels.map(item => `<option value="${item.id}"${node.provider === "moyu" && node.moyuModel === item.id ? " selected" : ""}>豆包 · ${item.label}</option>`).join("")}${midjourneyImageModels.map(item => `<option value="${item.id}"${isMidjourney ? " selected" : ""}>Midjourney · ${item.label}</option>`).join("")}<option value="runninghub-krea2"${isRunningHubKrea2 ? " selected" : ""}>RunningHub · K2 白玉</option></select></div>
-    <div class="node-field-row"><div class="node-field"><label>比例</label>${isRunningHubKrea2 ? `<div class="node-static-field">自定义</div>` : `<select class="node-select node-interactive" data-generator-field="aspect" data-node-id="${node.id}" aria-label="图像比例">${Object.keys(sizeMap).map(value => `<option value="${value}"${node.aspect === value ? " selected" : ""}>${value}</option>`).join("")}</select>`}</div>
-    <div class="node-field"><label>品质</label>${isMoyu || isMidjourney || isRunningHubKrea2 ? `<div class="node-static-field">模型默认</div>` : `<select class="node-select node-interactive" data-generator-field="quality" data-node-id="${node.id}" aria-label="图像品质"><option value="low"${node.quality === "low" ? " selected" : ""}>快速</option><option value="medium"${node.quality === "medium" ? " selected" : ""}>标准</option><option value="high"${node.quality === "high" ? " selected" : ""}>高品质</option></select>`}</div>
+    <div class="node-field generator-provider-field"><label>生图模型</label><select class="node-select node-interactive" data-generator-field="providerModel" data-node-id="${node.id}" aria-label="生图模型">${image2Models.map(item => `<option value="${item.id}"${node.provider === "image2" && image2ModelForNode(node) === item.id ? " selected" : ""}>Image2 · ${item.label}</option>`).join("")}${seedreamImageModels.map(item => `<option value="${item.id}"${node.provider === "moyu" && node.moyuModel === item.id ? " selected" : ""}>豆包 · ${item.label}</option>`).join("")}${midjourneyImageModels.map(item => `<option value="${item.id}"${isMidjourney ? " selected" : ""}>Midjourney · ${item.label}</option>`).join("")}<option value="runninghub-krea2"${isRunningHubKrea2 ? " selected" : ""}>RunningHub · K2 白玉</option></select></div>
+    <div class="node-field-row"><div class="node-field"><label>比例</label>${isRunningHubKrea2 ? `<div class="node-static-field">自定义</div>` : isImage25 ? `<div class="node-static-field">${image25Size.ratioLabel} · 尺寸预设</div>` : `<select class="node-select node-interactive" data-generator-field="aspect" data-node-id="${node.id}" aria-label="图像比例">${Object.keys(sizeMap).map(value => `<option value="${value}"${node.aspect === value ? " selected" : ""}>${value}</option>`).join("")}</select>`}</div>
+    <div class="node-field"><label>品质</label>${isMoyu || isMidjourney || isRunningHubKrea2 ? `<div class="node-static-field">模型默认</div>` : `<select class="node-select node-interactive" data-generator-field="quality" data-node-id="${node.id}" aria-label="图像品质">${qualityOptions.map(option => `<option value="${option.value}"${node.quality === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`}</div>
     <div class="node-field"><label>${isMidjourney ? "候选图" : "张数"}</label>${batchControl}</div>
     <div class="node-field"><label>${isMidjourney ? "单图输出" : "输出尺寸"}</label>${outputControl}</div></div>${krea2SizeControl}
     <div class="generator-inputs">${promptSlots}${slots}</div><div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-input="${node.id}"${node.inputSlots >= generatorReferenceLimit(node) ? " disabled" : ""}>${icon("image-plus")} 添加图片输入</button></div>
@@ -2914,11 +2956,15 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
     const field = control.dataset.generatorField;
     if (field === "providerModel") {
       const selection = event.target.value;
-      node.provider = selection === "image2" ? "image2" : selection === "runninghub-krea2" ? "runninghub-krea2" : midjourneyImageModels.some(item => item.id === selection) ? "midjourney" : "moyu";
+      node.provider = image2Models.some(item => item.id === selection) ? "image2" : selection === "runninghub-krea2" ? "runninghub-krea2" : midjourneyImageModels.some(item => item.id === selection) ? "midjourney" : "moyu";
+      if (node.provider === "image2") {
+        node.image2Model = selection;
+        node.quality = image25ModelForNode(node) ? "auto" : fixedGeneratorSettings.quality;
+      }
       if (node.provider === "moyu") node.moyuModel = seedreamImageModels.some(item => item.id === selection) ? selection : seedreamImageModels[0].id;
       node.outputSize = normalizeGeneratorOutputSize(node);
       const provider = generatorProviderForNode(node);
-      if (["GPT Image 2", "豆包 Seedream", "Midjourney Fast", "K2 白玉", "生图"].includes(node.name)) node.name = node.provider === "moyu" ? "豆包 Seedream" : node.provider === "midjourney" ? "Midjourney Fast" : node.provider === "runninghub-krea2" ? "K2 白玉" : "GPT Image 2";
+      if (["GPT Image 2", ...image2Models.map(item => item.label), "豆包 Seedream", "Midjourney Fast", "K2 白玉", "生图"].includes(node.name)) node.name = node.provider === "moyu" ? "豆包 Seedream" : node.provider === "midjourney" ? "Midjourney Fast" : node.provider === "runninghub-krea2" ? "K2 白玉" : image2ModelLabel(node.image2Model);
       toast(`已切换为 ${provider.label} · ${provider.model}`);
     } else if (field === "kreaPreset") {
       const preset = krea2PresetDimensions[event.target.value];
@@ -3918,7 +3964,7 @@ async function runGeneratorNode(nodeId) {
     const externalSize = generatorApiSize(generator);
     const requestHeaders = { "Content-Type": "application/json", ...(!usesProviderKey && apiKey ? { "x-image2-api-key": apiKey } : {}), ...(generator.provider === "runninghub-krea2" && runningHubApiKey ? { "x-runninghub-api-key": runningHubApiKey } : {}) };
     const dimensions = generator.provider === "runninghub-krea2" ? krea2Dimensions(generator) : null;
-    const result = await requestJson("/api/generate", { method: "POST", headers: requestHeaders, body: JSON.stringify({ provider: generator.provider || "image2", model: usesProviderKey ? generatorModelForNode(generator) : undefined, prompt: fullPrompt, size: usesProviderKey ? externalSize : sizeMap[generator.aspect].api, aspect: generator.aspect, width: dimensions?.width, height: dimensions?.height, outputSize: normalizeGeneratorOutputSize(generator), quality: generator.quality, n: generator.provider === "midjourney" ? 1 : generator.batch, references: generator.provider === "runninghub-krea2" ? [] : references }) }, 75_000);
+    const result = await requestJson("/api/generate", { method: "POST", headers: requestHeaders, body: JSON.stringify({ provider: generator.provider || "image2", model: generator.provider === "image2" || usesProviderKey ? generatorModelForNode(generator) : undefined, prompt: fullPrompt, size: generator.provider === "image2" || usesProviderKey ? externalSize : sizeMap[generator.aspect].api, aspect: generator.aspect, width: dimensions?.width, height: dimensions?.height, outputSize: normalizeGeneratorOutputSize(generator), quality: generator.quality, n: generator.provider === "midjourney" ? 1 : generator.batch, references: generator.provider === "runninghub-krea2" ? [] : references }) }, 75_000);
     const job = result.job;
     if (!job?.id) throw new Error("本机服务未返回生成任务");
     generator.activeJobId = job.id;

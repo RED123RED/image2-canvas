@@ -26,7 +26,16 @@ const jobsPath = path.join(outputDir, "image2-generation-jobs.json");
 const generationLogPath = path.join(outputDir, "image2-generation.log");
 const port = Number(process.env.PORT || 45173);
 const baseUrl = (process.env.IMAGE2_BASE_URL || "https://rehdasu.cn/v1").replace(/\/$/, "");
-const model = process.env.IMAGE2_MODEL || "gpt-image-2";
+const image2Models = Object.freeze([
+  "gpt-image-2",
+  "gpt-image-2.5",
+  "gpt-image-2.5-flare",
+  "gpt-image-2.5-sunburst"
+]);
+const image25Models = Object.freeze(image2Models.filter(value => value.startsWith("gpt-image-2.5")));
+const model = image2Models.includes(process.env.IMAGE2_MODEL) ? process.env.IMAGE2_MODEL : "gpt-image-2.5-sunburst";
+const image25Sizes = Object.freeze(["1024x1024", "1536x1024", "1024x1536"]);
+const image25Qualities = Object.freeze(["low", "medium", "high", "xhigh", "max", "auto"]);
 const deepseekBaseUrl = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/$/, "");
 const deepseekFlashModel = "deepseek-flash";
 const deepseekModels = Object.freeze([deepseekFlashModel, "deepseek-v4-pro"]);
@@ -802,7 +811,7 @@ async function requestImage2Generation(job) {
     const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Idempotency-Key": index ? `${job.id}:${index + 1}` : job.id };
     if (references.length) {
       const form = new FormData();
-      form.append("model", model);
+      form.append("model", job.model);
       form.append("prompt", prompt);
       form.append("quality", quality);
       form.append("size", size);
@@ -814,7 +823,7 @@ async function requestImage2Generation(job) {
       requestBody = form;
     } else {
       headers["Content-Type"] = "application/json";
-      requestBody = JSON.stringify({ model, prompt, quality, size, n: count });
+      requestBody = JSON.stringify({ model: job.model, prompt, quality, size, n: count });
     }
     const response = await fetch(`${baseUrl}${endpoint}`, { method: "POST", headers, body: requestBody, signal: AbortSignal.timeout(10 * 60_000) });
     const raw = await response.text();
@@ -1203,10 +1212,16 @@ async function createJob(req, res) {
     if (!apiKey) return sendJson(res, 401, { error: isMj ? "未配置 Midjourney API Key，请在设置中保存密钥" : usesSeedream ? "未配置 Seedream API Key，请在设置中保存密钥" : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
-    const quality = ["low", "medium", "high"].includes(body.quality) ? body.quality : "high";
-    const size = /^\d{3,4}x\d{3,4}$/.test(body.size || "") ? body.size : "1024x1024";
+    const selectedImage2Model = image2Models.includes(String(body.model || "")) ? String(body.model) : model;
+    const usesImage25 = image25Models.includes(selectedImage2Model);
+    const qualityOptions = usesImage25 ? image25Qualities : ["low", "medium", "high"];
+    const quality = qualityOptions.includes(body.quality) ? body.quality : usesImage25 ? "auto" : "high";
+    const requestedSize = String(body.size || "");
+    const size = usesImage25
+      ? (image25Sizes.includes(requestedSize) ? requestedSize : "1024x1024")
+      : (/^\d{3,4}x\d{3,4}$/.test(requestedSize) ? requestedSize : "1024x1024");
     const aspect = /^(?:1:1|3:4|4:3|16:9|9:16)$/.test(String(body.aspect || "")) ? String(body.aspect) : "1:1";
-    const selectedModel = isMj ? mjFastModel : usesSeedream ? normalizeSeedreamModel(body.model) : model;
+    const selectedModel = isMj ? mjFastModel : usesSeedream ? normalizeSeedreamModel(body.model) : selectedImage2Model;
     const outputSize = usesSeedream ? normalizeSeedreamOutputSize() : "current";
     const n = isMj ? 1 : Math.min(4, Math.max(1, Number(body.n) || 1));
     const maxReferences = isMj ? 4 : provider === "moyu" ? 6 : 8;
@@ -1300,8 +1315,10 @@ async function checkGateway(req, res) {
     const response = await fetch(`${baseUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
     if (!response.ok) throw gatewayError(response.status, "Image2 网关鉴权失败");
     const result = await response.json().catch(() => ({}));
-    const available = !Array.isArray(result.data) || result.data.some(item => item?.id === model);
-    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model, checkedAt: Date.now() });
+    const listedModels = Array.isArray(result.data) ? new Set(result.data.map(item => item?.id)) : null;
+    const availableModels = listedModels ? image2Models.filter(id => listedModels.has(id)) : image2Models;
+    const available = availableModels.includes(model);
+    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model, models: availableModels, checkedAt: Date.now() });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, 502, { ready: false, gateway: failure.code.toLowerCase(), message: failure.message, checkedAt: Date.now() });
@@ -1803,7 +1820,7 @@ const server = http.createServer(async (req, res) => {
     const deepseekKey = await resolveDeepseekApiKey(req);
     const claudeKey = await resolveClaudeApiKey(req);
     const kimiKey = await resolveKimiApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, baseUrl, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, baseUrl, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);
