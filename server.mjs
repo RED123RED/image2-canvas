@@ -820,7 +820,7 @@ async function collectRequestedImageItems(requestedCount, requestOnce) {
 }
 
 async function requestImage2Generation(job) {
-  const { apiKey, prompt, quality, size, n, references } = job.request;
+  const { apiKey, prompt, quality, size, outputFormat, n, references } = job.request;
   const endpoint = references.length ? "/images/edits" : "/images/generations";
   const requestOnce = async (count, index) => {
     let requestBody;
@@ -831,6 +831,7 @@ async function requestImage2Generation(job) {
       form.append("prompt", prompt);
       form.append("quality", quality);
       form.append("size", size);
+      form.append("output_format", outputFormat);
       form.append("n", String(count));
       references.forEach((dataUrl, referenceIndex) => {
         const { blob, filename } = parseDataUrl(dataUrl, referenceIndex);
@@ -839,7 +840,7 @@ async function requestImage2Generation(job) {
       requestBody = form;
     } else {
       headers["Content-Type"] = "application/json";
-      requestBody = JSON.stringify({ model: job.model, prompt, quality, size, n: count });
+      requestBody = JSON.stringify({ model: job.model, prompt, quality, size, output_format: outputFormat, n: count });
     }
     const response = await fetch(`${baseUrl}${endpoint}`, { method: "POST", headers, body: requestBody, signal: AbortSignal.timeout(10 * 60_000) });
     const raw = await response.text();
@@ -1240,10 +1241,12 @@ async function createJob(req, res) {
     const aspect = /^(?:1:1|3:4|4:3|16:9|9:16)$/.test(String(body.aspect || "")) ? String(body.aspect) : "1:1";
     const selectedModel = isMj ? mjFastModel : usesSeedream ? normalizeSeedreamModel(body.model) : selectedImage2Model;
     const outputSize = usesSeedream ? normalizeSeedreamOutputSize() : "current";
+    // Keep generated Image2 assets lossless unless a future node-level format setting explicitly changes it.
+    const outputFormat = "png";
     const n = isMj ? 1 : Math.min(4, Math.max(1, Number(body.n) || 1));
     const maxReferences = isMj ? 4 : provider === "moyu" ? 6 : 8;
     const references = Array.isArray(body.references) ? body.references.slice(0, maxReferences) : [];
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, aspect, outputSize, n, references } };
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider, model: selectedModel, imageCount: n, request: { apiKey, prompt, quality, size, aspect, outputSize, outputFormat, n, references } };
     jobs.set(job.id, job);
     pendingJobIds.push(job.id);
     await persistJobs();
