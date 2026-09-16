@@ -39,12 +39,22 @@ const image25QualityOptions = Object.freeze([
   { value: "xhigh", label: "超高品质" },
   { value: "max", label: "最高品质" }
 ]);
+const image25ResolutionOptions = Object.freeze([
+  { value: "1K", label: "1K" },
+  { value: "2K", label: "2K" },
+  { value: "4K", label: "4K" }
+]);
+const image25Sizes = Object.freeze({
+  "1K": Object.freeze({ "1:1": "1024x1024", "3:4": "768x1024", "4:3": "1024x768", "16:9": "1280x720", "9:16": "720x1280" }),
+  "2K": Object.freeze({ "1:1": "2048x2048", "3:4": "1536x2048", "4:3": "2048x1536", "16:9": "2048x1152", "9:16": "1152x2048" }),
+  "4K": Object.freeze({ "1:1": "2880x2880", "3:4": "2448x3264", "4:3": "3264x2448", "16:9": "3840x2160", "9:16": "2160x3840" })
+});
 const generatorOutputSizeOptions = Object.freeze({
   image2: [{ value: "current", label: "当前最大" }],
   "gpt-image-2": [{ value: "current", label: "当前最大" }],
-  "gpt-image-2.5": [{ value: "current", label: "按比例高分辨率" }],
-  "gpt-image-2.5-flare": [{ value: "current", label: "按比例高分辨率" }],
-  "gpt-image-2.5-sunburst": [{ value: "current", label: "按比例高分辨率" }],
+  "gpt-image-2.5": image25ResolutionOptions,
+  "gpt-image-2.5-flare": image25ResolutionOptions,
+  "gpt-image-2.5-sunburst": image25ResolutionOptions,
   "doubao-seedream-5-0-pro-260628": [{ value: "2K", label: "2K · 当前最大" }],
   mj_fast_imagine: [{ value: "current", label: "MJ 模型控制" }]
 });
@@ -158,12 +168,19 @@ function image2ModelForNode(node) { return image2Models.some(item => item.id ===
 function image2ModelLabel(modelId) { return image2Models.find(item => item.id === modelId)?.label || "Image2"; }
 function image25ModelForNode(node) { return node?.provider === "image2" && image25ModelIds.includes(image2ModelForNode(node)); }
 function image25AdvancedQualityForNode(node) { return node?.provider === "image2" && image25AdvancedModelIds.includes(image2ModelForNode(node)); }
+function image25ResolutionForNode(node) { return image25ResolutionOptions.some(option => option.value === node?.outputSize) ? node.outputSize : "2K"; }
+function image25ApiSize(node, resolution = image25ResolutionForNode(node)) {
+  const aspect = sizeMap[node?.aspect] ? node.aspect : fixedGeneratorSettings.aspect;
+  return image25Sizes[resolution]?.[aspect] || image25Sizes["2K"][fixedGeneratorSettings.aspect];
+}
 function generatorOutputModelId(node) { return node?.provider === "moyu" ? node.moyuModel : node?.provider === "midjourney" ? midjourneyImageModels[0].id : node?.provider === "runninghub-krea2" ? "krea2-white-marble" : image2ModelForNode(node); }
 function generatorOutputOptions(node) { return generatorOutputSizeOptions[generatorOutputModelId(node)] || generatorOutputSizeOptions.image2; }
-function generatorDefaultOutputSize(node) { return generatorOutputOptions(node).at(-1)?.value || "current"; }
+function generatorDefaultOutputSize(node) { return image25ModelForNode(node) ? "2K" : generatorOutputOptions(node).at(-1)?.value || "current"; }
 function normalizeGeneratorOutputSize(node) { const options = generatorOutputOptions(node); return options.some(option => option.value === node?.outputSize) ? node.outputSize : generatorDefaultOutputSize(node); }
+function generatorOutputOptionLabel(node, option) { return image25ModelForNode(node) ? `${option.value} · ${image25ApiSize(node, option.value).replace("x", " × ")}` : option.label; }
 function generatorApiSize(node) {
   if (node?.provider === "midjourney") return sizeMap[node?.aspect] ? node.aspect : fixedGeneratorSettings.aspect;
+  if (image25ModelForNode(node)) return image25ApiSize(node);
   if (node?.provider !== "moyu") return sizeMap[node?.aspect]?.api || sizeMap[fixedGeneratorSettings.aspect].api;
   const maximum = { "1:1": "2048x2048", "16:9": "2848x1600", "9:16": "1600x2848" };
   return maximum[node.aspect] || sizeMap[node.aspect]?.api || sizeMap[fixedGeneratorSettings.aspect].api;
@@ -592,7 +609,7 @@ function applyCompositionToLinkedPrompts(compositionId) {
   const instruction = promptCompositionInstruction(source.composition); linkedPromptsForComposition(compositionId).forEach(prompt => { prompt.content = upsertPromptCompositionInstruction(prompt.content, source.composition, prompt.compositionInstruction); prompt.compositionInstruction = instruction; });
 }
 function createGeneratorNode(x, y) {
-  return { id: uid("image2"), type: "generator", name: image2ModelLabel(image2DefaultModel), provider: "image2", image2Model: image2DefaultModel, moyuModel: seedreamImageModels[0].id, outputSize: "current", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: "auto", batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
+  return { id: uid("image2"), type: "generator", name: image2ModelLabel(image2DefaultModel), provider: "image2", image2Model: image2DefaultModel, moyuModel: seedreamImageModels[0].id, outputSize: "2K", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: "auto", batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
 const promptQuickParamOptions = Object.freeze({
   shotSize: { label: "景别", options: [["", "不指定"], ["extremeWide", "大远景，突出广阔环境与人物尺度"], ["wide", "全景，完整呈现人物动作与环境"], ["medium", "中景，人物腰部以上"], ["mediumClose", "中近景，人物胸部以上"], ["close", "近景，强调人物表情与互动"], ["closeUp", "特写，聚焦面部或关键细节"]] },
@@ -810,7 +827,7 @@ function normalizeProject(project) {
   generator.aspect = fixedGeneratorSettings.aspect;
   generator.quality = fixedGeneratorSettings.quality;
   generator.batch = fixedGeneratorSettings.batch;
-  generator.outputSize = "current";
+  generator.outputSize = "2K";
   generator.constraints = project.constraints || generator.constraints;
   const legacyImages = (project.nodes || []).filter(node => node.type === "image").map((node, index) => ({ ...node, id: node.id || uid("image"), type: "image", x: node.x ?? 70 + index * 300, y: node.y ?? 520, width: 270, height: nodeHeight("image"), source: node.source || "迁移素材", createdAt: node.createdAt || Date.now() + index }));
   migrated.nodes.push(...legacyImages, ...(project.nodes || []).filter(node => node.type === "frame"));
@@ -2739,12 +2756,13 @@ function renderGeneratorNodeHtml(node, selected, style) {
   const isMoyu = node.provider === "moyu";
   const isMidjourney = node.provider === "midjourney";
   const isRunningHubKrea2 = node.provider === "runninghub-krea2";
+  const isImage25 = image25ModelForNode(node);
   const supportsAdvancedImage25Quality = image25AdvancedQualityForNode(node);
   const qualityOptions = supportsAdvancedImage25Quality ? image25QualityOptions : image2QualityOptions;
   const outputOptions = generatorOutputOptions(node);
   const outputSize = normalizeGeneratorOutputSize(node);
   const outputSizeControl = outputOptions.length > 1
-    ? `<select class="node-select node-interactive" data-generator-field="outputSize" data-node-id="${node.id}" aria-label="输出尺寸">${outputOptions.map(option => `<option value="${option.value}"${outputSize === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`
+    ? `<select class="node-select node-interactive" data-generator-field="outputSize" data-node-id="${node.id}" aria-label="输出尺寸">${outputOptions.map(option => `<option value="${option.value}"${outputSize === option.value ? " selected" : ""}>${generatorOutputOptionLabel(node, option)}</option>`).join("")}</select>`
     : `<div class="node-static-field">${escapeHtml(outputOptions[0]?.label || "当前最大")}</div>`;
   const batchControl = isMidjourney ? `<div class="node-static-field">四宫格</div>` : `<select class="node-select node-interactive" data-generator-field="batch" data-node-id="${node.id}" aria-label="生成张数">${[1,2,3,4].map(value => `<option value="${value}"${Number(node.batch) === value ? " selected" : ""}>${value}</option>`).join("")}</select>`;
   const outputControl = isMidjourney ? `<div class="node-static-field">结果节点 U1-U4</div>` : isRunningHubKrea2 ? `<div class="node-static-field">自定义尺寸</div>` : outputSizeControl;
@@ -2760,8 +2778,8 @@ function renderGeneratorNodeHtml(node, selected, style) {
     <div class="node-field generator-provider-field"><label>生图模型</label><select class="node-select node-interactive" data-generator-field="providerModel" data-node-id="${node.id}" aria-label="生图模型">${image2Models.map(item => `<option value="${item.id}"${node.provider === "image2" && image2ModelForNode(node) === item.id ? " selected" : ""}>${item.label}</option>`).join("")}${seedreamImageModels.map(item => `<option value="${item.id}"${node.provider === "moyu" && node.moyuModel === item.id ? " selected" : ""}>豆包 · ${item.label}</option>`).join("")}${midjourneyImageModels.map(item => `<option value="${item.id}"${isMidjourney ? " selected" : ""}>Midjourney · ${item.label}</option>`).join("")}<option value="runninghub-krea2"${isRunningHubKrea2 ? " selected" : ""}>RunningHub · K2 白玉</option></select></div>
     <div class="node-field-row"><div class="node-field"><label>比例</label>${isRunningHubKrea2 ? `<div class="node-static-field">自定义</div>` : `<select class="node-select node-interactive" data-generator-field="aspect" data-node-id="${node.id}" aria-label="图像比例">${Object.keys(sizeMap).map(value => `<option value="${value}"${node.aspect === value ? " selected" : ""}>${value}</option>`).join("")}</select>`}</div>
     <div class="node-field"><label>品质</label>${isMoyu || isMidjourney || isRunningHubKrea2 ? `<div class="node-static-field">模型默认</div>` : `<select class="node-select node-interactive" data-generator-field="quality" data-node-id="${node.id}" aria-label="图像品质">${qualityOptions.map(option => `<option value="${option.value}"${node.quality === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`}</div>
-    <div class="node-field"><label>${isMidjourney ? "候选图" : "张数"}</label>${batchControl}</div>
-    <div class="node-field"><label>${isMidjourney ? "单图输出" : "输出尺寸"}</label>${outputControl}</div></div>${krea2SizeControl}
+    <div class="node-field${isImage25 ? " generator-batch-field" : ""}"><label>${isMidjourney ? "候选图" : "张数"}</label>${batchControl}</div>
+    <div class="node-field${isImage25 ? " generator-resolution-field" : ""}"><label>${isMidjourney ? "单图输出" : "输出尺寸"}</label>${outputControl}</div></div>${krea2SizeControl}
     <div class="generator-inputs">${promptSlots}${slots}</div><div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-input="${node.id}"${node.inputSlots >= generatorReferenceLimit(node) ? " disabled" : ""}>${icon("image-plus")} 添加图片输入</button></div>
     <button class="run-node-button node-interactive${canCancel ? " is-cancel" : ""}" type="button" data-run-node="${node.id}"${isRunning && !canCancel ? " disabled" : ""}>${icon(canCancel ? "square" : isRunning ? "loader-circle" : "play")} ${escapeHtml(runLabel)}</button>
     <div class="node-run-state"><span>${escapeHtml(provider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}">${statusLabel}</span></div>

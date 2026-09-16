@@ -576,6 +576,8 @@ html[data-edge-motion="static"] .script-relationship-edge { animation: none; fil
 .generator-body { padding: 10px 12px; }
 .node-field-row { gap: 7px; margin-bottom: 8px; }
 .node-field { min-width: 0; flex: 1; }
+.generator-body .generator-batch-field { flex: .62; }
+.generator-body .generator-resolution-field { flex: 1.75; }
 .node-field label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 8px; font-weight: 700; }
 .generator-provider-field { margin-bottom: 8px; }
 .node-static-field { display: flex; min-height: 30px; align-items: center; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 10px; background: var(--surface-soft); }
