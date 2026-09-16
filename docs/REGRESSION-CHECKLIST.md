@@ -11,4 +11,4 @@
 7. 关闭后重新打开项目，画布位置、节点、连线、对话和生成结果仍可恢复。
 8. 成片预览节点上传或拖入本地视频后，连接 H3“参考视频”应把实际 `/api/video-assets/` 路径写入生成请求；不得因循环保护误判为空来源。
 9. K2 白玉生成任务进入排队或运行状态后，节点按钮应显示“停止 K2 白玉”且可点击；取消后远端任务停止、生成中占位图移除，既有结果和提示词保持不变。
-10. 新建 Image2 节点默认使用 GPT Image 2.5 Sunburst；可切换到 GPT Image 2.5、Flare、Sunburst 和 GPT Image 2，模型名称不显示冗余产品前缀。2.5 节点保留原 Image2 的五档比例，Flare 与 Sunburst 显示 `auto` 至 `max` 品质，基础 GPT Image 2.5 和旧 GPT Image 2 仅显示低、中、高品质。
+10. 新建 Image2 节点默认使用 GPT Image 2.5 Sunburst；可切换到 GPT Image 2.5、Flare、Sunburst 和 GPT Image 2，模型名称不显示冗余产品前缀。2.5 节点保留原 Image2 的五档比例，`1:1`、`3:4`、`4:3`、`16:9`、`9:16` 分别提交对应有效尺寸；Flare 与 Sunburst 显示 `auto` 至 `max` 品质，基础 GPT Image 2.5 和旧 GPT Image 2 仅显示低、中、高品质。浏览器代码更新而本机服务未重启时，2.5 生成必须显示重启提示且不创建任务。

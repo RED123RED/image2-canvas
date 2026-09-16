@@ -34,6 +34,7 @@ const image2Models = Object.freeze([
 ]);
 const image25Models = Object.freeze(image2Models.filter(value => value.startsWith("gpt-image-2.5")));
 const image25AdvancedModels = Object.freeze(["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]);
+const image25SizeProtocol = "image2-size-v2";
 const model = image2Models.includes(process.env.IMAGE2_MODEL) ? process.env.IMAGE2_MODEL : "gpt-image-2.5-sunburst";
 const image25Qualities = Object.freeze(["low", "medium", "high", "xhigh", "max", "auto"]);
 function validImage25Size(value) {
@@ -1827,7 +1828,7 @@ const server = http.createServer(async (req, res) => {
     const deepseekKey = await resolveDeepseekApiKey(req);
     const claudeKey = await resolveClaudeApiKey(req);
     const kimiKey = await resolveKimiApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, baseUrl, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);

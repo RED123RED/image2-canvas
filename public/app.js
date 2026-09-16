@@ -25,6 +25,7 @@ const image2Models = Object.freeze([
 const image2DefaultModel = "gpt-image-2.5-sunburst";
 const image25ModelIds = Object.freeze(image2Models.filter(item => item.id.startsWith("gpt-image-2.5")).map(item => item.id));
 const image25AdvancedModelIds = Object.freeze(["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]);
+const image25SizeProtocol = "image2-size-v2";
 const image2QualityOptions = Object.freeze([
   { value: "low", label: "快速" },
   { value: "medium", label: "标准" },
@@ -3934,6 +3935,13 @@ async function runGeneratorNode(nodeId) {
   const usesMoyu = generator.provider === "moyu";
   const usesProviderKey = usesMoyu || generator.provider === "midjourney" || generator.provider === "runninghub-krea2";
   if (!usesProviderKey && !$("#apiState").classList.contains("is-ready") && !apiKey) { openSettings(); return toast("请先连接 Image2 API", true); }
+  if (image25ModelForNode(generator)) {
+    try {
+      const headers = apiKey ? { "x-image2-api-key": apiKey } : {};
+      const status = await requestJson("/api/status", { headers }, 10_000);
+      if (status.image25SizeProtocol !== image25SizeProtocol) return toast("本机生图服务需要重启，重启后才能按所选比例生成 Image 2.5 图片", true);
+    } catch { return toast("本机服务不可用，无法确认 Image 2.5 比例支持", true); }
+  }
   if (generator.provider === "midjourney") {
     try {
       const status = await requestJson("/api/status", {}, 10_000);
