@@ -700,6 +700,14 @@ function extensionForMime(mime = "") {
   return "png";
 }
 
+function imageMimeFromBuffer(buffer, fallbackMime = "image/png") {
+  if (!Buffer.isBuffer(buffer)) return fallbackMime;
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg";
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  return fallbackMime;
+}
+
 function extensionForOutputType(outputType = "") {
   const value = String(outputType || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   return ["mp4", "webm", "mov", "png", "jpg", "jpeg", "webp", "gif"].includes(value) ? value : "bin";
@@ -777,10 +785,11 @@ async function persistGeneratedImage(job, item, index) {
   else if (item?.url) image = await fetchResultImage(item.url);
   else throw new Error("接口响应中没有可用图片数据");
   if (!image.buffer.length) throw new Error("接口返回的图片为空");
-  const extension = extensionForMime(image.mime);
+  const mime = imageMimeFromBuffer(image.buffer, image.mime);
+  const extension = extensionForMime(mime);
   const filename = `${job.id}-${index + 1}.${extension}`;
   await fs.writeFile(path.join(generatedDir, filename), image.buffer);
-  const dimensions = imageDimensions(image.buffer, image.mime);
+  const dimensions = imageDimensions(image.buffer, mime);
   return { url: `/api/generated/${filename}`, revisedPrompt: item.revised_prompt || "", width: dimensions.width, height: dimensions.height, outputType: extension };
 }
 
