@@ -33,9 +33,15 @@ const image2Models = Object.freeze([
   "gpt-image-2.5-sunburst"
 ]);
 const image25Models = Object.freeze(image2Models.filter(value => value.startsWith("gpt-image-2.5")));
+const image25AdvancedModels = Object.freeze(["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]);
 const model = image2Models.includes(process.env.IMAGE2_MODEL) ? process.env.IMAGE2_MODEL : "gpt-image-2.5-sunburst";
-const image25Sizes = Object.freeze(["1024x1024", "1536x1024", "1024x1536"]);
 const image25Qualities = Object.freeze(["low", "medium", "high", "xhigh", "max", "auto"]);
+function validImage25Size(value) {
+  const match = /^(\d{3,4})x(\d{3,4})$/.exec(String(value || ""));
+  if (!match) return false;
+  const width = Number(match[1]); const height = Number(match[2]); const pixels = width * height; const ratio = width / height;
+  return width % 16 === 0 && height % 16 === 0 && width <= 3840 && height <= 3840 && pixels >= 655_360 && pixels <= 8_294_400 && ratio >= 1 / 3 && ratio <= 3;
+}
 const deepseekBaseUrl = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/$/, "");
 const deepseekFlashModel = "deepseek-flash";
 const deepseekModels = Object.freeze([deepseekFlashModel, "deepseek-v4-pro"]);
@@ -1214,11 +1220,12 @@ async function createJob(req, res) {
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
     const selectedImage2Model = image2Models.includes(String(body.model || "")) ? String(body.model) : model;
     const usesImage25 = image25Models.includes(selectedImage2Model);
-    const qualityOptions = usesImage25 ? image25Qualities : ["low", "medium", "high"];
-    const quality = qualityOptions.includes(body.quality) ? body.quality : usesImage25 ? "auto" : "high";
+    const supportsAdvancedImage25Quality = image25AdvancedModels.includes(selectedImage2Model);
+    const qualityOptions = supportsAdvancedImage25Quality ? image25Qualities : ["low", "medium", "high"];
+    const quality = qualityOptions.includes(body.quality) ? body.quality : supportsAdvancedImage25Quality ? "auto" : "high";
     const requestedSize = String(body.size || "");
     const size = usesImage25
-      ? (image25Sizes.includes(requestedSize) ? requestedSize : "1024x1024")
+      ? (validImage25Size(requestedSize) ? requestedSize : "1024x1024")
       : (/^\d{3,4}x\d{3,4}$/.test(requestedSize) ? requestedSize : "1024x1024");
     const aspect = /^(?:1:1|3:4|4:3|16:9|9:16)$/.test(String(body.aspect || "")) ? String(body.aspect) : "1:1";
     const selectedModel = isMj ? mjFastModel : usesSeedream ? normalizeSeedreamModel(body.model) : selectedImage2Model;

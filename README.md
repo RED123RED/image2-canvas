@@ -20,7 +20,7 @@ npm start
 
 - 提示词模块：编写和复用画面描述，输出紫色 `Prompt` 端口。
 - 图像模块：导入 PNG、JPG 或 WebP，输出绿色 `Image` 端口。
-- Image2 模块：接收一条提示词和最多 8 张参考图，可选择 GPT Image 2、GPT Image 2.5、GPT Image 2.5 Flare 或 GPT Image 2.5 Sunburst。2.5 模型提供 `1024 × 1024`、`1536 × 1024` 和 `1024 × 1536` 三种正式尺寸预设，并支持 `auto` 至 `max` 品质。
+- Image2 模块：接收一条提示词和最多 8 张参考图，可选择 GPT Image 2、GPT Image 2.5、GPT Image 2.5 Flare 或 GPT Image 2.5 Sunburst。2.5 模型沿用 Image2 的五档比例，并按比例提交有效高分辨率尺寸；Flare 与 Sunburst 支持 `auto` 至 `max` 品质，基础 GPT Image 2.5 仅提供已确认兼容的低、中、高品质。
 - 模型回答模块：接收最多 6 条提示词和最多 8 张参考图，可选 GPT-5.5 或 GPT-5.6 系列并显示文本回答。
 - 结果模块：生成完成后自动出现在模型右侧，并保留模型到结果的连接。
 - 连线：从输出端口拖到同类型输入端口；一个输入端口只保留一条连接，重新连接会替换旧来源。
