@@ -602,7 +602,7 @@ html[data-edge-motion="static"] .script-relationship-edge { animation: none; fil
 .generator-add-inputs, .answer-add-inputs { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: -2px; }
 .generator-add-inputs .add-input-button, .answer-add-inputs .add-input-button { padding-inline: 2px; }
 .answer-node .run-node-button { flex: 0 0 auto; }
-.answer-body > .answer-skill-field, .answer-body > .answer-h3-settings, .answer-body > .field-note, .answer-body > .answer-add-inputs, .answer-body > .run-node-button { flex: 0 0 auto; }
+.answer-body > .answer-skill-field, .answer-body > .answer-h3-settings, .answer-body > .answer-ad-skill-settings, .answer-body > .field-note, .answer-body > .answer-add-inputs, .answer-body > .run-node-button { flex: 0 0 auto; }
 .answer-response-wrap { display: flex; min-height: 72px; flex: 1 1 auto; flex-direction: column; }
 .answer-response-heading { display: flex; height: 21px; align-items: center; justify-content: space-between; color: var(--muted); font-size: 9px; font-weight: 700; }
 .answer-response-actions { display: inline-flex; align-items: center; gap: 8px; }

@@ -1726,7 +1726,9 @@ function removeNuyoahSignature(value) {
     .trim();
 }
 
-function minimalistProductAdSystemInstruction() {
+function minimalistProductAdSystemInstruction(durationSeconds) {
+  const duration = Math.min(15, Math.max(3, Math.round(Number(durationSeconds) || 10)));
+  const beats = duration <= 4 ? "2 至 3" : duration <= 6 ? "3 至 4" : duration <= 9 ? "4 至 6" : duration <= 12 ? "5 至 7" : "6 至 9";
   return `你是“极简产品广告生成器”。当前画布节点只能输出文字提示词和策划，不能实际生成图片、视频、音乐或成片；不得声称任何媒体已生成、上传或验证。
 
 把用户需求和连接的产品参考图转化为可执行的极简产品广告提示词包。只把用户明确说明或当前参考图可见的内容写成产品事实；不得虚构品牌名称、认证、参数、价格、材质、功能、商标或效果。参考图不足以确认的信息应标为“待确认”，但仍可围绕用户提供的需求完成概念性创作。把参考图视为产品外观、颜色、结构和包装的依据，不重绘或臆造其中的品牌标识。
@@ -1738,10 +1740,12 @@ function minimalistProductAdSystemInstruction() {
 三张产品锚点图提示词
 H3 成片提示词
 
-“产品事实摘要”简洁列出可确认内容和待确认内容。“创意主线”给出短片节奏、场景、镜头语言和适合的画幅/时长建议，若用户已指定则严格遵从。“英文广告文案”只给出一句克制、可在画面中显示的英文短句；没有可靠品牌名时不要自创品牌名。“三张产品锚点图提示词”必须是三条相互独立、可用于生图的英文产品静物提示词，统一产品外观、光线、背景和色调，但分别承担开场、细节和收束镜头。“H3 成片提示词”必须是一段可直接交给 MiniMax H3 的英文提示词，描述镜头顺序、产品外观、构图、光线、动作、镜头运动、转场和原生音频；如用户没有指定，建议 15 秒竖版 9:16。H3 提示词不使用未证实的产品卖点、商标或文字。`;
+“产品事实摘要”简洁列出可确认内容和待确认内容。“创意主线”必须围绕 ${duration} 秒、${beats} 个镜头节拍给出场景、镜头语言和节奏，不另行建议时长。“英文广告文案”只给出一句克制、可在画面中显示的英文短句；没有可靠品牌名时不要自创品牌名。“三张产品锚点图提示词”必须是三条相互独立、可用于生图的英文产品静物提示词，统一产品外观、光线、背景和色调，但分别承担开场、细节和收束镜头。“H3 成片提示词”必须是一段可直接交给 MiniMax H3 的英文提示词，明确总时长为 ${duration} 秒，描述镜头顺序、产品外观、构图、光线、动作、镜头运动、转场和原生音频。H3 提示词不使用未证实的产品卖点、商标或文字。`;
 }
 
-function brandPromoVideoSystemInstruction() {
+function brandPromoVideoSystemInstruction(durationSeconds) {
+  const duration = Math.min(15, Math.max(3, Math.round(Number(durationSeconds) || 15)));
+  const beats = duration <= 4 ? "2 至 3" : duration <= 7 ? "3 至 5" : duration <= 10 ? "4 至 6" : duration <= 12 ? "5 至 7" : "5 至 8";
   return `你是“品牌宣传短片生成器”。当前画布节点只能输出文字提示词和前期策划，不能实际联网核验素材、生成图片/视频/音频、剪辑或交付成片；不得声称已完成这些操作。
 
 把用户需求和连接的品牌图片、产品图或界面截图转化为一份可执行的品牌宣传短片提示词包。仅把用户明确提供或当前参考图可见的信息写成品牌事实；不要猜测公司背景、产品功能、数据、奖项、价格、商标、网址、口号或任何营销承诺。品牌标识、界面和产品外观必须以参考素材为准，不得重绘或臆造。缺少关键信息时把它标为“待确认”，同时基于已给内容继续生成概念性方案。
@@ -1752,7 +1756,7 @@ function brandPromoVideoSystemInstruction() {
 画面文案与 CTA
 H3 成片提示词
 
-“品牌事实与待确认项”区分可确认素材与缺失信息。“传播主线与分镜”按时间顺序给出 5 至 8 个镜头节拍，包含每段的画面主体、动作、品牌或产品依据、转场和节奏；若用户指定时长或比例则严格遵从，否则建议 15 秒竖版 9:16。“画面文案与 CTA”只使用用户提供或明确授权的品牌/产品名称；没有可靠名称时提供不含虚构品牌名的概念文案。“H3 成片提示词”必须是一段可直接交给 MiniMax H3 的英文提示词，包含镜头顺序、真实参考素材的角色、构图、光线、镜头运动、转场、音效和音乐方向；不得添加未经证实的品牌事实、视觉标识或营销承诺。`;
+“品牌事实与待确认项”区分可确认素材与缺失信息。“传播主线与分镜”必须围绕 ${duration} 秒、${beats} 个镜头节拍，按时间顺序给出每段的画面主体、动作、品牌或产品依据、转场和节奏；不另行建议时长。“画面文案与 CTA”只使用用户提供或明确授权的品牌/产品名称；没有可靠名称时提供不含虚构品牌名的概念文案。“H3 成片提示词”必须是一段可直接交给 MiniMax H3 的英文提示词，明确总时长为 ${duration} 秒，包含镜头顺序、真实参考素材的角色、构图、光线、镜头运动、转场、音效和音乐方向；不得添加未经证实的品牌事实、视觉标识或营销承诺。`;
 }
 
 function h3PromptSystemInstruction(mode, durationSeconds) {
@@ -1792,6 +1796,7 @@ async function createResponse(req, res) {
     if (usingNuyoahSkill && !references.length) return sendJson(res, 400, { error: "南鸢图片反推需要至少一张参考图" });
     const h3Mode = ["t2va", "i2va", "l2va", "fl2va", "ref2va"].includes(body.h3Mode) ? body.h3Mode : "t2va";
     const durationSeconds = Math.min(15, Math.max(3, Math.round(Number(body.durationSeconds) || 6)));
+    const adDurationSeconds = Math.min(15, Math.max(3, Math.round(Number(body.adDurationSeconds) || (usingMinimalistProductAdSkill ? 10 : 15))));
     const content = [{ type: "text", text: prompt }];
     references.forEach(url => content.push({ type: "image_url", image_url: isKimi ? { url } : { url, detail: "auto" } }));
     if (isClaude) {
@@ -1803,8 +1808,8 @@ async function createResponse(req, res) {
       };
       if (usingH3Skill) claudeRequestBody.system = h3PromptSystemInstruction(h3Mode, durationSeconds);
       else if (usingNuyoahSkill) claudeRequestBody.system = nuyoahReverseSystemInstruction(body.referenceMetadata, references.length);
-      else if (usingMinimalistProductAdSkill) claudeRequestBody.system = minimalistProductAdSystemInstruction();
-      else if (usingBrandPromoVideoSkill) claudeRequestBody.system = brandPromoVideoSystemInstruction();
+      else if (usingMinimalistProductAdSkill) claudeRequestBody.system = minimalistProductAdSystemInstruction(adDurationSeconds);
+      else if (usingBrandPromoVideoSkill) claudeRequestBody.system = brandPromoVideoSystemInstruction(adDurationSeconds);
       const claudeResponse = await fetch(`${claudeBaseUrl}/messages`, {
         method: "POST",
         headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", Accept: "application/json", "Content-Type": "application/json" },
@@ -1819,7 +1824,7 @@ async function createResponse(req, res) {
       if (!answer) throw gatewayError(502, "Claude 接口没有返回可显示的文本回答");
       return sendJson(res, 200, { answer, model: textModel, provider: "claude", references: references.length, skill: answerSkill, h3Mode: usingH3Skill ? h3Mode : undefined });
     }
-    const skillSystemInstruction = usingH3Skill ? h3PromptSystemInstruction(h3Mode, durationSeconds) : usingNuyoahSkill ? nuyoahReverseSystemInstruction(body.referenceMetadata, references.length) : usingMinimalistProductAdSkill ? minimalistProductAdSystemInstruction() : usingBrandPromoVideoSkill ? brandPromoVideoSystemInstruction() : "";
+    const skillSystemInstruction = usingH3Skill ? h3PromptSystemInstruction(h3Mode, durationSeconds) : usingNuyoahSkill ? nuyoahReverseSystemInstruction(body.referenceMetadata, references.length) : usingMinimalistProductAdSkill ? minimalistProductAdSystemInstruction(adDurationSeconds) : usingBrandPromoVideoSkill ? brandPromoVideoSystemInstruction(adDurationSeconds) : "";
     const messages = skillSystemInstruction
       ? [{ role: "system", content: skillSystemInstruction }, { role: "user", content }]
       : [{ role: "user", content: isDeepseek && !references.length ? prompt : content }];
