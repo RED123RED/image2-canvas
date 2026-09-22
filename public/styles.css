@@ -1210,8 +1210,16 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .prompt-reference-thumb figcaption { position: absolute; right: 2px; bottom: 1px; min-width: 13px; border-radius: 3px; background: rgba(0, 0, 0, .62); color: #fff; font-size: 8px; line-height: 13px; text-align: center; }
 .prompt-work-area { display: grid; min-height: 0; min-width: 0; grid-template-columns: minmax(0, 1fr) 128px; gap: 8px; }
 .prompt-work-area.is-quick-hidden { grid-template-columns: minmax(0, 1fr); }
-.prompt-editor { min-width: 0; min-height: 0; display: flex; }
-.prompt-editor .node-textarea { width: 100%; height: 100%; min-height: 0; resize: none; }
+.prompt-editor { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 5px; }
+.prompt-format-toolbar { display: flex; height: 26px; flex: 0 0 26px; align-items: center; gap: 7px; padding: 0 2px; color: var(--muted); font-size: 9px; }
+.prompt-format-toolbar label { display: inline-flex; height: 24px; align-items: center; gap: 4px; }
+.prompt-format-toolbar span { font-size: 9px; }
+.prompt-format-color input { width: 24px; height: 22px; padding: 1px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-soft); cursor: pointer; }
+.prompt-format-size select { width: 58px; height: 24px; padding: 0 5px; font-size: 10px; }
+.prompt-content-editor { width: 100%; height: 100%; min-height: 0; flex: 1 1 auto; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; }
+.prompt-content-editor:empty::before { color: var(--muted); content: attr(data-placeholder); pointer-events: none; }
+.prompt-content-editor:focus { border-color: var(--edge-prompt); }
+.prompt-content-editor span { white-space: inherit; }
 .prompt-quick-toolbar { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 2px 2px 4px; border-left: 1px solid var(--line); }
 .prompt-quick-heading { margin: 0 2px 5px; color: var(--muted); font-size: 9px; font-weight: 600; }
 .prompt-quick-heading { display: flex; align-items: center; justify-content: space-between; gap: 4px; }

@@ -456,6 +456,31 @@ function uid(prefix = "item") {
 function escapeHtml(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 }
+function promptMarkupFromPlainText(value) {
+  return escapeHtml(String(value ?? "").replace(/\r\n?/g, "\n")).replace(/\n/g, "<br>");
+}
+function sanitizePromptMarkup(markup, fallback = "") {
+  const source = String(markup || "").trim();
+  if (!source) return promptMarkupFromPlainText(fallback);
+  const root = new DOMParser().parseFromString(`<div>${source}</div>`, "text/html").body.firstElementChild;
+  if (!root) return promptMarkupFromPlainText(fallback);
+  const serialize = node => {
+    if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.nodeValue || "");
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    const tag = node.tagName.toLowerCase();
+    if (tag === "br") return "<br>";
+    const inner = [...node.childNodes].map(serialize).join("");
+    if (tag === "div" || tag === "p") return `${inner}${inner && !inner.endsWith("<br>") ? "<br>" : ""}`;
+    if (tag !== "span") return inner;
+    const styles = [];
+    const color = String(node.style.color || "").trim();
+    const fontSize = String(node.style.fontSize || "").trim();
+    if (/^(#[0-9a-f]{3,8}|rgb\([^)]{1,32}\)|rgba\([^)]{1,40}\)|hsl\([^)]{1,40}\)|hsla\([^)]{1,48}\))$/i.test(color)) styles.push(`color:${color}`);
+    if (/^\d{1,3}px$/.test(fontSize)) styles.push(`font-size:${fontSize}`);
+    return styles.length ? `<span style="${styles.join(";")}">${inner}</span>` : inner;
+  };
+  return serialize(root).replace(/(?:<br>)+$/i, "");
+}
 function icon(name) { return `<i data-lucide="${name}" aria-hidden="true"></i>`; }
 function refreshIcons() { if (window.lucide) window.lucide.createIcons({ attrs: { "stroke-width": 1.8 } }); }
 function shortLabel(value, max = 18) {
@@ -610,7 +635,7 @@ function linkedPromptsForComposition(compositionId) {
 }
 function applyCompositionToLinkedPrompts(compositionId) {
   const source = findNode(compositionId); if (!source || source.type !== "composition") return;
-  const instruction = promptCompositionInstruction(source.composition); linkedPromptsForComposition(compositionId).forEach(prompt => { prompt.content = upsertPromptCompositionInstruction(prompt.content, source.composition, prompt.compositionInstruction); prompt.compositionInstruction = instruction; });
+  const instruction = promptCompositionInstruction(source.composition); linkedPromptsForComposition(compositionId).forEach(prompt => { prompt.content = upsertPromptCompositionInstruction(prompt.content, source.composition, prompt.compositionInstruction); prompt.contentMarkup = promptMarkupFromPlainText(prompt.content); prompt.compositionInstruction = instruction; });
 }
 function createGeneratorNode(x, y) {
   return { id: uid("image2"), type: "generator", name: image2ModelLabel(image2DefaultModel), provider: "image2", image2Model: image2DefaultModel, moyuModel: seedreamImageModels[0].id, outputSize: "2K", x, y, width: 360, promptSlots: 1, inputSlots: 4, height: nodeHeight("generator", 4, 1), aspect: fixedGeneratorSettings.aspect, quality: "auto", batch: fixedGeneratorSettings.batch, constraints: "不要水印，不要多余文字，不要畸形手指", status: "idle", lastResultIds: [], createdAt: Date.now() };
@@ -815,7 +840,7 @@ function normalizeProject(project) {
       if (node.type === "image") return { ...node, x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: node.width || 270, height: node.height || nodeHeight("image"), disabled: Boolean(node.disabled) };
   if (node.type === "video") return { ...node, mediaType: "video", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || 322), outputType: node.outputType || "mp4", status: "idle" };
   if (node.type === "loading") return { ...node, mediaType: node.mediaType === "video" ? "video" : "image", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || nodeHeight("loading")) };
-      if (node.type === "prompt") { const width = node.width || 320; const height = Math.max(Number(node.height) || 0, nodeHeight("prompt")); return { ...node, width, height, content: stripPromptQuickMarkers(stripPromptCompositionMarkers(node.content)), promptPresetId: String(node.promptPresetId || ""), promptQuickParams: normalizePromptQuickParams(node.promptQuickParams), promptQuickInstruction: String(node.promptQuickInstruction || ""), promptQuickControlsVisible: node.promptQuickControlsVisible !== false, compositionInstruction: String(node.compositionInstruction || ""), composition: normalizePromptComposition(node.composition), promptLayout: normalizePromptLayout(node.promptLayout, width, height), disabled: Boolean(node.disabled) }; }
+      if (node.type === "prompt") { const width = node.width || 320; const height = Math.max(Number(node.height) || 0, nodeHeight("prompt")); const content = stripPromptQuickMarkers(stripPromptCompositionMarkers(node.content)); return { ...node, width, height, content, contentMarkup: sanitizePromptMarkup(node.contentMarkup, content), promptPresetId: String(node.promptPresetId || ""), promptQuickParams: normalizePromptQuickParams(node.promptQuickParams), promptQuickInstruction: String(node.promptQuickInstruction || ""), promptQuickControlsVisible: node.promptQuickControlsVisible !== false, compositionInstruction: String(node.compositionInstruction || ""), composition: normalizePromptComposition(node.composition), promptLayout: normalizePromptLayout(node.promptLayout, width, height), disabled: Boolean(node.disabled) }; }
       if (node.type === "composition") return { ...node, name: node.name === "构图控制" ? "参数控制" : node.name || "参数控制", width: Math.max(300, Number(node.width) || 390), height: Math.max(320, Number(node.height) || nodeHeight("composition")), composition: normalizePromptComposition(node.composition) };
       if (node.type === "note") return { ...node, name: node.name || "便签", content: String(node.content || ""), width: Math.max(170, Number(node.width) || 260), height: Math.max(130, Number(node.height) || 190) };
       if (node.type === "frame") return { ...node, name: node.name || "工作流分组", width: node.width || 700, height: node.height || 480 };
@@ -934,7 +959,7 @@ async function renamePromptPreset(nodeId) {
 function applyPromptPreset(nodeId, presetId) {
   const node = findNode(nodeId); const preset = promptPresets.find(item => item.id === presetId);
   if (!node || node.type !== "prompt" || !preset) return;
-  recordHistory(); node.content = preset.content; node.promptPresetId = preset.id; renderCanvas(); renderInspector(); scheduleSave(); toast(`已载入提示词预设“${preset.name}”`);
+  recordHistory(); node.content = preset.content; node.contentMarkup = promptMarkupFromPlainText(preset.content); node.promptPresetId = preset.id; renderCanvas(); renderInspector(); scheduleSave(); toast(`已载入提示词预设“${preset.name}”`);
 }
 function generatedImageFilename(source) {
   try {
@@ -1066,7 +1091,7 @@ function undo() { if (!undoStack.length || isGenerating) return; redoStack.push(
 function redo() { if (!redoStack.length || isGenerating) return; undoStack.push(snapshot()); restoreSnapshot(redoStack.pop()); updateHistoryButtons(); }
 function updateHistoryButtons() { $("#undoButton").disabled = !undoStack.length || isGenerating; $("#redoButton").disabled = !redoStack.length || isGenerating; }
 function editableHistoryEligible(target) {
-  return Boolean(state && target instanceof Element && target.matches("input, textarea, select") && !target.matches('input[type="file"]') && !target.closest("#dialogueScriptDialog, #settingsDialog, #newProjectDialog"));
+  return Boolean(state && target instanceof Element && target.matches("input, textarea, select, [contenteditable=true]") && !target.matches('input[type="file"]') && !target.closest("#dialogueScriptDialog, #settingsDialog, #newProjectDialog"));
 }
 function beginEditableHistory(target) {
   if (!editableHistoryEligible(target) || editableHistorySessions.has(target)) return;
@@ -2638,15 +2663,76 @@ function promptQuickSeconds(node) {
   const params = normalizePromptQuickParams(node.promptQuickParams); const options = [["", "未指定"], ...Array.from({ length: 16 }, (_, index) => [String(index), `${index}秒`])];
   return `<div class="prompt-quick-field prompt-quick-seconds"><span>秒数</span><div>${promptQuickDropdown(node, "secondsStart", params.secondsStart, options, "开始") }<b>-</b>${promptQuickDropdown(node, "secondsEnd", params.secondsEnd, options, "结束")}</div></div>`;
 }
+function promptEditorElement(nodeId) {
+  return nodeLayer.querySelector(`[data-prompt-content="${CSS.escape(nodeId)}"]`);
+}
+function promptEditorText(editor) {
+  return String(editor?.innerText || "").replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+}
+function promptTextLength(node) {
+  if (node.nodeType === Node.TEXT_NODE) return (node.nodeValue || "").length;
+  if (node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() === "br") return 1;
+  return [...(node.childNodes || [])].reduce((total, child) => total + promptTextLength(child), 0);
+}
+function promptOffsetAt(root, target, childOffset = 0) {
+  let result = 0;
+  let found = false;
+  const visit = node => {
+    if (found) return;
+    if (node === target) {
+      if (node.nodeType === Node.TEXT_NODE) result += Math.max(0, Math.min(childOffset, (node.nodeValue || "").length));
+      else result += [...node.childNodes].slice(0, childOffset).reduce((total, child) => total + promptTextLength(child), 0);
+      found = true;
+      return;
+    }
+    if (node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() === "br") { result += 1; return; }
+    for (const child of node.childNodes || []) { visit(child); if (!found) result += promptTextLength(child); }
+  };
+  visit(root);
+  return found ? result : promptTextLength(root);
+}
+function promptSelectionOffsets(editor) {
+  const selection = window.getSelection?.(); if (!editor || !selection?.rangeCount || !editor.contains(selection.anchorNode)) return null;
+  const range = selection.getRangeAt(0); return { start: promptOffsetAt(editor, range.startContainer, range.startOffset), end: promptOffsetAt(editor, range.endContainer, range.endOffset) };
+}
+function promptTextPoint(root, offset) {
+  let remaining = Math.max(0, Number(offset) || 0); let lastText = null;
+  const visit = node => {
+    if (node.nodeType === Node.TEXT_NODE) { lastText = node; if (remaining <= (node.nodeValue || "").length) return { node, offset: remaining }; remaining -= (node.nodeValue || "").length; return null; }
+    if (node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() === "br") { if (remaining <= 1) return { node: node.parentNode, offset: [...node.parentNode.childNodes].indexOf(node) }; remaining -= 1; return null; }
+    for (const child of node.childNodes || []) { const point = visit(child); if (point) return point; }
+    return null;
+  };
+  return visit(root) || (lastText ? { node: lastText, offset: (lastText.nodeValue || "").length } : { node: root, offset: root.childNodes.length });
+}
+function setPromptSelection(editor, start, end = start) {
+  if (!editor) return false;
+  const selection = window.getSelection?.(); if (!selection) return false;
+  const range = document.createRange(); const startPoint = promptTextPoint(editor, start); const endPoint = promptTextPoint(editor, end);
+  try { range.setStart(startPoint.node, startPoint.offset); range.setEnd(endPoint.node, endPoint.offset); selection.removeAllRanges(); selection.addRange(range); editor.focus({ preventScroll: true }); return true; } catch { return false; }
+}
+function syncPromptEditorNode(editor, node) {
+  if (!editor || !node) return;
+  node.content = promptEditorText(editor); node.contentMarkup = sanitizePromptMarkup(editor.innerHTML, node.content); node.promptPresetId = "";
+}
+function updatePromptEditorAfterChange(editor, node, selection = null) {
+  syncPromptEditorNode(editor, node); if (selection) { promptQuickSelection.set(node.id, selection); setPromptSelection(editor, selection.start, selection.end); } else promptQuickSelection.delete(node.id); scheduleSave();
+}
+function applyPromptInlineStyle(nodeId, property, value) {
+  const node = findNode(nodeId); const editor = promptEditorElement(nodeId); const selection = promptQuickRememberedSelection(nodeId); if (!node || node.type !== "prompt" || !editor || !selection || selection.start === selection.end) return toast("请先选择要调整的文字", true);
+  const before = snapshot(); if (!setPromptSelection(editor, selection.start, selection.end)) return;
+  const current = window.getSelection(); if (!current?.rangeCount) return;
+  const range = current.getRangeAt(0); const wrapper = document.createElement("span"); wrapper.style[property] = value; wrapper.append(range.extractContents()); range.insertNode(wrapper);
+  const nextSelection = { start: selection.start, end: selection.start + promptTextLength(wrapper) }; updatePromptEditorAfterChange(editor, node, nextSelection); undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = [];
+}
 function insertPromptReferenceToken(nodeId, index) {
   const node = findNode(nodeId); if (!node || node.type !== "prompt") return;
-  const textarea = nodeLayer.querySelector(`[data-prompt-content="${CSS.escape(nodeId)}"]`); const value = String(node.content || ""); const selection = promptQuickRememberedSelection(nodeId); const start = Math.max(0, Math.min(value.length, Number(selection.start) || 0)); const end = Math.max(start, Math.min(value.length, Number(selection.end) || start)); const token = `图${Number(index) + 1}；\n`; node.content = `${value.slice(0, start)}${token}${value.slice(end)}`;
-  if (textarea) { textarea.value = node.content; const caret = start + token.length; textarea.focus({ preventScroll: true }); textarea.setSelectionRange(caret, caret); }
-  node.promptPresetId = ""; scheduleSave();
+  const editor = promptEditorElement(nodeId); const value = String(node.content || ""); const selection = promptQuickRememberedSelection(nodeId); const start = Math.max(0, Math.min(value.length, Number(selection.start) || 0)); const end = Math.max(start, Math.min(value.length, Number(selection.end) || start)); const token = `图${Number(index) + 1}；\n`;
+  if (editor && setPromptSelection(editor, start, end)) { document.execCommand("insertText", false, token); updatePromptEditorAfterChange(editor, node); } else { node.content = `${value.slice(0, start)}${token}${value.slice(end)}`; node.contentMarkup = promptMarkupFromPlainText(node.content); node.promptPresetId = ""; scheduleSave(); }
 }
 function promptQuickCurrentSelection(nodeId) {
-  const textarea = nodeLayer.querySelector(`[data-prompt-content="${CSS.escape(nodeId)}"]`); if (!textarea || document.activeElement !== textarea) return { start: String(textarea?.value || "").length, end: String(textarea?.value || "").length };
-  return { start: Number(textarea.selectionStart) || 0, end: Number(textarea.selectionEnd) || 0 };
+  const editor = promptEditorElement(nodeId); const selection = promptSelectionOffsets(editor); if (selection) return selection;
+  const value = String(findNode(nodeId)?.content || ""); return { start: value.length, end: value.length };
 }
 function rememberPromptQuickSelection(nodeId) {
   promptQuickSelection.set(nodeId, promptQuickCurrentSelection(nodeId));
@@ -2656,9 +2742,8 @@ function promptQuickRememberedSelection(nodeId) {
 }
 function insertPromptQuickText(node, text, range = null) {
   if (!node || node.type !== "prompt" || !String(text || "")) return;
-  const textarea = nodeLayer.querySelector(`[data-prompt-content="${CSS.escape(node.id)}"]`); const value = String(node.content || ""); const selection = range || promptQuickRememberedSelection(node.id); const start = Math.max(0, Math.min(value.length, Number(selection.start) || 0)); const end = Math.max(start, Math.min(value.length, Number(selection.end) || start)); node.content = `${value.slice(0, start)}${text}${value.slice(end)}`;
-  if (textarea) { textarea.value = node.content; const caret = start + String(text).length; textarea.focus({ preventScroll: true }); textarea.setSelectionRange(caret, caret); }
-  node.promptPresetId = ""; promptQuickSelection.delete(node.id);
+  const editor = promptEditorElement(node.id); const value = String(node.content || ""); const selection = range || promptQuickRememberedSelection(node.id); const start = Math.max(0, Math.min(value.length, Number(selection.start) || 0)); const end = Math.max(start, Math.min(value.length, Number(selection.end) || start));
+  if (editor && setPromptSelection(editor, start, end)) { document.execCommand("insertText", false, text); updatePromptEditorAfterChange(editor, node); } else { node.content = `${value.slice(0, start)}${text}${value.slice(end)}`; node.contentMarkup = promptMarkupFromPlainText(node.content); node.promptPresetId = ""; promptQuickSelection.delete(node.id); }
 }
 function promptQuickLabel(field, value) {
   return promptQuickParamOptions[field]?.options.find(([id]) => id === value)?.[1] || "";
@@ -2682,12 +2767,13 @@ function applyPromptQuickField(control, value) {
 function renderPromptNodeHtml(node, selected, style) {
   const disabled = Boolean(node.disabled); const toggleLabel = disabled ? "启用提示词节点" : "禁用提示词节点";
   const quickControlsVisible = node.promptQuickControlsVisible !== false; const quickToggleLabel = quickControlsVisible ? "隐藏快捷镜头" : "显示快捷镜头";
+  const promptFormatToolbar = `<div class="prompt-format-toolbar" role="toolbar" aria-label="提示词文字样式"><label class="prompt-format-color" title="选中文字颜色"><span>颜色</span><input type="color" data-prompt-format-color="${node.id}" value="#dce7ed" aria-label="选中文字颜色"></label><label class="prompt-format-size" title="选中文字字号"><span>字号</span><select class="node-select node-interactive" data-prompt-format-size="${node.id}" aria-label="选中文字字号"><option value="12px">12</option><option value="14px">14</option><option value="16px">16</option><option value="18px">18</option><option value="20px">20</option><option value="24px">24</option><option value="28px">28</option><option value="32px">32</option></select></label></div>`;
   const toggle = '<button class="icon-button prompt-toggle node-interactive' + (disabled ? ' is-disabled' : '') + '" type="button" data-toggle-prompt="' + node.id + '" aria-label="' + toggleLabel + '" title="' + toggleLabel + '">' + icon(disabled ? "power" : "ban") + '</button><button class="icon-button prompt-quick-toggle node-interactive' + (quickControlsVisible ? '' : ' is-hidden') + '" type="button" data-toggle-prompt-quick="' + node.id + '" aria-label="' + quickToggleLabel + '" title="' + quickToggleLabel + '">' + icon(quickControlsVisible ? "eye-off" : "eye") + '</button>';
   const presetOptions = '<option value="">选择提示词预设</option>' + promptPresets.map(preset => '<option value="' + escapeHtml(preset.id) + '"' + (node.promptPresetId === preset.id ? ' selected' : '') + '>' + escapeHtml(preset.name) + '</option>').join("");
   const presetActions = '<div class="prompt-preset-actions"><select class="node-select node-interactive prompt-preset-select" data-prompt-preset="' + node.id + '" aria-label="选择提示词预设">' + presetOptions + '</select><button class="button button-quiet node-interactive" type="button" data-save-prompt-preset="' + node.id + '">保存</button><button class="icon-button node-interactive" type="button" data-rename-prompt-preset="' + node.id + '" aria-label="修改预设名称" data-tooltip="修改预设名称"' + (node.promptPresetId ? '' : ' disabled') + '>' + icon("pencil") + '</button><button class="button button-quiet node-interactive danger-action" type="button" data-delete-prompt-preset="' + node.id + '"' + (node.promptPresetId ? '' : ' disabled') + '>删除</button></div>';
   const references = promptReferenceNodes(node); const referenceStrip = references.length ? `<div class="prompt-reference-strip" aria-label="已连接参考图">${references.map((reference, index) => `<figure class="prompt-reference-thumb node-interactive" data-prompt-reference-node="${node.id}" data-prompt-reference-source="${reference.id}" data-prompt-reference-index="${index}" title="单击插入图${index + 1}，双击取消链接"><img src="${escapeHtml(nodeDisplaySource(reference))}" alt="参考图 ${index + 1}" loading="lazy" decoding="async" draggable="false"><figcaption>${index + 1}</figcaption></figure>`).join("")}</div>` : '<div class="prompt-reference-strip is-empty" aria-hidden="true"></div>';
   const quickToolbar = quickControlsVisible ? `<aside class="prompt-quick-toolbar" aria-label="提示词快捷参数"><div class="prompt-quick-heading"><span>快捷镜头</span><button class="icon-button prompt-quick-heading-toggle node-interactive" type="button" data-toggle-prompt-quick="${node.id}" aria-label="${quickToggleLabel}" title="${quickToggleLabel}">${icon("eye-off")}</button></div>${promptQuickSeconds(node)}${Object.keys(promptQuickParamOptions).map(field => promptQuickSelect(node, field)).join("")}<div class="prompt-preset-toolbar">${presetActions}</div></aside>` : "";
-  return `<article class="canvas-node prompt-node${disabled ? " is-disabled" : ""}${selected}${quickControlsVisible ? "" : " is-quick-collapsed"}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "text-cursor-input", toggle, false)}<div class="node-body"><div class="prompt-reference-strip-wrap">${referenceStrip}</div><div class="prompt-work-area${quickControlsVisible ? "" : " is-quick-hidden"}"><div class="prompt-editor"><textarea class="node-textarea node-interactive" data-prompt-content="${node.id}" placeholder="写下主体、光线、材质和画面文字…">${escapeHtml(node.content || "")}</textarea></div>${quickToolbar}</div></div></div>${resizeHandleHtml(node)}${portHtml(node, "composition", "composition", "input", "参数控制", 104)}${portHtml(node, "prompt", "prompt", "output", "Prompt", 72)}</article>`;
+  return `<article class="canvas-node prompt-node${disabled ? " is-disabled" : ""}${selected}${quickControlsVisible ? "" : " is-quick-collapsed"}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "text-cursor-input", toggle, false)}<div class="node-body"><div class="prompt-reference-strip-wrap">${referenceStrip}</div><div class="prompt-work-area${quickControlsVisible ? "" : " is-quick-hidden"}"><div class="prompt-editor">${promptFormatToolbar}<div class="node-textarea prompt-content-editor node-interactive" data-prompt-content="${node.id}" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="写下主体、光线、材质和画面文字…">${sanitizePromptMarkup(node.contentMarkup, node.content || "")}</div></div>${quickToolbar}</div></div></div>${resizeHandleHtml(node)}${portHtml(node, "composition", "composition", "input", "参数控制", 104)}${portHtml(node, "prompt", "prompt", "output", "Prompt", 72)}</article>`;
 }
 function normalizeImportedIdentity(project) {
   const idMap = new Map();
@@ -2949,12 +3035,17 @@ function bindNodeEvents() {
     thumb.addEventListener("click", event => { event.stopPropagation(); if (promptReferenceClickTimer) clearTimeout(promptReferenceClickTimer); promptReferenceClickTimer = setTimeout(() => { promptReferenceClickTimer = null; insertPromptReferenceToken(thumb.dataset.promptReferenceNode, thumb.dataset.promptReferenceIndex); }, 190); });
     thumb.addEventListener("dblclick", event => { event.preventDefault(); event.stopPropagation(); if (promptReferenceClickTimer) clearTimeout(promptReferenceClickTimer); promptReferenceClickTimer = null; disconnectPromptReference(thumb.dataset.promptReferenceNode, thumb.dataset.promptReferenceSource); });
   });
-  $$('[data-prompt-content]').forEach(textarea => {
-    textarea.addEventListener("select", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
-    textarea.addEventListener("keyup", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
-    textarea.addEventListener("mouseup", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
-    textarea.addEventListener("focus", () => rememberPromptQuickSelection(textarea.dataset.promptContent));
-    textarea.addEventListener("input", event => { const node = findNode(textarea.dataset.promptContent); if (node) { node.content = event.target.value; node.promptPresetId = ""; rememberPromptQuickSelection(node.id); scheduleSave(); } });
+  $$('[data-prompt-content]').forEach(editor => {
+    ["keyup", "mouseup", "focus", "select"].forEach(eventName => editor.addEventListener(eventName, () => rememberPromptQuickSelection(editor.dataset.promptContent)));
+    editor.addEventListener("input", event => { const node = findNode(editor.dataset.promptContent); if (node) { syncPromptEditorNode(event.currentTarget, node); rememberPromptQuickSelection(node.id); scheduleSave(); } });
+  });
+  $$('[data-prompt-format-color]').forEach(control => {
+    control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptFormatColor));
+    control.addEventListener("change", event => { event.stopPropagation(); applyPromptInlineStyle(control.dataset.promptFormatColor, "color", event.target.value); });
+  });
+  $$('[data-prompt-format-size]').forEach(control => {
+    control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptFormatSize));
+    control.addEventListener("change", event => { event.stopPropagation(); applyPromptInlineStyle(control.dataset.promptFormatSize, "fontSize", event.target.value); });
   });
 $$('[data-note-content]').forEach(textarea => textarea.addEventListener("input", event => { const note = findNode(textarea.dataset.noteContent); if (note?.type === "note") { note.content = event.target.value; scheduleSave(); } }));
   $$('[data-composition-perspective]').forEach(button => button.addEventListener("click", event => {
@@ -4475,6 +4566,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
     if (clipboardShortcut && isEditable) return;
     if (clipboardShortcut && state?.flowMode === "script") { event.preventDefault(); if (event.key.toLowerCase() === "c") copyScriptSelection(); else pasteScriptSelection(); return; }
     if (clipboardShortcut && state?.flowMode !== "script") { const selection = window.getSelection(); const answerTextSelected = Boolean(selection?.toString().trim() && selection.anchorNode?.parentElement?.closest(".answer-response")); if (event.key.toLowerCase() === "c" && answerTextSelected) return; if (event.key.toLowerCase() === "c") { event.preventDefault(); copyWorkflowSelection(); } return; }
+    if (historyShortcut && target?.matches("[data-prompt-content]")) { commitEditableHistory(target); discardDialogueEditableHistory(target); event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
     if (historyShortcut && isEditable) { discardEditableHistory(target); discardDialogueEditableHistory(target); return; }
     if (historyShortcut && dialogueEditor && dialogueScriptDialog.open) { const handled = event.shiftKey || event.key.toLowerCase() === "y" ? redoDialogueDraft() : undoDialogueDraft(); if (handled) { event.preventDefault(); return; } }
     if (historyShortcut && state && !settingsDialog.open && !newProjectDialog.open) { event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
