@@ -2768,6 +2768,22 @@ function insertPromptQuickText(node, text, range = null) {
   const editor = promptEditorElement(node.id); const value = String(node.content || ""); const selection = range || promptQuickRememberedSelection(node.id); const start = Math.max(0, Math.min(value.length, Number(selection.start) || 0)); const end = Math.max(start, Math.min(value.length, Number(selection.end) || start));
   if (editor && setPromptSelection(editor, start, end)) { document.execCommand("insertText", false, text); updatePromptEditorAfterChange(editor, node); } else { node.content = `${value.slice(0, start)}${text}${value.slice(end)}`; node.contentMarkup = promptMarkupFromPlainText(node.content); node.promptPresetId = ""; promptQuickSelection.delete(node.id); }
 }
+function pastePromptPlainText(editor, event) {
+  const text = event.clipboardData?.getData("text/plain");
+  if (text == null || !editor || !text.length) return false;
+  const node = findNode(editor.dataset.promptContent); const selection = window.getSelection?.();
+  if (!node || node.type !== "prompt" || !selection?.rangeCount) return false;
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.commonAncestorContainer)) return false;
+  event.preventDefault();
+  const wrapper = document.createElement("span"); wrapper.style.color = "#ffffff";
+  const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+  lines.forEach((line, index) => { if (line) wrapper.append(document.createTextNode(line)); if (index < lines.length - 1) wrapper.append(document.createElement("br")); });
+  range.deleteContents(); range.insertNode(wrapper);
+  const caret = document.createRange(); caret.setStartAfter(wrapper); caret.collapse(true); selection.removeAllRanges(); selection.addRange(caret);
+  syncPromptEditorNode(editor, node); rememberPromptQuickSelection(node.id); rememberPromptFormatSelection(node.id); scheduleEditableHistory(editor); scheduleSave();
+  return true;
+}
 function promptQuickLabel(field, value) {
   return promptQuickParamOptions[field]?.options.find(([id]) => id === value)?.[1] || "";
 }
@@ -3060,6 +3076,7 @@ function bindNodeEvents() {
   });
   $$('[data-prompt-content]').forEach(editor => {
     ["keyup", "mouseup", "focus", "select"].forEach(eventName => editor.addEventListener(eventName, () => { rememberPromptQuickSelection(editor.dataset.promptContent); rememberPromptFormatSelection(editor.dataset.promptContent); }));
+    editor.addEventListener("paste", event => { if (pastePromptPlainText(event.currentTarget, event)) event.stopPropagation(); });
     editor.addEventListener("input", event => { const node = findNode(editor.dataset.promptContent); if (node) { syncPromptEditorNode(event.currentTarget, node); rememberPromptQuickSelection(node.id); rememberPromptFormatSelection(node.id); scheduleSave(); } });
   });
   $$('[data-prompt-format-color]').forEach(control => {
@@ -3636,7 +3653,7 @@ function renderNodeInspector(node) {
 }
 async function handleCanvasPaste(event) {
   const target = event.target instanceof Element ? event.target : null;
-  const isEditable = Boolean(target?.matches("input, textarea, select, [contenteditable=true]"));
+  const isEditable = Boolean(target?.closest("input, textarea, select, [contenteditable=true]"));
   if (!state || isEditable) return;
   const clipboardFiles = [...(event.clipboardData?.files || [])];
   const videoFiles = [...(event.clipboardData?.items || [])]
@@ -4581,7 +4598,8 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   document.addEventListener("focusout", event => { commitEditableHistory(event.target); commitDialogueEditableHistory(event.target); }, true);
   window.addEventListener("keydown", event => {
     const target = event.target instanceof Element ? event.target : null;
-    const isEditable = Boolean(target?.matches("input, textarea, select, [contenteditable=true]"));
+    const editableTarget = target?.closest("input, textarea, select, [contenteditable=true]");
+    const isEditable = Boolean(editableTarget);
     const historyShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y");
     const clipboardShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "c" || event.key.toLowerCase() === "v");
     const selectAllShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a";
@@ -4589,8 +4607,8 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
     if (clipboardShortcut && isEditable) return;
     if (clipboardShortcut && state?.flowMode === "script") { event.preventDefault(); if (event.key.toLowerCase() === "c") copyScriptSelection(); else pasteScriptSelection(); return; }
     if (clipboardShortcut && state?.flowMode !== "script") { const selection = window.getSelection(); const answerTextSelected = Boolean(selection?.toString().trim() && selection.anchorNode?.parentElement?.closest(".answer-response")); if (event.key.toLowerCase() === "c" && answerTextSelected) return; if (event.key.toLowerCase() === "c") { event.preventDefault(); copyWorkflowSelection(); } return; }
-    if (historyShortcut && target?.matches("[data-prompt-content]")) { commitEditableHistory(target); discardDialogueEditableHistory(target); event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
-    if (historyShortcut && isEditable) { discardEditableHistory(target); discardDialogueEditableHistory(target); return; }
+    if (historyShortcut && editableTarget?.matches("[data-prompt-content]")) { commitEditableHistory(editableTarget); discardDialogueEditableHistory(editableTarget); event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
+    if (historyShortcut && isEditable) { discardEditableHistory(editableTarget); discardDialogueEditableHistory(editableTarget); return; }
     if (historyShortcut && dialogueEditor && dialogueScriptDialog.open) { const handled = event.shiftKey || event.key.toLowerCase() === "y" ? redoDialogueDraft() : undoDialogueDraft(); if (handled) { event.preventDefault(); return; } }
     if (historyShortcut && state && !settingsDialog.open && !newProjectDialog.open) { event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
     if (event.key === "Escape") { closeConnectionMenu(); closeCanvasContextMenu(); connectionDraft = null; workspace.classList.remove("is-flow-interacting"); renderEdges(); scriptConnectionDraft = null; scriptFlowStage.classList.remove("is-interacting"); renderScriptEdges(); }
