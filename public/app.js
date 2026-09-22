@@ -345,6 +345,7 @@ let compositionDragSession = null;
 let promptLayoutResizeSession = null;
 let promptReferenceClickTimer = null;
 const promptQuickSelection = new Map();
+const promptFormatSelection = new Map();
 let selectedEdgeId = null;
 let crossProjectSourceProjectId = "";
 let scriptDragSession = null;
@@ -622,7 +623,7 @@ function finishHorizonCompositionDrag(event) {
   const node = findNode(session.nodeId); if (!node || node.type !== "composition") return; if (!session.moved) { if (node.composition.horizonEnabled === false) return; node.composition = normalizePromptComposition({ ...node.composition, horizonEnabled: false, horizonPending: false }); applyCompositionToLinkedPrompts(node.id); } undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; renderCanvas(); renderInspector(); updateHistoryButtons(); scheduleSave();
 }
 function createPromptNode(x, y, content = "") {
-  return { id: uid("prompt"), type: "prompt", name: "画面提示词", x, y, width: 320, height: nodeHeight("prompt"), content, promptPresetId: "", promptQuickParams: normalizePromptQuickParams(null), promptQuickInstruction: "", promptQuickControlsVisible: true, composition: { ...defaultPromptComposition }, promptLayout: normalizePromptLayout(null, 320, nodeHeight("prompt")), disabled: false, createdAt: Date.now() };
+  return { id: uid("prompt"), type: "prompt", name: "画面提示词", x, y, width: 320, height: nodeHeight("prompt"), content, promptPresetId: "", promptQuickParams: normalizePromptQuickParams(null), promptQuickInstruction: "", promptQuickControlsVisible: false, composition: { ...defaultPromptComposition }, promptLayout: normalizePromptLayout(null, 320, nodeHeight("prompt")), disabled: false, createdAt: Date.now() };
 }
 function createCompositionNode(x, y) {
   return { id: uid("composition"), type: "composition", name: "参数控制", x, y, width: 390, height: nodeHeight("composition"), composition: { ...defaultPromptComposition }, createdAt: Date.now() };
@@ -840,7 +841,7 @@ function normalizeProject(project) {
       if (node.type === "image") return { ...node, x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: node.width || 270, height: node.height || nodeHeight("image"), disabled: Boolean(node.disabled) };
   if (node.type === "video") return { ...node, mediaType: "video", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || 322), outputType: node.outputType || "mp4", status: "idle" };
   if (node.type === "loading") return { ...node, mediaType: node.mediaType === "video" ? "video" : "image", x: Number.isFinite(Number(node.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node.y)) ? Number(node.y) : 0, width: Math.max(270, Number(node.width) || 270), height: Math.max(322, Number(node.height) || nodeHeight("loading")) };
-      if (node.type === "prompt") { const width = node.width || 320; const height = Math.max(Number(node.height) || 0, nodeHeight("prompt")); const content = stripPromptQuickMarkers(stripPromptCompositionMarkers(node.content)); return { ...node, width, height, content, contentMarkup: sanitizePromptMarkup(node.contentMarkup, content), promptPresetId: String(node.promptPresetId || ""), promptQuickParams: normalizePromptQuickParams(node.promptQuickParams), promptQuickInstruction: String(node.promptQuickInstruction || ""), promptQuickControlsVisible: node.promptQuickControlsVisible !== false, compositionInstruction: String(node.compositionInstruction || ""), composition: normalizePromptComposition(node.composition), promptLayout: normalizePromptLayout(node.promptLayout, width, height), disabled: Boolean(node.disabled) }; }
+      if (node.type === "prompt") { const width = node.width || 320; const height = Math.max(Number(node.height) || 0, nodeHeight("prompt")); const content = stripPromptQuickMarkers(stripPromptCompositionMarkers(node.content)); return { ...node, width, height, content, contentMarkup: sanitizePromptMarkup(node.contentMarkup, content), promptPresetId: String(node.promptPresetId || ""), promptQuickParams: normalizePromptQuickParams(node.promptQuickParams), promptQuickInstruction: String(node.promptQuickInstruction || ""), promptQuickControlsVisible: node.promptQuickControlsVisible === true, compositionInstruction: String(node.compositionInstruction || ""), composition: normalizePromptComposition(node.composition), promptLayout: normalizePromptLayout(node.promptLayout, width, height), disabled: Boolean(node.disabled) }; }
       if (node.type === "composition") return { ...node, name: node.name === "构图控制" ? "参数控制" : node.name || "参数控制", width: Math.max(300, Number(node.width) || 390), height: Math.max(320, Number(node.height) || nodeHeight("composition")), composition: normalizePromptComposition(node.composition) };
       if (node.type === "note") return { ...node, name: node.name || "便签", content: String(node.content || ""), width: Math.max(170, Number(node.width) || 260), height: Math.max(130, Number(node.height) || 190) };
       if (node.type === "frame") return { ...node, name: node.name || "工作流分组", width: node.width || 700, height: node.height || 480 };
@@ -2676,24 +2677,25 @@ function promptTextLength(node) {
 }
 function promptOffsetAt(root, target, childOffset = 0) {
   let result = 0;
-  let found = false;
+  let resolved = false;
   const visit = node => {
-    if (found) return;
+    if (resolved) return;
     if (node === target) {
       if (node.nodeType === Node.TEXT_NODE) result += Math.max(0, Math.min(childOffset, (node.nodeValue || "").length));
       else result += [...node.childNodes].slice(0, childOffset).reduce((total, child) => total + promptTextLength(child), 0);
-      found = true;
+      resolved = true;
       return;
     }
+    if (node.nodeType === Node.TEXT_NODE) { result += (node.nodeValue || "").length; return; }
     if (node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() === "br") { result += 1; return; }
-    for (const child of node.childNodes || []) { visit(child); if (!found) result += promptTextLength(child); }
+    for (const child of node.childNodes || []) visit(child);
   };
   visit(root);
-  return found ? result : promptTextLength(root);
+  return resolved ? result : promptTextLength(root);
 }
-function promptSelectionOffsets(editor) {
-  const selection = window.getSelection?.(); if (!editor || !selection?.rangeCount || !editor.contains(selection.anchorNode)) return null;
-  const range = selection.getRangeAt(0); return { start: promptOffsetAt(editor, range.startContainer, range.startOffset), end: promptOffsetAt(editor, range.endContainer, range.endOffset) };
+function promptSelectionOffsets(editor, range = null) {
+  const current = range || window.getSelection?.()?.getRangeAt?.(0); if (!editor || !current || !editor.contains(current.commonAncestorContainer)) return null;
+  return { start: promptOffsetAt(editor, current.startContainer, current.startOffset), end: promptOffsetAt(editor, current.endContainer, current.endOffset) };
 }
 function promptTextPoint(root, offset) {
   let remaining = Math.max(0, Number(offset) || 0); let lastText = null;
@@ -2715,15 +2717,36 @@ function syncPromptEditorNode(editor, node) {
   if (!editor || !node) return;
   node.content = promptEditorText(editor); node.contentMarkup = sanitizePromptMarkup(editor.innerHTML, node.content); node.promptPresetId = "";
 }
+function rememberPromptFormatSelection(nodeId) {
+  const editor = promptEditorElement(nodeId); const selection = window.getSelection?.();
+  if (!editor || !selection?.rangeCount) { promptFormatSelection.delete(nodeId); return false; }
+  const range = selection.getRangeAt(0);
+  if (range.collapsed || !editor.contains(range.commonAncestorContainer)) { promptFormatSelection.delete(nodeId); return false; }
+  promptFormatSelection.set(nodeId, range.cloneRange());
+  const offsets = promptSelectionOffsets(editor, range); if (offsets) promptQuickSelection.set(nodeId, offsets);
+  return true;
+}
+function clearPromptInlineStyle(root, property) {
+  root.querySelectorAll?.("[style]").forEach(element => {
+    element.style[property] = "";
+    if (!element.getAttribute("style")) element.removeAttribute("style");
+  });
+}
 function updatePromptEditorAfterChange(editor, node, selection = null) {
   syncPromptEditorNode(editor, node); if (selection) { promptQuickSelection.set(node.id, selection); setPromptSelection(editor, selection.start, selection.end); } else promptQuickSelection.delete(node.id); scheduleSave();
 }
 function applyPromptInlineStyle(nodeId, property, value) {
-  const node = findNode(nodeId); const editor = promptEditorElement(nodeId); const selection = promptQuickRememberedSelection(nodeId); if (!node || node.type !== "prompt" || !editor || !selection || selection.start === selection.end) return toast("请先选择要调整的文字", true);
-  const before = snapshot(); if (!setPromptSelection(editor, selection.start, selection.end)) return;
-  const current = window.getSelection(); if (!current?.rangeCount) return;
-  const range = current.getRangeAt(0); const wrapper = document.createElement("span"); wrapper.style[property] = value; wrapper.append(range.extractContents()); range.insertNode(wrapper);
-  const nextSelection = { start: selection.start, end: selection.start + promptTextLength(wrapper) }; updatePromptEditorAfterChange(editor, node, nextSelection); undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = [];
+  const node = findNode(nodeId); const editor = promptEditorElement(nodeId); let range = promptFormatSelection.get(nodeId)?.cloneRange();
+  if (!node || node.type !== "prompt" || !editor) return;
+  if (!range || range.collapsed || !editor.contains(range.commonAncestorContainer)) {
+    const selection = promptQuickRememberedSelection(nodeId);
+    if (!selection || selection.start === selection.end || !setPromptSelection(editor, selection.start, selection.end)) return toast("请先选择要调整的文字", true);
+    range = window.getSelection?.()?.getRangeAt?.(0)?.cloneRange();
+  }
+  if (!range || range.collapsed) return toast("请先选择要调整的文字", true);
+  const before = snapshot(); const wrapper = document.createElement("span"); const contents = range.extractContents(); clearPromptInlineStyle(contents, property); wrapper.style[property] = value; wrapper.append(contents); range.insertNode(wrapper);
+  const appliedRange = document.createRange(); appliedRange.selectNodeContents(wrapper); const current = window.getSelection?.(); current?.removeAllRanges(); current?.addRange(appliedRange);
+  const nextSelection = promptSelectionOffsets(editor, appliedRange); updatePromptEditorAfterChange(editor, node, nextSelection); rememberPromptFormatSelection(nodeId); undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = [];
 }
 function insertPromptReferenceToken(nodeId, index) {
   const node = findNode(nodeId); if (!node || node.type !== "prompt") return;
@@ -3036,15 +3059,15 @@ function bindNodeEvents() {
     thumb.addEventListener("dblclick", event => { event.preventDefault(); event.stopPropagation(); if (promptReferenceClickTimer) clearTimeout(promptReferenceClickTimer); promptReferenceClickTimer = null; disconnectPromptReference(thumb.dataset.promptReferenceNode, thumb.dataset.promptReferenceSource); });
   });
   $$('[data-prompt-content]').forEach(editor => {
-    ["keyup", "mouseup", "focus", "select"].forEach(eventName => editor.addEventListener(eventName, () => rememberPromptQuickSelection(editor.dataset.promptContent)));
-    editor.addEventListener("input", event => { const node = findNode(editor.dataset.promptContent); if (node) { syncPromptEditorNode(event.currentTarget, node); rememberPromptQuickSelection(node.id); scheduleSave(); } });
+    ["keyup", "mouseup", "focus", "select"].forEach(eventName => editor.addEventListener(eventName, () => { rememberPromptQuickSelection(editor.dataset.promptContent); rememberPromptFormatSelection(editor.dataset.promptContent); }));
+    editor.addEventListener("input", event => { const node = findNode(editor.dataset.promptContent); if (node) { syncPromptEditorNode(event.currentTarget, node); rememberPromptQuickSelection(node.id); rememberPromptFormatSelection(node.id); scheduleSave(); } });
   });
   $$('[data-prompt-format-color]').forEach(control => {
-    control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptFormatColor));
+    control.addEventListener("pointerdown", () => { rememberPromptQuickSelection(control.dataset.promptFormatColor); rememberPromptFormatSelection(control.dataset.promptFormatColor); }, true);
     control.addEventListener("change", event => { event.stopPropagation(); applyPromptInlineStyle(control.dataset.promptFormatColor, "color", event.target.value); });
   });
   $$('[data-prompt-format-size]').forEach(control => {
-    control.addEventListener("pointerdown", () => rememberPromptQuickSelection(control.dataset.promptFormatSize));
+    control.addEventListener("pointerdown", () => { rememberPromptQuickSelection(control.dataset.promptFormatSize); rememberPromptFormatSelection(control.dataset.promptFormatSize); }, true);
     control.addEventListener("change", event => { event.stopPropagation(); applyPromptInlineStyle(control.dataset.promptFormatSize, "fontSize", event.target.value); });
   });
 $$('[data-note-content]').forEach(textarea => textarea.addEventListener("input", event => { const note = findNode(textarea.dataset.noteContent); if (note?.type === "note") { note.content = event.target.value; scheduleSave(); } }));
