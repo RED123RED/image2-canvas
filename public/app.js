@@ -114,6 +114,7 @@ const answerModelOptions = Object.freeze([
   { value: "deepseek-flash", label: "DeepSeek V4.1 Flash", provider: "deepseek", vision: true },
   { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek", vision: false },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "claude", vision: true },
+  { value: "claude-opus-5-5", label: "Claude Opus 5.5", provider: "claude", vision: true },
   { value: "kimi-k3", label: "Kimi K3", provider: "kimi", vision: true }
 ]);
 const deepseekAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "deepseek").map(option => option.value));

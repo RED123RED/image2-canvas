@@ -56,7 +56,7 @@ function normalizeDeepseekModel(value) {
   return deepseekModelAliases[candidate] || candidate;
 }
 const claudeBaseUrl = (process.env.CLAUDE_NUODA_BASE_URL || "https://api.nuoda.vip/v1").replace(/\/$/, "");
-const claudeModels = Object.freeze(["claude-sonnet-4-6"]);
+const claudeModels = Object.freeze(["claude-sonnet-4-6", "claude-opus-5-5"]);
 const claudeDefaultModel = claudeModels[0];
 const kimiBaseUrl = (process.env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, "");
 const kimiModels = Object.freeze(["kimi-k3"]);
