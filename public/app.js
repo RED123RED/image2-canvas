@@ -115,7 +115,8 @@ const answerModelOptions = Object.freeze([
   { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek", vision: false },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "claude", vision: true },
   { value: "claude-opus-5-5", label: "Claude Opus 5.5", provider: "claude", vision: true },
-  { value: "kimi-k3", label: "Kimi K3", provider: "kimi", vision: true }
+  { value: "kimi-k3-moyu", label: "Kimi K3 · 魔芋 AI", provider: "kimi", vision: true },
+  { value: "kimi-k3-moonshot", label: "Kimi K3 · Moonshot 官方", provider: "kimi", vision: true }
 ]);
 const deepseekAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "deepseek").map(option => option.value));
 const deepseekVisionAnswerModel = "deepseek-flash";
@@ -129,8 +130,9 @@ function answerModelOption(value) { return answerModelOptions.find(option => opt
 function normalizedDeepseekModel(value) { const candidate = String(value || ""); return deepseekModelAliases[candidate] || candidate; }
 function answerModelIsDeepseek(value) { return deepseekAnswerModels.includes(normalizedDeepseekModel(value)); }
 function answerModelIsClaude(value) { return claudeAnswerModels.includes(String(value || "")); }
-function answerModelIsKimi(value) { return kimiAnswerModels.includes(String(value || "")); }
-function normalizedAnswerModel(value) { const normalized = normalizedDeepseekModel(value); return answerModelOptions.some(option => option.value === normalized) ? normalized : "gpt-5.6"; }
+function normalizedKimiAnswerModel(value) { return String(value || "") === "kimi-k3" ? "kimi-k3-moonshot" : String(value || ""); }
+function answerModelIsKimi(value) { return kimiAnswerModels.includes(normalizedKimiAnswerModel(value)); }
+function normalizedAnswerModel(value) { const normalized = normalizedKimiAnswerModel(normalizedDeepseekModel(value)); return answerModelOptions.some(option => option.value === normalized) ? normalized : "gpt-5.6"; }
 function normalizedDeepseekThinking(value) { return value === "disabled" ? "disabled" : "enabled"; }
 function normalizedDeepseekReasoningEffort(value) { return ["low", "high", "max"].includes(value) ? value : "high"; }
 const h3AnswerModeOptions = Object.freeze([
@@ -4192,9 +4194,12 @@ async function runAnswerNode(nodeId) {
   const usesDeepseek = answerModelIsDeepseek(node.model);
   const usesClaude = answerModelIsClaude(node.model);
   const usesKimi = answerModelIsKimi(node.model);
+  const kimiModel = usesKimi ? normalizedKimiAnswerModel(node.model) : "";
   try {
     const status = await requestJson("/api/status", {}, 8_000);
-    if (usesDeepseek ? !status.deepseek?.ready : usesClaude ? !status.claude?.ready : usesKimi ? !status.kimi?.ready : !status.ready && !apiKey) { openSettings(usesKimi ? "kimi" : ""); return toast(usesDeepseek ? "请先在设置中保存 DeepSeek API Key" : usesClaude ? "请先在设置中保存 Claude API Key" : usesKimi ? "请在设置中粘贴 Kimi API Key 并点击保存设置" : "请先连接 API", true); }
+    const kimiGateway = kimiModel === "kimi-k3-moyu" ? "moyu" : "moonshot";
+    const kimiReady = status.kimi?.providers?.[kimiGateway]?.ready;
+    if (usesDeepseek ? !status.deepseek?.ready : usesClaude ? !status.claude?.ready : usesKimi ? !kimiReady : !status.ready && !apiKey) { openSettings(usesKimi ? "kimi" : ""); return toast(usesDeepseek ? "请先在设置中保存 DeepSeek API Key" : usesClaude ? "请先在设置中保存 Claude API Key" : usesKimi ? `请先在设置中保存 ${kimiGateway === "moyu" ? "魔芋 AI" : "Moonshot 官方"} Kimi API Key` : "请先连接 API", true); }
   } catch { openSettings(); return toast("本机服务不可用，无法检查模型配置", true); }
   if (usesDeepseek) {
     try {
@@ -4205,6 +4210,14 @@ async function runAnswerNode(nodeId) {
       }
     } catch (error) {
       selectNode(nodeId); return toast(error?.message || "DeepSeek 网关不可用，请检查设置", true);
+    }
+  }
+  if (usesKimi) {
+    try {
+      const health = await requestJson(`/api/providers/kimi/health?model=${encodeURIComponent(kimiModel)}`, {}, 15_000);
+      if (!health.ready || health.apiModel !== "kimi-k3") { selectNode(nodeId); return toast(`${kimiGateway === "moyu" ? "魔芋 AI" : "Moonshot 官方"} 网关没有返回可用的 Kimi K3`, true); }
+    } catch (error) {
+      selectNode(nodeId); return toast(error?.message || `${kimiGateway === "moyu" ? "魔芋 AI" : "Moonshot 官方"} Kimi 网关不可用，请检查设置`, true);
     }
   }
   const imageEdges = state.edges.filter(edge => edge.target === nodeId && edge.type === "image" && edge.targetPort.startsWith("image-") && !findNode(edge.source)?.disabled).sort((a, b) => Number(a.targetPort.split("-")[1]) - Number(b.targetPort.split("-")[1]));
@@ -4219,7 +4232,7 @@ async function runAnswerNode(nodeId) {
     const h3Enabled = node.answerSkill === "minimax-h3";
     const h3Mode = h3Enabled ? resolveH3AnswerMode(node, references.length) : node.answerSkill === "minimalist-product-ad" ? resolveH3AnswerMode({ h3Mode: node.productAdH3Mode }, references.length) : node.answerSkill === "brand-promo-video" ? resolveH3AnswerMode({ h3Mode: node.brandPromoH3Mode }, references.length) : undefined;
     const adDurationSeconds = node.answerSkill === "minimalist-product-ad" ? normalizedAdSkillDuration(node.productAdDuration, 10) : node.answerSkill === "brand-promo-video" ? normalizedAdSkillDuration(node.brandPromoDuration, 15) : undefined;
-    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && !usesClaude && !usesKimi && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt: prompt || "请对连接的参考图进行完整图片反推。", model: node.model, references, referenceMetadata, skill: node.answerSkill, h3Mode, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, adDurationSeconds, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined, kimiReasoningEffort: usesKimi ? "max" : undefined }) }, 165_000);
+    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && !usesClaude && !usesKimi && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt: prompt || "请对连接的参考图进行完整图片反推。", model: usesKimi ? kimiModel : node.model, references, referenceMetadata, skill: node.answerSkill, h3Mode, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, adDurationSeconds, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined, kimiReasoningEffort: usesKimi ? "max" : undefined }) }, 165_000);
     node.answer = String(result.answer || ""); node.model = result.model || node.model; node.status = "idle";
     toast("模型回答已完成");
   } catch (error) {
@@ -4424,20 +4437,22 @@ async function refreshClaudeSettingsStatus() {
   try { const result = await requestJson("/api/status", {}, 5_000); statusElement.textContent = result.claude?.ready ? `已配置 · ${result.claude.model}` : "尚未配置，保存密钥后即可在模型回答节点中选择 Claude Sonnet 4.6。"; }
   catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
 }
-async function refreshKimiSettingsStatus() {
-  const statusElement = $("#kimiKeyStatus"); if (!statusElement) return;
+async function refreshKimiProviderStatus(model, statusId, label) {
+  const statusElement = $(statusId); if (!statusElement) return;
   try {
-    const result = await requestJson("/api/providers/kimi/health", {}, 15_000);
-    const gatewaySelect = $("#kimiGatewaySelect");
-    if (gatewaySelect && result.baseUrl) gatewaySelect.value = result.baseUrl;
-    const gatewayLabel = result.baseUrl?.includes("moyu.cn") ? "魔芋 AI" : "Moonshot 官方";
-    statusElement.textContent = result.ready ? `已配置 · ${result.model} · ${gatewayLabel}` : "Kimi 网关暂未返回可用模型，请检查密钥或网关。";
-  }
-  catch (error) { statusElement.textContent = error?.message || "Kimi 网关暂时不可用，保存后会在服务恢复时生效。"; }
+    const result = await requestJson(`/api/providers/kimi/health?model=${encodeURIComponent(model)}`, {}, 15_000);
+    statusElement.textContent = result.ready && result.apiModel === "kimi-k3" ? `已配置 · ${result.apiModel} · ${label}` : `${label} 网关暂未返回可用的 Kimi K3`;
+  } catch (error) { statusElement.textContent = error?.status === 401 ? `尚未配置 · ${label}` : (error?.message || `${label} 网关暂时不可用，保存后会在服务恢复时生效。`); }
+}
+async function refreshKimiSettingsStatus() {
+  await Promise.all([
+    refreshKimiProviderStatus("kimi-k3-moyu", "#kimiMoyuKeyStatus", "魔芋 AI"),
+    refreshKimiProviderStatus("kimi-k3-moonshot", "#kimiMoonshotKeyStatus", "Moonshot 官方")
+  ]);
 }
 function applyLineMotionPreference(value = lineMotion) { lineMotion = value === "static" ? "static" : "dynamic"; document.documentElement.dataset.edgeMotion = lineMotion; $$("#lineMotionSwitch [data-line-motion]").forEach(button => button.classList.toggle("is-active", button.dataset.lineMotion === lineMotion)); }
 function setLineMotion(value) { applyLineMotionPreference(value); localStorage.setItem("image2-canvas-line-motion", lineMotion); }
-function openSettings(focusProvider = "") { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); applyLineMotionPreference(); const input = $("#seedreamApiKeyInput"); if (input) input.value = ""; const midjourneyInput = $("#midjourneyApiKeyInput"); if (midjourneyInput) midjourneyInput.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; const deepseekInput = $("#deepseekApiKeyInput"); if (deepseekInput) deepseekInput.value = ""; const claudeInput = $("#claudeApiKeyInput"); if (claudeInput) claudeInput.value = ""; const kimiInput = $("#kimiApiKeyInput"); if (kimiInput) kimiInput.value = ""; settingsDialog.showModal(); void refreshSeedreamSettingsStatus(); void refreshMidjourneySettingsStatus(); void refreshRunningHubSettingsStatus(); void refreshDeepseekSettingsStatus(); void refreshClaudeSettingsStatus(); void refreshKimiSettingsStatus(); if (focusProvider === "kimi") setTimeout(() => { const target = $("#kimiApiKeyInput"); target?.scrollIntoView({ block: "center" }); target?.focus(); }, 50); }
+function openSettings(focusProvider = "") { const theme = state?.theme || globalTheme; $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === theme)); applyLineMotionPreference(); const input = $("#seedreamApiKeyInput"); if (input) input.value = ""; const midjourneyInput = $("#midjourneyApiKeyInput"); if (midjourneyInput) midjourneyInput.value = ""; const runningHubInput = $("#runningHubApiKeyInput"); if (runningHubInput) runningHubInput.value = ""; const deepseekInput = $("#deepseekApiKeyInput"); if (deepseekInput) deepseekInput.value = ""; const claudeInput = $("#claudeApiKeyInput"); if (claudeInput) claudeInput.value = ""; const kimiMoyuInput = $("#kimiMoyuApiKeyInput"); if (kimiMoyuInput) kimiMoyuInput.value = ""; const kimiMoonshotInput = $("#kimiMoonshotApiKeyInput"); if (kimiMoonshotInput) kimiMoonshotInput.value = ""; settingsDialog.showModal(); void refreshSeedreamSettingsStatus(); void refreshMidjourneySettingsStatus(); void refreshRunningHubSettingsStatus(); void refreshDeepseekSettingsStatus(); void refreshClaudeSettingsStatus(); void refreshKimiSettingsStatus(); if (focusProvider === "kimi") setTimeout(() => { const target = $("#kimiMoyuApiKeyInput"); target?.scrollIntoView({ block: "center" }); target?.focus(); }, 50); }
 function bindStaticEvents() {
   initCanvasResizeObserver();
   $("#newProjectButton").addEventListener("click", () => {
@@ -4521,7 +4536,8 @@ function bindStaticEvents() {
   $("#revealRunningHubKeyButton").addEventListener("click", () => { const input = $("#runningHubApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $("#revealDeepseekKeyButton").addEventListener("click", () => { const input = $("#deepseekApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $("#revealClaudeKeyButton").addEventListener("click", () => { const input = $("#claudeApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
-  $("#revealKimiKeyButton").addEventListener("click", () => { const input = $("#kimiApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
+  $("#revealKimiMoyuKeyButton").addEventListener("click", () => { const input = $("#kimiMoyuApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
+  $("#revealKimiMoonshotKeyButton").addEventListener("click", () => { const input = $("#kimiMoonshotApiKeyInput"); input.type = input.type === "password" ? "text" : "password"; });
   $$("#settingsThemeSwitch [data-theme-value]").forEach(button => button.addEventListener("click", () => { setTheme(button.dataset.themeValue); $$("#settingsThemeSwitch [data-theme-value]").forEach(item => item.classList.toggle("is-active", item.dataset.themeValue === button.dataset.themeValue)); }));
   $("#saveSettingsButton").addEventListener("click", async event => {
     event.preventDefault();
@@ -4531,8 +4547,8 @@ function bindStaticEvents() {
     const runningHubKey = $("#runningHubApiKeyInput").value.trim();
     const deepseekKey = $("#deepseekApiKeyInput").value.trim();
     const claudeKey = $("#claudeApiKeyInput").value.trim();
-    const kimiKey = $("#kimiApiKeyInput").value.trim();
-    const kimiBaseUrl = $("#kimiGatewaySelect").value;
+    const kimiMoyuKey = $("#kimiMoyuApiKeyInput").value.trim();
+    const kimiMoonshotKey = $("#kimiMoonshotApiKeyInput").value.trim();
     if (seedreamKey) {
       try { await requestJson("/api/providers/seedream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: seedreamKey }) }, 10_000); }
       catch (error) { return toast(error.message || "Seedream 密钥保存失败", true); }
@@ -4553,11 +4569,11 @@ function bindStaticEvents() {
       try { await requestJson("/api/providers/claude", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: claudeKey }) }, 10_000); }
       catch (error) { return toast(error.message || "Claude 密钥保存失败", true); }
     }
-    if (kimiKey) {
-      try { await requestJson("/api/providers/kimi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: kimiKey, baseUrl: kimiBaseUrl }) }, 10_000); }
+    if (kimiMoyuKey || kimiMoonshotKey) {
+      try { await requestJson("/api/providers/kimi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ moyuApiKey: kimiMoyuKey, moonshotApiKey: kimiMoonshotKey }) }, 10_000); }
       catch (error) { return toast(error.message || "Kimi 密钥保存失败", true); }
     }
-    settingsDialog.close(); checkApiStatus(); toast(kimiKey ? "Kimi 密钥已安全保存" : claudeKey ? "Claude 密钥已安全保存" : deepseekKey ? "DeepSeek 密钥已安全保存" : runningHubKey ? "RunningHub 密钥已安全保存" : midjourneyKey ? "Midjourney 密钥已安全保存" : seedreamKey ? "Seedream 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "设置已保存"));
+    settingsDialog.close(); checkApiStatus(); toast(kimiMoyuKey || kimiMoonshotKey ? "Kimi K3 双网关密钥已安全保存" : claudeKey ? "Claude 密钥已安全保存" : deepseekKey ? "DeepSeek 密钥已安全保存" : runningHubKey ? "RunningHub 密钥已安全保存" : midjourneyKey ? "Midjourney 密钥已安全保存" : seedreamKey ? "Seedream 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "设置已保存"));
   });
   $("#projectName").addEventListener("click", () => { const next = window.prompt("项目名称", state.projectName)?.trim(); if (!next || next === state.projectName) return; recordHistory(); state.projectName = next; renderWorkspace(); scheduleSave(); });
   $("#closeDialogueScriptButton").addEventListener("click", closeStoryDialogue);

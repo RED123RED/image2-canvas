@@ -202,11 +202,12 @@
       <label class="field-label" for="claudeApiKeyInput">Claude API Key</label>
       <div class="password-row"><input class="text-input" id="claudeApiKeyInput" type="password" autocomplete="off" placeholder="保存在此 Windows 用户的本地配置中"><button class="icon-button" id="revealClaudeKeyButton" type="button" aria-label="显示 Claude 密钥"><i data-lucide="eye"></i></button></div>
       <p class="field-note" id="claudeKeyStatus">用于模型回答节点中的 Claude Sonnet 4.6；密钥不会写入项目或 Git。</p>
-      <label class="field-label" for="kimiGatewaySelect">Kimi API 网关</label>
-      <select class="text-input" id="kimiGatewaySelect"><option value="https://www.moyu.cn/v1">魔芋 AI</option><option value="https://api.moonshot.cn/v1">Moonshot 官方</option></select>
-      <label class="field-label" for="kimiApiKeyInput">Kimi API Key</label>
-      <div class="password-row"><input class="text-input" id="kimiApiKeyInput" type="password" autocomplete="off" placeholder="保存在此 Windows 用户的本地配置中"><button class="icon-button" id="revealKimiKeyButton" type="button" aria-label="显示 Kimi 密钥"><i data-lucide="eye"></i></button></div>
-      <p class="field-note" id="kimiKeyStatus">用于模型回答节点中的 Kimi K3；魔芋 AI 与官方网关可独立切换，密钥不会写入项目或 Git。</p>
+      <label class="field-label" for="kimiMoyuApiKeyInput">Kimi K3 · 魔芋 AI API Key</label>
+      <div class="password-row"><input class="text-input" id="kimiMoyuApiKeyInput" type="password" autocomplete="off" placeholder="保存在此 Windows 用户的本地配置中"><button class="icon-button" id="revealKimiMoyuKeyButton" type="button" aria-label="显示魔芋 AI Kimi 密钥"><i data-lucide="eye"></i></button></div>
+      <p class="field-note" id="kimiMoyuKeyStatus">对应模型回答节点中的“ Kimi K3 · 魔芋 AI ”；密钥不会写入项目或 Git。</p>
+      <label class="field-label" for="kimiMoonshotApiKeyInput">Kimi K3 · Moonshot 官方 API Key</label>
+      <div class="password-row"><input class="text-input" id="kimiMoonshotApiKeyInput" type="password" autocomplete="off" placeholder="保存在此 Windows 用户的本地配置中"><button class="icon-button" id="revealKimiMoonshotKeyButton" type="button" aria-label="显示 Moonshot 官方 Kimi 密钥"><i data-lucide="eye"></i></button></div>
+      <p class="field-note" id="kimiMoonshotKeyStatus">对应模型回答节点中的“ Kimi K3 · Moonshot 官方 ”；密钥不会写入项目或 Git。</p>
       <div class="dialog-actions"><button class="button button-subtle" value="cancel">取消</button><button class="button button-primary" id="saveSettingsButton" value="default">保存设置</button></div>
     </form>
   </dialog>
