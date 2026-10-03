@@ -59,6 +59,7 @@ const claudeBaseUrl = (process.env.CLAUDE_NUODA_BASE_URL || "https://api.nuoda.v
 const claudeModels = Object.freeze(["claude-sonnet-4-6", "claude-opus-5-5"]);
 const claudeDefaultModel = claudeModels[0];
 const kimiBaseUrl = (process.env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, "");
+const kimiGatewayOptions = Object.freeze(["https://api.moonshot.cn/v1", "https://www.moyu.cn/v1"]);
 const kimiModels = Object.freeze(["kimi-k3"]);
 const kimiDefaultModel = kimiModels[0];
 const seedreamBaseUrl = (process.env.SEEDREAM_BASE_URL || "https://www.moyu.info").replace(/\/$/, "");
@@ -600,6 +601,17 @@ async function resolveKimiApiKey(req) {
   if (process.env.KIMI_API_KEY) return process.env.KIMI_API_KEY.trim();
   const config = await readProviderConfig();
   return typeof config?.kimi?.apiKey === "string" ? config.kimi.apiKey.trim() : "";
+}
+
+function normalizeKimiBaseUrl(value) {
+  const candidate = String(value || "").trim().replace(/\/$/, "");
+  return kimiGatewayOptions.includes(candidate) ? candidate : kimiBaseUrl;
+}
+
+async function resolveKimiBaseUrl() {
+  if (process.env.KIMI_BASE_URL) return kimiBaseUrl;
+  const config = await readProviderConfig();
+  return normalizeKimiBaseUrl(config?.kimi?.baseUrl);
 }
 
 function parseDataUrl(dataUrl, index) {
@@ -1419,13 +1431,14 @@ async function checkKimiGateway(req, res) {
   const apiKey = await resolveKimiApiKey(req);
   if (!apiKey) return sendJson(res, 401, { ready: false, gateway: "missing_key", message: "未配置 Kimi API Key" });
   try {
-    const response = await fetch(`${kimiBaseUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    const baseUrl = await resolveKimiBaseUrl();
+    const response = await fetch(`${baseUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
     if (!response.ok) throw gatewayError(response.status, "Kimi 网关鉴权失败");
     const result = await response.json().catch(() => ({}));
     const listedModels = Array.isArray(result.data) ? new Set(result.data.map(item => item?.id)) : null;
     const availableModels = listedModels ? kimiModels.filter(id => listedModels.has(id)) : kimiModels;
     const available = availableModels.length > 0;
-    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: kimiDefaultModel, models: availableModels, baseUrl: kimiBaseUrl, checkedAt: Date.now() });
+    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: kimiDefaultModel, models: availableModels, baseUrl, checkedAt: Date.now() });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, 502, { ready: false, gateway: failure.code.toLowerCase(), message: failure.message, checkedAt: Date.now() });
@@ -1505,11 +1518,12 @@ async function saveClaudeProvider(req, res) {
 async function saveKimiProvider(req, res) {
   try {
     const body = await readJson(req, 64 * 1024);
-    const apiKey = String(body.apiKey || "").trim();
-    if (!apiKey) return sendJson(res, 400, { error: "Kimi API Key 不能为空" });
     const previous = await readProviderConfig();
-    await saveProviderConfig({ ...previous, kimi: { ...(previous.kimi || {}), apiKey, baseUrl: kimiBaseUrl, model: kimiDefaultModel, updatedAt: Date.now() } });
-    return sendJson(res, 200, { ready: true, provider: "kimi", model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl });
+    const apiKey = String(body.apiKey || previous?.kimi?.apiKey || "").trim();
+    if (!apiKey) return sendJson(res, 400, { error: "Kimi API Key 不能为空" });
+    const baseUrl = process.env.KIMI_BASE_URL ? kimiBaseUrl : normalizeKimiBaseUrl(body.baseUrl || previous?.kimi?.baseUrl);
+    await saveProviderConfig({ ...previous, kimi: { ...(previous.kimi || {}), apiKey, baseUrl, model: kimiDefaultModel, updatedAt: Date.now() } });
+    return sendJson(res, 200, { ready: true, provider: "kimi", model: kimiDefaultModel, models: kimiModels, baseUrl });
   } catch (error) {
     return sendJson(res, 400, { error: error?.message || "Kimi 设置保存失败" });
   }
@@ -1819,7 +1833,8 @@ async function createResponse(req, res) {
       if (thinking === "enabled") requestBody.reasoning_effort = ["low", "high", "max"].includes(body.deepseekReasoningEffort) ? body.deepseekReasoningEffort : "high";
     }
     if (isKimi) requestBody.reasoning_effort = ["low", "high", "max"].includes(body.kimiReasoningEffort) ? body.kimiReasoningEffort : "max";
-    const response = await fetch(`${isDeepseek ? deepseekBaseUrl : isKimi ? kimiBaseUrl : baseUrl}/chat/completions`, {
+    const responseBaseUrl = isDeepseek ? deepseekBaseUrl : isKimi ? await resolveKimiBaseUrl() : baseUrl;
+    const response = await fetch(`${responseBaseUrl}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
@@ -1862,7 +1877,8 @@ const server = http.createServer(async (req, res) => {
     const deepseekKey = await resolveDeepseekApiKey(req);
     const claudeKey = await resolveClaudeApiKey(req);
     const kimiKey = await resolveKimiApiKey(req);
-    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: kimiBaseUrl }, jobs: jobs.size });
+    const selectedKimiBaseUrl = await resolveKimiBaseUrl();
+    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(kimiKey), model: kimiDefaultModel, models: kimiModels, baseUrl: selectedKimiBaseUrl }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);

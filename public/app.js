@@ -4426,8 +4426,14 @@ async function refreshClaudeSettingsStatus() {
 }
 async function refreshKimiSettingsStatus() {
   const statusElement = $("#kimiKeyStatus"); if (!statusElement) return;
-  try { const result = await requestJson("/api/status", {}, 5_000); statusElement.textContent = result.kimi?.ready ? `已配置 · ${result.kimi.model}` : "尚未配置，保存密钥后即可在模型回答节点中选择 Kimi K3。"; }
-  catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
+  try {
+    const result = await requestJson("/api/providers/kimi/health", {}, 15_000);
+    const gatewaySelect = $("#kimiGatewaySelect");
+    if (gatewaySelect && result.baseUrl) gatewaySelect.value = result.baseUrl;
+    const gatewayLabel = result.baseUrl?.includes("moyu.cn") ? "魔芋 AI" : "Moonshot 官方";
+    statusElement.textContent = result.ready ? `已配置 · ${result.model} · ${gatewayLabel}` : "Kimi 网关暂未返回可用模型，请检查密钥或网关。";
+  }
+  catch (error) { statusElement.textContent = error?.message || "Kimi 网关暂时不可用，保存后会在服务恢复时生效。"; }
 }
 function applyLineMotionPreference(value = lineMotion) { lineMotion = value === "static" ? "static" : "dynamic"; document.documentElement.dataset.edgeMotion = lineMotion; $$("#lineMotionSwitch [data-line-motion]").forEach(button => button.classList.toggle("is-active", button.dataset.lineMotion === lineMotion)); }
 function setLineMotion(value) { applyLineMotionPreference(value); localStorage.setItem("image2-canvas-line-motion", lineMotion); }
@@ -4526,6 +4532,7 @@ function bindStaticEvents() {
     const deepseekKey = $("#deepseekApiKeyInput").value.trim();
     const claudeKey = $("#claudeApiKeyInput").value.trim();
     const kimiKey = $("#kimiApiKeyInput").value.trim();
+    const kimiBaseUrl = $("#kimiGatewaySelect").value;
     if (seedreamKey) {
       try { await requestJson("/api/providers/seedream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: seedreamKey }) }, 10_000); }
       catch (error) { return toast(error.message || "Seedream 密钥保存失败", true); }
@@ -4547,7 +4554,7 @@ function bindStaticEvents() {
       catch (error) { return toast(error.message || "Claude 密钥保存失败", true); }
     }
     if (kimiKey) {
-      try { await requestJson("/api/providers/kimi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: kimiKey }) }, 10_000); }
+      try { await requestJson("/api/providers/kimi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: kimiKey, baseUrl: kimiBaseUrl }) }, 10_000); }
       catch (error) { return toast(error.message || "Kimi 密钥保存失败", true); }
     }
     settingsDialog.close(); checkApiStatus(); toast(kimiKey ? "Kimi 密钥已安全保存" : claudeKey ? "Claude 密钥已安全保存" : deepseekKey ? "DeepSeek 密钥已安全保存" : runningHubKey ? "RunningHub 密钥已安全保存" : midjourneyKey ? "Midjourney 密钥已安全保存" : seedreamKey ? "Seedream 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "设置已保存"));
