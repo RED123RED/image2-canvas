@@ -1767,7 +1767,7 @@ Specialize the final H3 prompt as a minimalist premium product film. Use ${beats
 }
 
 function brandPromoVideoSystemInstruction(mode, durationSeconds) {
-  const duration = Math.min(15, Math.max(3, Math.round(Number(durationSeconds) || 15)));
+  const duration = Math.min(30, Math.max(3, Math.round(Number(durationSeconds) || 15)));
   const beats = duration <= 4 ? "2-3" : duration <= 7 ? "3-5" : duration <= 10 ? "4-6" : duration <= 12 ? "5-7" : "5-8";
   return `${h3PromptSystemInstruction(mode, duration)}
 
@@ -1813,8 +1813,8 @@ async function createResponse(req, res) {
     const answerSkill = usingH3Skill ? "minimax-h3" : usingNuyoahSkill ? "nuyoah-reverse" : usingMinimalistProductAdSkill ? "minimalist-product-ad" : usingBrandPromoVideoSkill ? "brand-promo-video" : "none";
     if (usingNuyoahSkill && !references.length) return sendJson(res, 400, { error: "南鸢图片反推需要至少一张参考图" });
     const h3Mode = ["t2va", "i2va", "l2va", "fl2va", "ref2va"].includes(body.h3Mode) ? body.h3Mode : "t2va";
-    const durationSeconds = Math.min(15, Math.max(3, Math.round(Number(body.durationSeconds) || 6)));
-    const adDurationSeconds = Math.min(15, Math.max(3, Math.round(Number(body.adDurationSeconds) || (usingMinimalistProductAdSkill ? 10 : 15))));
+    const durationSeconds = Math.min(30, Math.max(3, Math.round(Number(body.durationSeconds) || 6)));
+    const adDurationSeconds = Math.min(usingBrandPromoVideoSkill ? 30 : 15, Math.max(3, Math.round(Number(body.adDurationSeconds) || (usingMinimalistProductAdSkill ? 10 : 15))));
     const content = [{ type: "text", text: prompt }];
     references.forEach(url => content.push({ type: "image_url", image_url: isKimi ? { url } : { url, detail: "auto" } }));
     if (isClaude) {
