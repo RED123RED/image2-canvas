@@ -1468,3 +1468,115 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .script-note-text { width: 100%; min-height: 0; flex: 1 1 auto; padding: 10px 12px 18px; border: 0; outline: 0; color: #564a2e; background: transparent; resize: none; font: 12px/1.65 inherit; overflow: auto; }
 .script-note-text::placeholder { color: #a99974; }
 .script-note-resize { position: absolute; right: 7px; bottom: 7px; width: 13px; height: 13px; border-right: 2px solid #ad9160; border-bottom: 2px solid #ad9160; cursor: nwse-resize; }
+
+/* Lightweight unified card styling. This layer is visual only: node geometry,
+   ports, controls, selection outlines, and workflow/script interactions stay intact. */
+.node-card,
+.note-card,
+.frame-body,
+.script-story-card,
+.script-emotion-board,
+.script-group-frame,
+.character-arc-card,
+.script-ai-assistant,
+.character-goal-card,
+.script-note-card,
+.script-character-node {
+  border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
+  border-radius: 14px;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .10);
+}
+.node-card,
+.note-card,
+.script-character-node {
+  background: var(--surface-raised);
+}
+.node-header,
+.note-header,
+.script-story-card .story-card-content,
+.script-emotion-board header,
+.character-arc-card > header,
+.script-ai-assistant > header,
+.character-goal-card > header,
+.script-note-card > header {
+  border-color: color-mix(in srgb, var(--line) 78%, transparent);
+}
+.image-preview,
+.video-preview,
+.video-preview-empty,
+.video-editor-timeline {
+  border-radius: 10px;
+}
+.canvas-node.is-selected > .node-card,
+.canvas-node.is-selected > .note-card,
+.canvas-node.is-selected > .frame-body {
+  outline-offset: 4px;
+}
+.script-story-card.is-selected,
+.script-emotion-board.is-selected,
+.script-group-frame.is-selected,
+.character-arc-card.is-selected,
+.script-ai-assistant.is-selected,
+.character-goal-card.is-selected,
+.script-note-card.is-selected {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+  border-color: color-mix(in srgb, var(--blue) 60%, var(--line-strong));
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .13);
+}
+.script-character-node {
+  padding: 9px 6px 11px;
+  outline: 1px solid transparent;
+  outline-offset: 2px;
+}
+.script-character-node.is-selected {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+.script-character-node.is-selected .script-avatar {
+  transform: scale(1.035);
+}
+.note-card {
+  border-color: color-mix(in srgb, var(--line-strong) 72%, transparent);
+  background: var(--surface-raised);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .10);
+}
+.note-header {
+  color: var(--muted);
+}
+.note-textarea {
+  color: var(--ink);
+}
+.note-textarea::placeholder {
+  color: var(--muted);
+}
+.note-item .node-resize-handle {
+  border-color: var(--surface-raised);
+  background: var(--blue);
+  box-shadow: 0 0 0 1px var(--blue);
+}
+.script-group-frame {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--surface-raised) 46%, transparent);
+  box-shadow: none;
+}
+.canvas-node:not(.is-dragging) > .node-card,
+.canvas-node:not(.is-dragging) > .note-card,
+.script-story-card,
+.script-emotion-board,
+.character-arc-card,
+.script-ai-assistant,
+.character-goal-card,
+.script-note-card {
+  transition: box-shadow 140ms ease, border-color 140ms ease;
+}
+.canvas-node:not(.is-dragging):hover > .node-card,
+.canvas-node:not(.is-dragging):hover > .note-card,
+.script-story-card:hover,
+.script-emotion-board:hover,
+.character-arc-card:hover,
+.script-ai-assistant:hover,
+.character-goal-card:hover,
+.script-note-card:hover {
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .13);
+}
