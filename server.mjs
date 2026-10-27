@@ -1794,13 +1794,14 @@ async function createResponse(req, res) {
     const body = await readJson(req);
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "请连接并填写至少一个提示词节点" });
-    const requestedModel = normalizeDeepseekModel(body.model || "gpt-5.6");
+    const rawRequestedModel = String(body.model || "gpt-5.6");
+    const requestedModel = normalizeDeepseekModel(rawRequestedModel === "gpt-5.5" ? "gpt-5.6" : rawRequestedModel);
     const normalizedKimiModel = normalizeKimiModel(requestedModel);
     const isDeepseek = deepseekModels.includes(requestedModel);
     const isClaude = claudeModels.includes(requestedModel);
     const isKimi = kimiModels.includes(normalizedKimiModel);
     const selectedModel = isKimi ? normalizedKimiModel : requestedModel;
-    const textModel = isKimi ? kimiApiModel : isDeepseek || isClaude ? requestedModel : ["gpt-5.5", "gpt-5.6"].includes(requestedModel) ? requestedModel : "gpt-5.6";
+    const textModel = isKimi ? kimiApiModel : isDeepseek || isClaude ? requestedModel : "gpt-5.6";
     const apiKey = isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : isKimi ? await resolveKimiApiKey(req, selectedModel) : await resolveApiKey(req);
     if (!apiKey) return sendJson(res, 401, { error: isDeepseek ? "未配置 DeepSeek API Key，请在设置中保存密钥" : isClaude ? "未配置 Claude API Key，请在设置中保存密钥" : isKimi ? `未配置 ${kimiGatewayForModel(selectedModel) === "moyu" ? "魔芋 AI" : "Moonshot 官方"} Kimi API Key，请在设置中保存密钥` : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, 8);
