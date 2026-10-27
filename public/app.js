@@ -110,6 +110,7 @@ const answerSkillOptions = Object.freeze([
 ]);
 const answerModelOptions = Object.freeze([
   { value: "gpt-5.6", label: "GPT-5.6 系列", provider: "openai", vision: true },
+  { value: "gpt-6-astra", label: "GPT-6 Astra", provider: "openai", vision: true },
   { value: "deepseek-flash", label: "DeepSeek V4.1 Flash", provider: "deepseek", vision: true },
   { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek", vision: false },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "claude", vision: true },

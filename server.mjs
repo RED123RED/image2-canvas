@@ -64,6 +64,7 @@ const kimiApiModel = "kimi-k3";
 const kimiModels = Object.freeze(["kimi-k3-moyu", "kimi-k3-moonshot"]);
 const kimiDefaultModel = "kimi-k3-moonshot";
 const kimiModelAliases = Object.freeze({ "kimi-k3": kimiDefaultModel });
+const openAiChatModels = Object.freeze(["gpt-5.6", "gpt-6-astra"]);
 function normalizeKimiModel(value) {
   const candidate = String(value || "").trim();
   return kimiModelAliases[candidate] || candidate;
@@ -1801,7 +1802,7 @@ async function createResponse(req, res) {
     const isClaude = claudeModels.includes(requestedModel);
     const isKimi = kimiModels.includes(normalizedKimiModel);
     const selectedModel = isKimi ? normalizedKimiModel : requestedModel;
-    const textModel = isKimi ? kimiApiModel : isDeepseek || isClaude ? requestedModel : "gpt-5.6";
+    const textModel = isKimi ? kimiApiModel : isDeepseek || isClaude ? requestedModel : openAiChatModels.includes(requestedModel) ? requestedModel : "gpt-5.6";
     const apiKey = isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : isKimi ? await resolveKimiApiKey(req, selectedModel) : await resolveApiKey(req);
     if (!apiKey) return sendJson(res, 401, { error: isDeepseek ? "未配置 DeepSeek API Key，请在设置中保存密钥" : isClaude ? "未配置 Claude API Key，请在设置中保存密钥" : isKimi ? `未配置 ${kimiGatewayForModel(selectedModel) === "moyu" ? "魔芋 AI" : "Moonshot 官方"} Kimi API Key，请在设置中保存密钥` : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, 8);
