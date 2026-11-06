@@ -2614,7 +2614,31 @@ function renderNodeHtml(node) {
 }
 function nodeHeaderHtml(node, iconName, actions = "", showMenu = true, dragHandle = false) {
   const menu = showMenu ? `<button class="icon-button node-menu node-interactive" type="button" data-node-menu="${node.id}" aria-label="打开节点属性">${icon("ellipsis")}</button>` : "";
-  return `<header class="node-header${dragHandle ? " node-drag-handle" : ""}"${dragHandle ? ` data-node-drag-handle="${node.id}" data-node-id="${node.id}"` : ""}><div class="node-header-title"><span class="node-type-icon">${icon(iconName)}</span><strong>${escapeHtml(node.name)}</strong></div><div class="node-header-actions">${actions}${menu}</div></header>`;
+  return `<header class="node-header${dragHandle ? " node-drag-handle" : ""}"${dragHandle ? ` data-node-drag-handle="${node.id}" data-node-id="${node.id}"` : ""}><div class="node-header-title"><span class="node-type-icon">${icon(iconName)}</span><strong data-node-title="${node.id}" title="双击编辑名称">${escapeHtml(node.name)}</strong></div><div class="node-header-actions">${actions}<button class="icon-button node-rename node-interactive" type="button" data-node-rename="${node.id}" aria-label="编辑名称" data-tooltip="编辑名称">${icon("pencil")}</button>${menu}</div></header>`;
+}
+function startNodeTitleEdit(nodeId) {
+  const node = findNode(nodeId);
+  const element = canvasNodeElement(nodeId);
+  const title = element?.querySelector("[data-node-title]");
+  if (!node || !title || title.dataset.editing) return;
+  title.dataset.editing = "1";
+  const input = document.createElement("input");
+  input.className = "node-title-input node-interactive";
+  input.value = node.name;
+  input.maxLength = 80;
+  input.setAttribute("aria-label", "编辑模块名称");
+  title.replaceWith(input);
+  input.focus();
+  input.select();
+  const commit = () => {
+    if (!input.isConnected) return;
+    const value = input.value.trim();
+    if (value && value !== node.name) { recordHistory(); node.name = value; renderCanvas(); renderLibrary(); renderInspector(); scheduleSave(); }
+    else renderCanvas();
+  };
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", event => { event.stopPropagation(); if (event.key === "Enter") input.blur(); if (event.key === "Escape") { input.value = node.name; input.blur(); } });
+  input.addEventListener("pointerdown", event => event.stopPropagation());
 }
 function portHtml(node, portId, dataType, direction, label, top) {
   const connected = direction === "input" && incomingEdge(node.id, portId);
@@ -3058,6 +3082,8 @@ function bindNodeEvents() {
   $$('[data-export-preview]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void exportVideoPreview(button.dataset.exportPreview); }));
 
   $$('[data-node-menu]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); selectNode(button.dataset.nodeMenu); }));
+  $$("[data-node-rename]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); startNodeTitleEdit(button.dataset.nodeRename); }));
+  $$("[data-node-title]").forEach(title => title.addEventListener("dblclick", event => { event.stopPropagation(); startNodeTitleEdit(title.dataset.nodeTitle); }));
   $$('[data-toggle-prompt]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.togglePrompt); if (!node || node.type !== "prompt") return; recordHistory(); node.disabled = !node.disabled; renderCanvas(); renderInspector(); scheduleSave(); toast(node.disabled ? "提示词节点已禁用" : "提示词节点已启用"); }));
   $$('[data-toggle-prompt-quick]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.togglePromptQuick); if (!node || node.type !== "prompt") return; recordHistory(); node.promptQuickControlsVisible = node.promptQuickControlsVisible === false; renderCanvas(); renderInspector(); scheduleSave(); toast(node.promptQuickControlsVisible ? "已显示快捷镜头" : "已隐藏快捷镜头"); }));
   $$('[data-toggle-image]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.toggleImage); if (!node || node.type !== "image") return; recordHistory(); node.disabled = !node.disabled; renderCanvas(); renderInspector(); scheduleSave(); toast(node.disabled ? "参考图节点已禁用" : "参考图节点已启用"); }));
