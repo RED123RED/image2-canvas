@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-- 工作目录：`E:\AI剧本\image2-canvas`
+- 工作目录：`E:\codex\image2-canvas`
 - 主分支：`master`
 - 当前稳定提交以 `git log --oneline --decorate -12` 为准；最近已存在按功能命名的提交和标签。
 - 当前工作区可能存在未提交改动。新窗口必须先执行 `git status --short --branch`，不得假设工作区干净。
@@ -40,7 +40,7 @@
 - Midjourney Fast：支持四宫格候选图和候选图放大任务。
 - RunningHub H3：当前只保留多图参考生视频模式，工作流 `2093564802919649281` 固定使用 `plus` 实例。视频节点支持 1-6 张参考图、可选参考视频和参考音频；比例、像素档位和 5-15 秒时长可在节点内调整。`16:9` 与 `9:16` 的像素档位 `0.2/0.3/0.4/0.5/0.6/0.7/0.8/0.9/0.98/1.0/1.2/1.5/1.8/2.0 MP` 使用工作流 `ResolutionSelector` 给出的固定尺寸表，其中 `0.9 MP` 分别显示为 `1280 × 736` 和 `736 × 1280`；其他比例显示按 32 对齐的预估尺寸。参考视频可由本地上传或画布视频节点连入，参考音频通过节点内上传保存。任务会上传对应资源、轮询远程任务并保存诊断阶段；运行中的视频节点再次点击“运行海螺”会请求取消 RunningHub 任务。任务成功后仅创建独立视频结果节点，视频生成节点不保留最终视频预览。
 - RunningHub Krea2（界面显示“K2 白玉”）：工作流 `2092538454105223169`（https://www.runninghub.cn/workflow/2092538454105223169），支持自定义宽高、批量数量和比例预设；它不使用参考图输入。生成中的运行按钮可再次点击，通过 RunningHub 取消接口中断任务并移除生成中占位图，不影响既有结果。
-- 模型回答：当前选项包含 GPT-5.6、GPT-6 Astra（已通过网关 Chat Completions 简短问答测试）、DeepSeek V4.1 Flash、DeepSeek V4 Pro、Claude Sonnet 4.6、Claude Opus 5.5 和 Kimi K3；旧项目保存的 GPT-5.5 会在加载时兼容映射为 GPT-5.6。DeepSeek 当前正式 API ID 为 `deepseek-flash`，支持视觉输入和 `low/high/max` 思考强度，旧的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` 仅作为兼容别名映射到 Flash。DeepSeek 可用模型以网关 `/models` 实际返回为准。Claude 参考图会在前端压缩后再提交，以降低多图请求体积。Kimi K3 通过官方 OpenAI 兼容 Chat Completions 网关接入，支持参考图视觉输入并默认使用最高思考强度。提示词 Skill 包含普通模型问答、MiniMax H3 提示词生成器、南鸢图片反推、极简产品广告生成器和品牌宣传短片生成器。后两者各自提供 `自动识别`、`T2VA`、`I2VA`、`L2VA`、`FL2VA`、`Ref2VA` H3 模式和独立的 `3` 至 `15` 秒逐秒时长选项，产品广告默认 `10` 秒、品牌宣传默认 `15` 秒；自动识别会按参考图数量选择文生、首帧、首尾帧或多参考结构，手动选择会覆盖自动结果。单张图手动选择 `Ref2VA` 时只将现有图片作为参考，但输出多参考 H3 结构。它们只输出可直接用于 H3 的英文视频提示词，不提供额外尺寸或比例控件。输出依据已连接素材和用户需求，不会在该节点中生成或剪辑媒体，也不会把未提供的产品规格、品牌事实或标识当作事实。南鸢图片反推至少需要一张参考图，可不连接提示词直接运行；输出按图片类型提供中文结构拆解、适用时的参考色卡和可直接复制的完整提示词，并强制移除 `nuyoah` 署名、其他签名、水印和额外作者文字。
+- 模型回答：支持 GPT-5.6、GPT-6 Astra、DeepSeek V4.1 Flash、DeepSeek V4 Pro、Claude Sonnet 4.6、Claude Opus 5.5 和 Kimi K3；旧项目保存的 GPT-5.5 会在加载时兼容映射为 GPT-5.6。DeepSeek 当前正式 API ID 为 `deepseek-flash`，支持视觉输入和 `low/high/max` 思考强度，旧的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp` 仅作为兼容别名映射到 Flash。DeepSeek 可用模型以网关 `/models` 实际返回为准。Claude 与 GPT-6 Astra 的参考图会在前端压缩后再提交，以降低多图请求体积。Kimi K3 通过 OpenAI 兼容 Chat Completions 网关接入，模型回答节点分别提供魔芋 AI（内部选项 `kimi-k3-moyu`，地址 `https://www.moyu.cn/v1`）与 Moonshot 官方（内部选项 `kimi-k3-moonshot`，地址 `https://api.moonshot.cn/v1`），两者各自读取独立 key，实际 API 模型均为 `kimi-k3`，并支持参考图视觉输入与最高思考强度。提示词 Skill 包含普通模型问答、MiniMax H3 提示词生成器、南鸢图片反推、极简产品广告生成器和品牌宣传短片生成器。MiniMax H3 与品牌宣传短片模式各自提供 `自动识别`、`T2VA`、`I2VA`、`L2VA`、`FL2VA`、`Ref2VA` H3 模式和独立的 `3` 至 `30` 秒逐秒时长选项；极简产品广告模式保持 `3` 至 `15` 秒逐秒时长选项，产品广告默认 `10` 秒、品牌宣传默认 `15` 秒。自动识别会按参考图数量选择文生、首帧、首尾帧或多参考结构，手动选择会覆盖自动结果。单张图手动选择 `Ref2VA` 时只将现有图片作为参考，但输出多参考 H3 结构。它们只输出可直接用于 H3 的英文视频提示词，不提供额外尺寸或比例控件。输出依据已连接素材和用户需求，不会在该节点中生成或剪辑媒体，也不会把未提供的产品规格、品牌事实或标识当作事实。南鸢图片反推至少需要一张参考图，可不连接提示词直接运行；输出按图片类型提供中文结构拆解、适用时的参考色卡和可直接复制的完整提示词，并强制移除 `nuyoah` 署名、其他签名、水印或额外作者文字。
 
 各提供商密钥由本机服务读取，配置文件位于当前 Windows 用户的 `%APPDATA%\image2-canvas\providers.json`；密钥不得写入项目、导出文件、日志或 Git。
 
@@ -88,7 +88,7 @@
 ### 开始前
 
 ```powershell
-cd E:\AI剧本\image2-canvas
+cd E:\codex\image2-canvas
 git status --short --branch
 git log --oneline --decorate -12
 npm run verify
@@ -117,14 +117,14 @@ git tag stable-YYYYMMDD-<task-name>
 默认不同时打开多个窗口修改同一个目录。确实需要并行任务时，为每个独立任务创建 worktree：
 
 ```powershell
-git worktree add -b feat/<task-name> E:\AI剧本\image2-canvas-work\<task-name> master
+git worktree add -b feat/<task-name> E:\codex\image2-canvas-work\<task-name> master
 git worktree list
 ```
 
 任务完成并合并后，确认目录干净再移除：
 
 ```powershell
-git worktree remove E:\AI剧本\image2-canvas-work\<task-name>
+git worktree remove E:\codex\image2-canvas-work\<task-name>
 git worktree prune
 ```
 
