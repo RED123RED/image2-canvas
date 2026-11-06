@@ -1856,16 +1856,27 @@ async function createResponse(req, res) {
     }
     if (isKimi) requestBody.reasoning_effort = ["low", "high", "max"].includes(body.kimiReasoningEffort) ? body.kimiReasoningEffort : "max";
     const responseBaseUrl = isDeepseek ? deepseekBaseUrl : isKimi ? await resolveKimiBaseUrl(selectedModel) : baseUrl;
-    const response = await fetch(`${responseBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(150_000)
-    });
-    const raw = await response.text();
+    let response;
+    let raw = "";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      response = await fetch(`${responseBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(150_000)
+      });
+      raw = await response.text();
+      if (response.ok || ![502, 503, 504].includes(response.status) || attempt === 1) break;
+      let retrySeconds = Number(response.headers.get("retry-after")) || 0;
+      try {
+        const retryPayload = JSON.parse(raw);
+        retrySeconds ||= Number(retryPayload?.detail?.retry_after || retryPayload?.retry_after) || 0;
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, Math.min(120, Math.max(1, retrySeconds || 60)) * 1000));
+    }
     let result;
     try { result = JSON.parse(raw); } catch { result = { error: { message: raw.slice(0, 500) || "接口返回了无法解析的内容" } }; }
-    if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || `模型回答失败 (${response.status})`);
+    if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || diagnosticText(raw) || `模型回答失败 (${response.status})`);
     const answer = usingNuyoahSkill ? removeNuyoahSignature(responseTextFrom(result)) : responseTextFrom(result);
     if (!answer) throw gatewayError(502, "接口没有返回可显示的文本回答");
     return sendJson(res, 200, { answer, model: selectedModel, provider: isDeepseek ? "deepseek" : isKimi ? "kimi" : "openai", references: references.length, skill: answerSkill, h3Mode: usingDirectH3Skill ? h3Mode : undefined });

@@ -466,6 +466,10 @@ function escapeHtml(value) {
 function promptMarkupFromPlainText(value) {
   return escapeHtml(String(value ?? "").replace(/\r\n?/g, "\n")).replace(/\n/g, "<br>");
 }
+function isPromptThemeDefaultColor(color) {
+  const normalized = String(color || "").replace(/\s+/g, "").toLowerCase();
+  return ["#fff", "#ffffff", "white", "rgb(255,255,255)", "rgba(255,255,255,1)"].includes(normalized);
+}
 function sanitizePromptMarkup(markup, fallback = "") {
   const source = String(markup || "").trim();
   if (!source) return promptMarkupFromPlainText(fallback);
@@ -482,7 +486,7 @@ function sanitizePromptMarkup(markup, fallback = "") {
     const styles = [];
     const color = String(node.style.color || "").trim();
     const fontSize = String(node.style.fontSize || "").trim();
-    if (/^(#[0-9a-f]{3,8}|rgb\([^)]{1,32}\)|rgba\([^)]{1,40}\)|hsl\([^)]{1,40}\)|hsla\([^)]{1,48}\))$/i.test(color)) styles.push(`color:${color}`);
+    if (!isPromptThemeDefaultColor(color) && /^(#[0-9a-f]{3,8}|rgb\([^)]{1,32}\)|rgba\([^)]{1,40}\)|hsl\([^)]{1,40}\)|hsla\([^)]{1,48}\))$/i.test(color)) styles.push(`color:${color}`);
     if (/^\d{1,3}px$/.test(fontSize)) styles.push(`font-size:${fontSize}`);
     return styles.length ? `<span style="${styles.join(";")}">${inner}</span>` : inner;
   };
@@ -1166,8 +1170,21 @@ async function loadProjectMetas() {
 function applyTheme(theme) { const value = themeLabels[theme] ? theme : "light"; document.documentElement.dataset.theme = value; $$("[data-theme-value]").forEach(button => button.classList.toggle("is-active", button.dataset.themeValue === value)); }
 function setTheme(theme) {
   if (!themeLabels[theme]) return;
-  if (state) { state.theme = theme; scheduleSave(); } else { globalTheme = theme; localStorage.setItem("image2-canvas-theme", theme); }
+  if (state) state.theme = theme; else { globalTheme = theme; localStorage.setItem("image2-canvas-theme", theme); }
   applyTheme(theme);
+  if (state) { normalizePromptThemeTextColors(); scheduleSave(); }
+}
+function normalizePromptThemeTextColors() {
+  if (!state) return;
+  state.nodes.filter(node => node.type === "prompt").forEach(node => {
+    const markup = sanitizePromptMarkup(node.contentMarkup, node.content);
+    if (markup !== node.contentMarkup) node.contentMarkup = markup;
+  });
+  $$('[data-prompt-content] span[style]').forEach(span => {
+    if (!isPromptThemeDefaultColor(span.style.color)) return;
+    span.style.removeProperty("color");
+    if (!span.getAttribute("style")) span.removeAttribute("style");
+  });
 }
 function formatDate(timestamp) { return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp)); }
 function formatGenerationDuration(durationMs) {
@@ -2577,6 +2594,51 @@ function renderEdges() {
   } else draft?.remove();
 }
 function canvasNodeElement(id) { const selector = `[data-node-id="${CSS.escape(id)}"]`; return frameLayer.querySelector(selector) || nodeLayer.querySelector(selector); }
+function updateAnswerNodeDom(node) {
+  const element = canvasNodeElement(node.id);
+  if (!element) return false;
+  const runButton = element.querySelector(`[data-run-answer="${CSS.escape(node.id)}"]`);
+  const modelSelect = element.querySelector(`[data-answer-model="${CSS.escape(node.id)}"]`);
+  const response = element.querySelector(`[data-answer-selectable="${CSS.escape(node.id)}"]`);
+  if (!runButton || !response) return false;
+  const { answerText, runLabel } = answerNodeText(node);
+  if (modelSelect && Array.from(modelSelect.options).some(option => option.value === node.model)) modelSelect.value = node.model;
+  runButton.disabled = node.status === "running";
+  runButton.innerHTML = `${icon(node.status === "running" ? "loader-circle" : "send-horizontal")} ${escapeHtml(runLabel)}`;
+  response.textContent = answerText;
+  response.classList.toggle("is-error", Boolean(node.error));
+  response.classList.toggle("is-ready", Boolean(!node.error && node.answer));
+  return true;
+}
+function updateAnswerModelDom(node) {
+  const element = canvasNodeElement(node.id);
+  if (!element) return false;
+  const inputs = element.querySelector(".answer-inputs");
+  if (!inputs) return false;
+  const template = document.createElement("template");
+  template.innerHTML = renderAnswerNodeHtml(node, "", "");
+  const nextSettings = template.content.querySelector(".answer-deepseek-settings");
+  const currentSettings = element.querySelector(".answer-deepseek-settings");
+  currentSettings?.remove();
+  if (nextSettings) { inputs.after(nextSettings); bindAnswerDeepseekControls(nextSettings); }
+  element.style.height = `${node.height}px`;
+  updateAnswerNodeDom(node);
+  renderEdges();
+  return true;
+}
+function bindAnswerDeepseekControls(root) {
+  root.querySelectorAll('[data-answer-deepseek-thinking]').forEach(control => control.addEventListener("change", event => {
+    event.stopPropagation(); const node = findNode(control.dataset.answerDeepseekThinking); if (!node || node.type !== "answer") return;
+    recordHistory(); node.deepseekThinking = normalizedDeepseekThinking(event.target.value);
+    const effort = root.querySelector(`[data-answer-deepseek-effort="${CSS.escape(node.id)}"]`);
+    if (effort) effort.disabled = node.deepseekThinking === "disabled";
+    renderInspector(); scheduleSave();
+  }));
+  root.querySelectorAll('[data-answer-deepseek-effort]').forEach(control => control.addEventListener("change", event => {
+    event.stopPropagation(); const node = findNode(control.dataset.answerDeepseekEffort); if (!node || node.type !== "answer") return;
+    recordHistory(); node.deepseekReasoningEffort = normalizedDeepseekReasoningEffort(event.target.value); renderInspector(); scheduleSave();
+  }));
+}
 function renderCanvas() {
   syncAllVideoEditorClips();
   const frames = state.nodes.filter(node => node.type === "frame").sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -2750,7 +2812,7 @@ function applyPromptInlineStyle(nodeId, property, value) {
     range = window.getSelection?.()?.getRangeAt?.(0)?.cloneRange();
   }
   if (!range || range.collapsed) return toast("请先选择要调整的文字", true);
-  const before = snapshot(); const wrapper = document.createElement("span"); const contents = range.extractContents(); clearPromptInlineStyle(contents, property); wrapper.style[property] = value; wrapper.append(contents); range.insertNode(wrapper);
+  const before = snapshot(); const wrapper = document.createElement("span"); const contents = range.extractContents(); clearPromptInlineStyle(contents, property); if (property === "color" && !isPromptThemeDefaultColor(value)) wrapper.style[property] = value; else if (property !== "color") wrapper.style[property] = value; wrapper.append(contents); range.insertNode(wrapper);
   const appliedRange = document.createRange(); appliedRange.selectNodeContents(wrapper); const current = window.getSelection?.(); current?.removeAllRanges(); current?.addRange(appliedRange);
   const nextSelection = promptSelectionOffsets(editor, appliedRange); updatePromptEditorAfterChange(editor, node, nextSelection); rememberPromptFormatSelection(nodeId); undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = [];
 }
@@ -2782,7 +2844,7 @@ function pastePromptPlainText(editor, event) {
   const range = selection.getRangeAt(0);
   if (!editor.contains(range.commonAncestorContainer)) return false;
   event.preventDefault();
-  const wrapper = document.createElement("span"); wrapper.style.color = "#ffffff";
+  const wrapper = document.createElement("span");
   const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
   lines.forEach((line, index) => { if (line) wrapper.append(document.createTextNode(line)); if (index < lines.length - 1) wrapper.append(document.createElement("br")); });
   range.deleteContents(); range.insertNode(wrapper);
@@ -2983,6 +3045,17 @@ function answerPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${i
 function answerInputPortTop(index) { return 133 + index * 30; }
 function answerPromptPortTop(index) { return answerInputPortTop(index); }
 function answerImagePortTop(node, index) { return answerInputPortTop(node.promptSlots + index); }
+function answerNodeText(node) {
+  const usingH3Skill = node.answerSkill === "minimax-h3";
+  const usingNuyoahSkill = node.answerSkill === "nuyoah-reverse";
+  const usingMinimalistProductAdSkill = node.answerSkill === "minimalist-product-ad";
+  const usingBrandPromoVideoSkill = node.answerSkill === "brand-promo-video";
+  const runningText = usingH3Skill ? "正在生成 MiniMax H3 提示词…" : usingNuyoahSkill ? "正在反推图片提示词…" : usingMinimalistProductAdSkill ? "正在编写产品广告提示词…" : usingBrandPromoVideoSkill ? "正在编写品牌宣传提示词…" : "模型正在回答…";
+  const emptyText = usingH3Skill ? "连接提示词和参考图后，将输出可直接用于 MiniMax H3 的视频提示词。" : usingNuyoahSkill ? "连接参考图后，将输出结构拆解、参考色卡和可直接复制的中文提示词。" : usingMinimalistProductAdSkill ? "连接产品图和产品需求后，将直接输出英文 H3 产品广告提示词。" : usingBrandPromoVideoSkill ? "连接品牌素材和宣传需求后，将直接输出英文 H3 宣传片提示词。" : "连接提示词后，模型回答会显示在这里。";
+  const runLabel = node.status === "running" ? (usingH3Skill ? "生成中" : usingNuyoahSkill ? "反推中" : usingMinimalistProductAdSkill || usingBrandPromoVideoSkill ? "生成中" : "回答中") : (usingH3Skill ? "生成 H3 提示词" : usingNuyoahSkill ? "反推图片提示词" : usingMinimalistProductAdSkill ? "生成广告提示词" : usingBrandPromoVideoSkill ? "生成宣传片提示词" : "请求回答");
+  const answerText = node.status === "running" ? runningText : node.error ? node.error : node.answer || emptyText;
+  return { runLabel, answerText };
+}
 function renderAnswerNodeHtml(node, selected, style) {
   const promptSlots = Array.from({ length: node.promptSlots }, (_, index) => { const edge = incomingEdge(node.id, answerPromptPortId(index)); const promptNode = findNode(edge?.source); const label = edge ? sourceLabelForEdge(edge) : "未连接"; return `<div class="input-slot${edge ? " is-connected" : ""}${promptNode?.disabled ? " is-disabled" : ""}"><span>${index ? `提示词 ${index + 1}` : "提示词"}</span><span>${escapeHtml(label)}</span></div>`; }).join("");
   const imageSlots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); const imageNode = findNode(edge?.source); return `<div class="input-slot${edge ? " is-connected" : ""}${imageNode?.disabled ? " is-disabled" : ""}"><span>参考图 ${index + 1}</span><span>${edge ? escapeHtml(sourceLabelForEdge(edge)) : "未连接"}</span></div>`; }).join("");
@@ -3001,12 +3074,9 @@ function renderAnswerNodeHtml(node, selected, style) {
   const skillSelect = `<div class="node-field answer-skill-field"><label>提示词 Skill</label><select class="node-select node-interactive" data-answer-skill="${node.id}" aria-label="回答 Skill">${answerSkillOptions.map(item => `<option value="${item.value}"${node.answerSkill === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div>`;
   const durationOptions = (options, duration) => options.map(seconds => `<option value="${seconds}"${duration === seconds ? " selected" : ""}>${seconds} 秒</option>`).join("");
   const skillSettings = usingH3Skill ? `${skillSelect}<div class="node-field-row answer-h3-settings"><div class="node-field"><label>H3 模式</label><select class="node-select node-interactive" data-answer-h3-mode="${node.id}" aria-label="MiniMax H3 模式">${h3AnswerModeOptions.map(item => `<option value="${item.value}"${node.h3Mode === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div><div class="node-field"><label>视频时长</label><select class="node-select node-interactive" data-answer-h3-duration="${node.id}" aria-label="MiniMax H3 视频时长">${durationOptions(h3DurationOptions, node.h3Duration)}</select></div></div><p class="field-note">自动识别：无图为文生视频，1 图为首帧，2 图为首尾帧，3 图及以上为全能多参考。</p>` : usingNuyoahSkill ? `${skillSelect}<p class="field-note">连接至少一张参考图即可反推；输出不会加入署名、水印或额外文字。</p>` : usingMinimalistProductAdSkill ? `${skillSelect}<div class="node-field-row answer-h3-settings"><div class="node-field"><label>H3 模式</label><select class="node-select node-interactive" data-answer-product-ad-h3-mode="${node.id}" aria-label="极简产品广告 H3 模式">${h3AnswerModeOptions.map(item => `<option value="${item.value}"${productAdH3Mode === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div><div class="node-field"><label>视频时长</label><select class="node-select node-interactive" data-answer-product-ad-duration="${node.id}" aria-label="极简产品广告视频时长">${durationOptions(productAdDurationOptions, productAdDuration)}</select></div></div><p class="field-note">自动识别：无图为文生视频，1 图为首帧，2 图为首尾帧，3 图及以上为全能多参考。手动选择全能多参考时，单张图也会按 Ref2VA 结构输出，但不会新增参考图。</p>` : usingBrandPromoVideoSkill ? `${skillSelect}<div class="node-field-row answer-h3-settings"><div class="node-field"><label>H3 模式</label><select class="node-select node-interactive" data-answer-brand-promo-h3-mode="${node.id}" aria-label="品牌宣传短片 H3 模式">${h3AnswerModeOptions.map(item => `<option value="${item.value}"${brandPromoH3Mode === item.value ? " selected" : ""}>${item.label}</option>`).join("")}</select></div><div class="node-field"><label>视频时长</label><select class="node-select node-interactive" data-answer-brand-promo-duration="${node.id}" aria-label="品牌宣传短片视频时长">${durationOptions(brandPromoDurationOptions, brandPromoDuration)}</select></div></div><p class="field-note">自动识别：无图为文生视频，1 图为首帧，2 图为首尾帧，3 图及以上为全能多参考。手动选择全能多参考时，单张图也会按 Ref2VA 结构输出，但不会新增参考图。</p>` : skillSelect;
-  const runningText = usingH3Skill ? "正在生成 MiniMax H3 提示词…" : usingNuyoahSkill ? "正在反推图片提示词…" : usingMinimalistProductAdSkill ? "正在编写产品广告提示词…" : usingBrandPromoVideoSkill ? "正在编写品牌宣传提示词…" : "模型正在回答…";
-  const emptyText = usingH3Skill ? "连接提示词和参考图后，将输出可直接用于 MiniMax H3 的视频提示词。" : usingNuyoahSkill ? "连接参考图后，将输出结构拆解、参考色卡和可直接复制的中文提示词。" : usingMinimalistProductAdSkill ? "连接产品图和产品需求后，将直接输出英文 H3 产品广告提示词。" : usingBrandPromoVideoSkill ? "连接品牌素材和宣传需求后，将直接输出英文 H3 宣传片提示词。" : "连接提示词后，模型回答会显示在这里。";
-  const answerText = node.status === "running" ? runningText : node.error ? node.error : node.answer || emptyText;
+  const { answerText, runLabel } = answerNodeText(node);
   const responseClass = node.error ? " is-error" : node.answer ? " is-ready" : "";
   const expandLabel = node.answerExpanded ? "收起回答" : "展开回答";
-  const runLabel = node.status === "running" ? (usingH3Skill ? "生成中" : usingNuyoahSkill ? "反推中" : usingMinimalistProductAdSkill || usingBrandPromoVideoSkill ? "生成中" : "回答中") : (usingH3Skill ? "生成 H3 提示词" : usingNuyoahSkill ? "反推图片提示词" : usingMinimalistProductAdSkill ? "生成广告提示词" : usingBrandPromoVideoSkill ? "生成宣传片提示词" : "请求回答");
   return `<article class="canvas-node answer-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "message-square-text")}<div class="node-body answer-body"><div class="node-field answer-model-field"><label>模型</label><select class="node-select node-interactive" data-answer-model="${node.id}" aria-label="回答模型">${modelOptions}</select></div><div class="answer-inputs">${promptSlots}${imageSlots}</div>${deepseekSettings}${skillSettings}<div class="answer-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-answer-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-add-answer-image-input="${node.id}"${node.inputSlots >= 8 ? " disabled" : ""}>${icon("image-plus")} 添加参考图输入</button></div><button class="run-node-button node-interactive" type="button" data-run-answer="${node.id}"${node.status === "running" ? " disabled" : ""}>${icon(node.status === "running" ? "loader-circle" : "send-horizontal")} ${runLabel}</button><div class="answer-response-wrap${node.answerExpanded ? " is-expanded" : ""}"><div class="answer-response-heading"><span>回答内容</span><span class="answer-response-actions"><button class="answer-response-toggle node-interactive" type="button" data-copy-answer="${node.id}" aria-label="复制回答" data-tooltip="复制回答">${icon("copy")}</button><button class="answer-response-toggle node-interactive" type="button" data-toggle-answer-response="${node.id}" aria-label="${expandLabel}">${icon(node.answerExpanded ? "chevron-up" : "chevron-down")} ${expandLabel}</button></span></div><div class="answer-response node-interactive${responseClass}" data-answer-selectable="${node.id}">${escapeHtml(answerText)}</div></div></div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, answerPromptPortId(index), "prompt", "input", index ? `提示词 ${index + 1}` : "提示词", answerPromptPortTop(index))).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", `参考图 ${index + 1}`, answerImagePortTop(node, index))).join("")}</article>`;
 }
 
@@ -3159,15 +3229,13 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
     recordHistory(); node.answerExpanded = !node.answerExpanded; renderCanvas(); renderInspector(); scheduleSave();
   }));
   $$("[data-run-answer]").forEach(button => button.addEventListener("click", event => { event.stopPropagation(); runAnswerNode(button.dataset.runAnswer); }));
-  $$('[data-answer-model]').forEach(control => control.addEventListener("change", event => { const node = findNode(control.dataset.answerModel); if (!node || node.type !== "answer") return; recordHistory(); node.model = normalizedAnswerModel(event.target.value); node.height = Math.max(320, Math.max(Number(node.height) || 0, answerNodeHeight(node))); renderCanvas(); renderInspector(); scheduleSave(); }));
-  $$('[data-answer-deepseek-thinking]').forEach(control => control.addEventListener("change", event => {
-    event.stopPropagation(); const node = findNode(control.dataset.answerDeepseekThinking); if (!node || node.type !== "answer") return;
-    recordHistory(); node.deepseekThinking = normalizedDeepseekThinking(event.target.value); renderCanvas(); renderInspector(); scheduleSave();
+  $$('[data-answer-model]').forEach(control => control.addEventListener("change", event => {
+    const node = findNode(control.dataset.answerModel); if (!node || node.type !== "answer") return;
+    recordHistory(); node.model = normalizedAnswerModel(event.target.value); node.height = Math.max(320, Math.max(Number(node.height) || 0, answerNodeHeight(node)));
+    if (!updateAnswerModelDom(node)) renderCanvas();
+    renderInspector(); scheduleSave();
   }));
-  $$('[data-answer-deepseek-effort]').forEach(control => control.addEventListener("change", event => {
-    event.stopPropagation(); const node = findNode(control.dataset.answerDeepseekEffort); if (!node || node.type !== "answer") return;
-    recordHistory(); node.deepseekReasoningEffort = normalizedDeepseekReasoningEffort(event.target.value); renderCanvas(); renderInspector(); scheduleSave();
-  }));
+  $$(".answer-deepseek-settings").forEach(bindAnswerDeepseekControls);
   $$("[data-answer-skill]").forEach(control => control.addEventListener("change", event => {
     event.stopPropagation(); const node = findNode(control.dataset.answerSkill); if (!node || node.type !== "answer") return;
     recordHistory(); const previousExtraHeight = answerSkillExtraHeight(node.answerSkill); node.answerSkill = normalizedAnswerSkill(event.target.value); const nextExtraHeight = answerSkillExtraHeight(node.answerSkill); node.height = Math.max(answerNodeHeight(node), (Number(node.height) || answerNodeHeight(node)) + nextExtraHeight - previousExtraHeight); renderCanvas(); renderInspector(); scheduleSave();
@@ -3896,14 +3964,15 @@ async function sourceToDataUrl(src) {
   const blob = await response.blob();
   return await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
 }
-async function sourceToClaudeDataUrl(src) {
+async function sourceToCompressedDataUrl(src, maxSize, quality, providerLabel) {
   const dataUrl = await sourceToDataUrl(src);
   const response = await fetch(dataUrl);
-  if (!response.ok) throw new Error("Claude 参考图读取失败");
+  if (!response.ok) throw new Error(`${providerLabel}参考图读取失败`);
   const blob = await response.blob();
-  // Keep Claude multi-image requests small enough for the gateway while retaining visual detail.
-  return createPreviewDataUrl(blob, 1400, .8);
+  return createPreviewDataUrl(blob, maxSize, quality);
 }
+async function sourceToClaudeDataUrl(src) { return sourceToCompressedDataUrl(src, 1400, .8, "Claude "); }
+async function sourceToAstraDataUrl(src) { return sourceToCompressedDataUrl(src, 1600, .82, "GPT-6 Astra "); }
 function nodeDisplaySource(node) { return node?.previewSrc || node?.src || ""; }
 function imageSourceFromNode(node) {
   if (!node || node.disabled) return ""; if (node.type === "image") return node.originalSrc || node.src || "";
@@ -4197,6 +4266,7 @@ async function runAnswerNode(nodeId) {
   const usesDeepseek = answerModelIsDeepseek(node.model);
   const usesClaude = answerModelIsClaude(node.model);
   const usesKimi = answerModelIsKimi(node.model);
+  const usesAstra = node.model === "gpt-6-astra";
   const kimiModel = usesKimi ? normalizedKimiAnswerModel(node.model) : "";
   try {
     const status = await requestJson("/api/status", {}, 8_000);
@@ -4227,22 +4297,22 @@ async function runAnswerNode(nodeId) {
   const sources = imageEdges.map(edge => imageSourceFromNode(findNode(edge.source))).filter(Boolean).slice(0, 8);
   if (nuyoahEnabled && !sources.length) { selectNode(nodeId); return toast("南鸢图片反推需要至少连接一张参考图", true); }
   if (usesDeepseek && sources.length && node.model !== deepseekVisionAnswerModel) { selectNode(nodeId); return toast("当前 DeepSeek 模型不支持图片输入，请切换到 V4.1 Flash", true); }
-  recordHistory(); node.status = "running"; node.error = ""; renderCanvas(); renderInspector();
+  recordHistory(); node.status = "running"; node.error = ""; if (!updateAnswerNodeDom(node)) renderCanvas(); renderInspector();
   try {
     const originalReferences = await Promise.all(sources.map(sourceToDataUrl));
     const referenceMetadata = nuyoahEnabled ? await Promise.all(originalReferences.map(async dataUrl => { try { return await readImageDimensions(dataUrl); } catch { return null; } })) : undefined;
-    const references = usesClaude ? await Promise.all(originalReferences.map(sourceToClaudeDataUrl)) : originalReferences;
+    const references = usesClaude ? await Promise.all(originalReferences.map(sourceToClaudeDataUrl)) : usesAstra ? await Promise.all(originalReferences.map(sourceToAstraDataUrl)) : originalReferences;
     const h3Enabled = node.answerSkill === "minimax-h3";
     const h3Mode = h3Enabled ? resolveH3AnswerMode(node, references.length) : node.answerSkill === "minimalist-product-ad" ? resolveH3AnswerMode({ h3Mode: node.productAdH3Mode }, references.length) : node.answerSkill === "brand-promo-video" ? resolveH3AnswerMode({ h3Mode: node.brandPromoH3Mode }, references.length) : undefined;
     const adDurationSeconds = node.answerSkill === "minimalist-product-ad" ? normalizedProductAdDuration(node.productAdDuration, 10) : node.answerSkill === "brand-promo-video" ? normalizedBrandPromoDuration(node.brandPromoDuration, 15) : undefined;
-    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && !usesClaude && !usesKimi && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt: prompt || "请对连接的参考图进行完整图片反推。", model: usesKimi ? kimiModel : node.model, references, referenceMetadata, skill: node.answerSkill, h3Mode, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, adDurationSeconds, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined, kimiReasoningEffort: usesKimi ? "max" : undefined }) }, 165_000);
+    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && !usesClaude && !usesKimi && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt: prompt || "请对连接的参考图进行完整图片反推。", model: usesKimi ? kimiModel : node.model, references, referenceMetadata, skill: node.answerSkill, h3Mode, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, adDurationSeconds, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined, kimiReasoningEffort: usesKimi ? "max" : undefined }) }, 240_000);
     node.answer = String(result.answer || ""); node.model = result.model || node.model; node.status = "idle";
     toast("模型回答已完成");
   } catch (error) {
     node.status = "idle"; node.error = error?.message || "模型回答失败";
     toast(node.error, true);
   } finally {
-    renderCanvas(); renderInspector(); scheduleSave(); updateHistoryButtons();
+    if (!updateAnswerNodeDom(node)) renderCanvas(); renderInspector(); scheduleSave(); updateHistoryButtons();
   }
 }function setCropSelection(selection) {
   if (!cropSession) return; cropSession.selection = selection; cropSelection.hidden = false;
