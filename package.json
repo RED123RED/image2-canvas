@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "verify": "node --check public/app.js && node --check server.mjs && node --check image2-desktop-launcher.mjs"
+    "verify": "node --check public/app.js && node --check public/seedream-ark.js && node --check server.mjs && node --check image2-desktop-launcher.mjs",
+    "test:ark": "node --test tests/seedream-ark.test.mjs"
   },
   "engines": {
     "node": ">=20"

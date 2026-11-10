@@ -23,6 +23,7 @@ npm start
 - Image2 模块：接收一条提示词和最多 8 张参考图，可选择 GPT Image 2、GPT Image 2.5、GPT Image 2.5 Flare 或 GPT Image 2.5 Sunburst。2.5 模型沿用 Image2 的五档比例，并额外提供 `1K`、`2K`、`4K` 输出分辨率；`2K` 为默认档位，`4K` 使用各比例允许的最大尺寸（`9:16` 为 `2160 × 3840`）。Flare 与 Sunburst 支持 `auto` 至 `max` 品质，基础 GPT Image 2.5 仅提供已确认兼容的低、中、高品质。Image2 请求会明确要求 PNG 输出，以避免网关将细节图转换为有损 JPEG。
 - 模型回答模块：接收最多 6 条提示词和最多 8 张参考图，支持 GPT-5.6、GPT-6 Astra、DeepSeek、Claude Sonnet 4.6、Claude Opus 5.5、Kimi K3，以及通用问答、MiniMax H3 提示词、南鸢图片反推、极简产品广告和品牌宣传短片提示词输出；旧画布保存的 GPT-5.5 会兼容映射到 GPT-5.6。Kimi K3 在节点中分为“魔芋 AI”和“Moonshot 官方”两个独立选项，各自使用独立 API Key，实际请求均提交对应网关的 `kimi-k3` 模型。MiniMax H3 和品牌宣传短片模式分别提供 `自动识别`、`T2VA`、`I2VA`、`L2VA`、`FL2VA`、`Ref2VA` 模式和 `3` 至 `30` 秒逐秒时长选择；极简产品广告模式保持 `3` 至 `15` 秒逐秒时长选择。它们直接输出对应的英文 H3 视频提示词，不会直接生成媒体。自动识别按参考图数量选择结构；手动选择会覆盖它，单张图选择 `Ref2VA` 时仍只使用该图，但按多参考结构输出。
 - 结果模块：生成完成后自动出现在模型右侧，并保留模型到结果的连接。
+- 火山官方 Seedream：在生图节点选择 Seedream 5.0 Flash 或 Pro；只连提示词即可文字生图，连接 1–10 张参考图后自动进行参考图编辑，无须选择模式。输出为 2K 档位 PNG，每次 1 张，比例使用节点选择。密钥在设置中的“火山引擎官方 API Key”单独保存，不覆盖现有 Seedream 网关。没有图层拆分功能。
 - 连线：从输出端口拖到同类型输入端口；一个输入端口只保留一条连接，重新连接会替换旧来源。
 - 串联：Image2 的结果可以作为下一个 Image2 模块的参考图继续连接。
 
@@ -49,6 +50,7 @@ npm start
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | 空 | Image2 API Key |
+| `ARK_API_KEY` | 空 | 火山引擎官方 Seedream API Key，也可在设置中保存 |
 | `IMAGE2_BASE_URL` | `https://rehdasu.cn/v1` | OpenAI 兼容接口地址 |
 | `IMAGE2_MODEL` | `gpt-image-2.5-sunburst` | 本机服务默认模型；节点仍可单独选择其他已接入模型 |
 | `KIMI_BASE_URL` | `https://api.moonshot.cn/v1` | 覆盖 Kimi K3 的 Moonshot 官方地址；魔芋 AI 固定使用 `https://www.moyu.cn/v1` |
@@ -80,3 +82,5 @@ npm start
 修改后可执行 npm run verify 检查前端、服务端和桌面启动脚本语法；人工操作检查见 docs/REGRESSION-CHECKLIST.md。
 
 更新 Image2 服务端代码后，需要通过首页“恢复生图服务”或重新启动桌面版加载新版本。Image 2.5 会在生成前检查比例协议版本；服务未重启时会阻止生成，避免旧服务回退为方形尺寸。
+
+火山引擎接入同样检查服务协议版本；官方生图请求不会自动重试，失败后请先确认服务端状态，再手动运行。`npm run test:ark` 使用独立临时目录和模拟网关，检查两款模型的无图、单图、10 图请求、新旧密钥隔离、结果持久化和失败行为，不产生 API 费用。
