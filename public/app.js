@@ -111,7 +111,6 @@ const answerSkillOptions = Object.freeze([
   { value: "brand-promo-video", label: "品牌宣传短片生成器" }
 ]);
 const answerModelOptions = Object.freeze([
-  { value: "gpt-5.6", label: "GPT-5.6 系列", provider: "openai", vision: true },
   { value: "gpt-6-astra", label: "GPT-6 Astra", provider: "openai", vision: true },
   { value: "deepseek-flash", label: "DeepSeek V4.1 Flash", provider: "deepseek", vision: true },
   { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek", vision: false },
@@ -134,7 +133,7 @@ function answerModelIsDeepseek(value) { return deepseekAnswerModels.includes(nor
 function answerModelIsClaude(value) { return claudeAnswerModels.includes(String(value || "")); }
 function normalizedKimiAnswerModel(value) { return String(value || "") === "kimi-k3" ? "kimi-k3-moonshot" : String(value || ""); }
 function answerModelIsKimi(value) { return kimiAnswerModels.includes(normalizedKimiAnswerModel(value)); }
-function normalizedAnswerModel(value) { const requested = String(value || ""); const compatible = requested === "gpt-5.5" ? "gpt-5.6" : requested; const normalized = normalizedKimiAnswerModel(normalizedDeepseekModel(compatible)); return answerModelOptions.some(option => option.value === normalized) ? normalized : "gpt-5.6"; }
+function normalizedAnswerModel(value) { const normalized = normalizedKimiAnswerModel(normalizedDeepseekModel(String(value || ""))); return answerModelOptions.some(option => option.value === normalized) ? normalized : answerModelOptions[0].value; }
 function normalizedDeepseekThinking(value) { return value === "disabled" ? "disabled" : "enabled"; }
 function normalizedDeepseekReasoningEffort(value) { return ["low", "high", "max"].includes(value) ? value : "high"; }
 const h3AnswerModeOptions = Object.freeze([
@@ -707,7 +706,7 @@ function createVideoPreviewNode(x, y) {
   return { id: uid("video-preview"), type: "video-preview", name: "成片预览", x, y, width: 360, height: nodeHeight("video-preview"), localVideoSrc: "", localVideoName: "", outputType: "mp4", createdAt: Date.now() };
 }
 function createAnswerNode(x, y) {
-  const node = { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, model: "gpt-5.6", deepseekThinking: "enabled", deepseekReasoningEffort: "high", answerSkill: "none", h3Mode: "auto", h3Duration: 6, productAdH3Mode: "auto", productAdDuration: 10, brandPromoH3Mode: "auto", brandPromoDuration: 15, status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
+  const node = { id: uid("answer"), type: "answer", name: "模型回答", x, y, width: 380, promptSlots: 1, inputSlots: 4, model: answerModelOptions[0].value, deepseekThinking: "enabled", deepseekReasoningEffort: "high", answerSkill: "none", h3Mode: "auto", h3Duration: 6, productAdH3Mode: "auto", productAdDuration: 10, brandPromoH3Mode: "auto", brandPromoDuration: 15, status: "idle", answer: "", error: "", answerExpanded: false, createdAt: Date.now() };
   node.height = answerNodeHeight(node);
   return node;
 }
