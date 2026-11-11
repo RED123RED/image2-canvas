@@ -1,13 +1,22 @@
-// Shared protocol for the official Ark provider; legacy Seedream stays independent.
+// Shared image contract; ordinary Ark and Agent Plan keep separate models and credentials.
 export const arkProtocol = 'seedream-ark-auto-v1';
 export const arkBaseUrl = 'https://ark.cn-beijing.volces.com/api/v3';
 export const arkModels = Object.freeze([
   { id: 'doubao-seedream-5-0-flash-260915', label: 'Seedream 5.0 Flash' },
   { id: 'doubao-seedream-5-0-pro-260628', label: 'Seedream 5.0 Pro' }
 ]);
+export const arkPlanProtocol = 'seedream-ark-plan-v1';
+export const arkPlanBaseUrl = 'https://ark.cn-beijing.volces.com/api/plan/v3';
+export const arkPlanModels = Object.freeze([
+  { id: 'doubao-seedream-5.0-flash', label: 'Seedream 5.0 Flash' },
+  { id: 'doubao-seedream-5-0-pro', label: 'Seedream 5.0 Pro' }
+]);
+export function isArkProvider(provider) { return provider === 'ark' || provider === 'ark-plan'; }
+export function arkModelsForProvider(provider) { return provider === 'ark-plan' ? arkPlanModels : arkModels; }
 export const arkSizes = Object.freeze({ '1:1': '2048x2048', '3:4': '1536x2048', '4:3': '2048x1536', '16:9': '2848x1600', '9:16': '1600x2848' });
 export function buildArkPayload(body) {
-  if (!arkModels.some(item => item.id === body.model)) throw new Error('请选择已接入的火山引擎 Seedream 模型');
+  if (body.provider !== undefined && !isArkProvider(body.provider)) throw new Error('火山引擎服务提供商无效');
+  if (!arkModelsForProvider(body.provider).some(item => item.id === body.model)) throw new Error('请选择与火山引擎渠道匹配的 Seedream 模型');
   if (body.layer_decomposition || body.arkOperation === 'layers') throw new Error('画布未启用图层拆分，请刷新后重新提交');
   if (body.references !== undefined && !Array.isArray(body.references)) throw new Error('参考图列表格式无效');
   const references = Array.isArray(body.references) ? body.references : [];

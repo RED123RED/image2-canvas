@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { arkProtocol, arkBaseUrl, arkModels, buildArkPayload } from './public/seedream-ark.js';
+import { arkProtocol, arkBaseUrl, arkModels, arkPlanProtocol, arkPlanBaseUrl, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from './public/seedream-ark.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -563,20 +563,27 @@ async function resolveSeedreamApiKey(req) {
   return typeof config?.seedream?.apiKey === "string" ? config.seedream.apiKey.trim() : "";
 }
 
-async function resolveArkApiKey(req) {
+async function resolveArkApiKey(req, provider = 'ark') {
+  if (provider === 'ark-plan') {
+    const explicit = req.headers['x-ark-plan-api-key'];
+    if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
+    return String(process.env.ARK_PLAN_API_KEY || (await readProviderConfig())?.arkPlan?.apiKey || '').trim();
+  }
   const explicit = req.headers['x-ark-api-key'];
   if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
   return String(process.env.ARK_API_KEY || (await readProviderConfig())?.ark?.apiKey || '').trim();
 }
 
-async function saveArkProvider(req, res) {
+async function saveArkProvider(req, res, provider = 'ark') {
   try {
     const body = await readJson(req, 64 * 1024);
     const apiKey = String(body.apiKey || '').trim();
     if (!apiKey) return sendJson(res, 400, { error: '火山引擎 API Key 不能为空' });
     const previous = await readProviderConfig();
-    await saveProviderConfig({ ...previous, ark: { ...(previous.ark || {}), apiKey, baseUrl: arkBaseUrl, updatedAt: Date.now() } });
-    return sendJson(res, 200, { ready: true, provider: 'ark', protocol: arkProtocol, models: arkModels.map(item => item.id) });
+    const plan = provider === 'ark-plan';
+    const configKey = plan ? 'arkPlan' : 'ark';
+    await saveProviderConfig({ ...previous, [configKey]: { ...(previous[configKey] || {}), apiKey, baseUrl: plan ? arkPlanBaseUrl : arkBaseUrl, updatedAt: Date.now() } });
+    return sendJson(res, 200, { ready: true, provider, protocol: plan ? arkPlanProtocol : arkProtocol, models: arkModelsForProvider(provider).map(item => item.id) });
   } catch { return sendJson(res, 400, { error: '火山引擎设置保存失败' }); }
 }
 
@@ -899,9 +906,9 @@ async function requestImage2Generation(job) {
 }
 
 async function requestArkGeneration(job) {
-  const payload = buildArkPayload({ ...job.request, model: job.model });
+  const payload = buildArkPayload({ ...job.request, provider: job.provider, model: job.model });
   // A POST is never automatically retried: a lost response may already be billable.
-  const response = await fetch(`${arkBaseUrl}/images/generations`, { method: 'POST', headers: { Authorization: `Bearer ${job.request.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(10 * 60_000) });
+  const response = await fetch(`${job.provider === 'ark-plan' ? arkPlanBaseUrl : arkBaseUrl}/images/generations`, { method: 'POST', headers: { Authorization: `Bearer ${job.request.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(10 * 60_000) });
   let result;
   try { result = await response.json(); } catch { throw gatewayError(502, '火山引擎返回了无法解析的响应，请检查控制台后手动重试'); }
   if (!response.ok) {
@@ -1218,10 +1225,10 @@ async function executeJob(job) {
   await persistJobs();
   await writeJobLog(job, "started");
   try {
-    const result = job.provider === 'ark' ? await requestArkGeneration(job) : job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "runninghub-krea2" ? await requestRunningHubKrea2Generation(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : job.provider === "moyu" ? await requestSeedreamGeneration(job) : await requestImage2Generation(job);
+    const result = isArkProvider(job.provider) ? await requestArkGeneration(job) : job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "runninghub-krea2" ? await requestRunningHubKrea2Generation(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : job.provider === "moyu" ? await requestSeedreamGeneration(job) : await requestImage2Generation(job);
     if (result.mediaType === "video") job.media = await Promise.all(result.items.map((item, index) => persistGeneratedMedia(job, item, index)));
     else job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
-    if (job.provider === 'ark') job.imageCount = job.images.length;
+    if (isArkProvider(job.provider)) job.imageCount = job.images.length;
     job.status = "succeeded";
     job.mode = result.mode;
     job.referencesUsed = result.referencesUsed;
@@ -1280,7 +1287,7 @@ async function drainJobs() {
 async function createJob(req, res) {
   try {
     const body = await readJson(req);
-    if (body.provider === 'ark') return createArkJob(req, res, body);
+    if (isArkProvider(body.provider)) return createArkJob(req, res, body);
     if (body.provider === "gemini") return sendJson(res, 400, { error: "Gemini 已移除，请选择 Image2 或 Seedream" });
     const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "runninghub-krea2" ? "runninghub-krea2" : body.provider === "moyu" ? "moyu" : body.provider === "midjourney" ? "midjourney" : "image2";
     if (provider === "runninghub-h3") return createRunningHubJob(req, res, body);
@@ -1325,9 +1332,9 @@ async function createJob(req, res) {
 async function createArkJob(req, res, body) {
   try {
     buildArkPayload(body);
-    const apiKey = await resolveArkApiKey(req);
-    if (!apiKey) return sendJson(res, 401, { error: '请先在设置中保存火山引擎官方 API Key' });
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: 'queued', createdAt: Date.now(), provider: 'ark', model: body.model, imageCount: 1, request: { apiKey, prompt: String(body.prompt || ''), aspect: body.aspect, n: 1, references: body.references || [] } };
+    const apiKey = await resolveArkApiKey(req, body.provider);
+    if (!apiKey) return sendJson(res, 401, { error: body.provider === 'ark-plan' ? '请先在设置中保存火山 Agent Plan 套餐密钥' : '请先在设置中保存火山引擎官方 API Key' });
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: 'queued', createdAt: Date.now(), provider: body.provider, model: body.model, imageCount: 1, request: { apiKey, prompt: String(body.prompt || ''), aspect: body.aspect, n: 1, references: body.references || [] } };
     jobs.set(job.id, job); pendingJobIds.push(job.id);
     await persistJobs(); await writeJobLog(job, 'queued');
     sendJson(res, 202, { job: jobView(job) }); void drainJobs();
@@ -1955,13 +1962,14 @@ const server = http.createServer(async (req, res) => {
     const key = await resolveApiKey(req);
     const seedreamKey = await resolveSeedreamApiKey(req);
     const arkKey = await resolveArkApiKey(req);
+    const arkPlanKey = await resolveArkApiKey(req, 'ark-plan');
     const mjKey = await resolveMjApiKey(req);
     const runningHubKey = await resolveRunningHubApiKey(req);
     const deepseekKey = await resolveDeepseekApiKey(req);
     const claudeKey = await resolveClaudeApiKey(req);
     const moyuKimiKey = await resolveKimiApiKey(req, "kimi-k3-moyu");
     const moonshotKimiKey = await resolveKimiApiKey(req, "kimi-k3-moonshot");
-    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);
@@ -1969,6 +1977,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/providers/deepseek/health") return checkDeepseekGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/claude/health") return checkClaudeGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/kimi/health") return checkKimiGateway(req, res);
+  if (req.method === "POST" && url.pathname === "/api/providers/ark-plan") return saveArkProvider(req, res, 'ark-plan');
   if (req.method === "POST" && url.pathname === "/api/providers/ark") return saveArkProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/seedream") return saveSeedreamProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/midjourney") return saveMjProvider(req, res);

@@ -29,6 +29,12 @@ npm start
 
 没有图片输入时调用 `POST /v1/images/generations`；存在一张或多张图片输入时自动调用 `POST /v1/images/edits`。
 
+## 火山 Agent Plan 套餐渠道
+
+生图模型新增“火山套餐 · Seedream 5.0 Flash”和“火山套餐 · Seedream 5.0 Pro”。设置中的“火山 Agent Plan 套餐 API Key”独立保存；也可使用环境变量 ARK_PLAN_API_KEY。套餐使用 /api/plan/v3/images/generations，普通官方渠道保持 /api/v3/images/generations，密钥及模型 ID 分开，不会在套餐不可用时自动切换普通付费渠道。
+
+操作与现有节点一致：无图文字生图，连接参考图后自动编辑，最多 10 张、每次 1 张、2K 档位 PNG；没有模式选择和图层拆分。套餐 Pro 的模型 ID 为 doubao-seedream-5-0-pro，Flash 为 doubao-seedream-5.0-flash；不能直接套用普通渠道带日期的 ID。2026-11-11 已实际验证两款文字生图及 10 图输入编辑，详情见 docs/ARK-PLAN-VERIFICATION.md。图像编辑仍可能重绘细节，小字和规格需人工检查。
+
 ## 项目管理
 
 - 首页集中显示全部项目、节点数量、连接数量和更新时间。
@@ -51,6 +57,7 @@ npm start
 | --- | --- | --- |
 | `OPENAI_API_KEY` | 空 | Image2 API Key |
 | `ARK_API_KEY` | 空 | 火山引擎官方 Seedream API Key，也可在设置中保存 |
+| `ARK_PLAN_API_KEY` | 空 | 火山 Agent Plan 套餐专用密钥，与普通官方配置独立 |
 | `IMAGE2_BASE_URL` | `https://rehdasu.cn/v1` | OpenAI 兼容接口地址 |
 | `IMAGE2_MODEL` | `gpt-image-2.5-sunburst` | 本机服务默认模型；节点仍可单独选择其他已接入模型 |
 | `KIMI_BASE_URL` | `https://api.moonshot.cn/v1` | 覆盖 Kimi K3 的 Moonshot 官方地址；魔芋 AI 固定使用 `https://www.moyu.cn/v1` |

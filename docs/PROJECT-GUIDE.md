@@ -45,6 +45,15 @@
 
 各提供商密钥由本机服务读取，配置文件位于当前 Windows 用户的 `%APPDATA%\image2-canvas\providers.json`；密钥不得写入项目、导出文件、日志或 Git。
 
+## 火山 Agent Plan（2026-11-11）
+
+- 生图下拉框独立提供“火山套餐 · Seedream 5.0 Flash / Pro”；provider 为 ark-plan，模型仍保存在节点 arkModel 字段。普通 ark 节点和其他提供商不迁移、不改默认值。
+- 套餐地址固定为 https://ark.cn-beijing.volces.com/api/plan/v3/images/generations。实际可用 ID：doubao-seedream-5.0-flash、doubao-seedream-5-0-pro。普通官方带日期 ID 不可跨渠道混用。
+- 本地配置为 providers.json 的 arkPlan.apiKey；环境变量 ARK_PLAN_API_KEY；可选请求头 x-ark-plan-api-key。它们都不会回退到普通 ARK_API_KEY、ark.apiKey 或 Seedream 网关配置。POST /api/providers/ark-plan 只更新该配置项；GET /api/status 的 arkPlan 仅返回就绪状态、地址、模型与协议，不返回密钥。
+- 协议 seedream-ark-plan-v1；旧服务或缺少套餐密钥时，前端阻止创建任务。沿用官方渠道请求校验、异步队列、PNG 文件保存及恢复机制。付费生成 POST 不自动重试、不自动换渠道。
+- 无参考图生成，有参考图自动编辑；目前允许 1–10 张，单张不超过 30 MB，输出单张 2K 档 PNG，按节点比例提交具体像素尺寸。无模式选择、无图层拆分；不发送本次被套餐 Pro 拒绝的 sequential_image_generation 参数。
+- 两款文字生图及各一次十图编辑已真实通过。十图编辑用同一海报重复十次验证数量，不代表十种素材融合质量或官方所有上限均已验证。具体测试、效果限制及运行记录见 ARK-PLAN-VERIFICATION.md；离线回归沿用 npm run test:ark。
+
 ## 代码分区
 
 | 路径 | 责任 | 修改风险 |
