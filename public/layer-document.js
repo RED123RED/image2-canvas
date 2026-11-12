@@ -27,17 +27,24 @@ export function createLayerDocument(items, source = '', name = '分层作品') {
   return {version:1,name,width,height,originalSrc:source,layers,initialLayers:structuredClone(layers)};
 }
 export function normalizeLayerDocument(doc) {
-  if (!doc || doc.version!==1 || !Array.isArray(doc.layers) || doc.layers.length>MAX_LAYERS) throw new Error('分层作品格式不支持');
+  if (!doc || ![1,2].includes(doc.version) || !Array.isArray(doc.layers) || doc.layers.length>MAX_LAYERS) throw new Error('分层作品格式不支持');
   const width=Math.round(finite(doc.width,0)),height=Math.round(finite(doc.height,0));
   if(width<1||height<1||width>16000||height>16000||width*height>36_000_000)throw new Error('分层作品尺寸超出支持范围');
-  const normalize=(layer,i)=>{
+  let count=0;
+  const normalize=(layer,i,depth=0)=>{
+    if(!layer||++count>MAX_LAYERS*3||depth>12)throw new Error('图层数量或嵌套深度超出支持范围');
+    if(layer.type==='group'){
+      if(!Array.isArray(layer.children))throw new Error('图层组内容无效');
+      return {id:String(layer.id||'group-'+i),type:'group',name:String(layer.name||'图层组').slice(0,160),visible:layer.visible!==false,locked:!!layer.locked,opacity:Math.max(0,Math.min(1,finite(layer.opacity,1))),collapsed:!!layer.collapsed,children:layer.children.map((l,j)=>normalize(l,j,depth+1)),...(layer.backup?{backup:normalize(layer.backup,0,depth+1)}:{})};
+    }
     const src=String(layer.src||'');
     if(!/^(\/api\/(generated|assets)\/[^/?#]+|\/assets\/[^?#]+|data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*)$/.test(src))throw new Error('图层素材必须保存在本机');
     return {id:String(layer.id||'layer-'+i),src,name:String(layer.name||'图层').slice(0,160),x:Math.max(-32000,Math.min(32000,finite(layer.x,0))),y:Math.max(-32000,Math.min(32000,finite(layer.y,0))),width:Math.max(1,Math.min(16000,finite(layer.width,100))),height:Math.max(1,Math.min(16000,finite(layer.height,100))),rotation:finite(layer.rotation,0)%360,opacity:Math.max(0,Math.min(1,finite(layer.opacity,1))),visible:layer.visible!==false,locked:!!layer.locked,flipX:!!layer.flipX,flipY:!!layer.flipY};
   };
-  const layers=doc.layers.map(normalize);
-  if(new Set(layers.map(l=>l.id)).size!==layers.length)throw new Error('图层编号重复');
-  return {version:1,name:String(doc.name||'分层作品').slice(0,160),width,height,originalSrc:String(doc.originalSrc||''),layers,initialLayers:(Array.isArray(doc.initialLayers)?doc.initialLayers.slice(0,MAX_LAYERS):layers).map(normalize)};
+  const layers=doc.layers.map((l,i)=>normalize(l,i));
+  const checkIds=entries=>{const ids=new Set();let leaves=0;const visit=items=>items.forEach(l=>{if(ids.has(l.id))throw new Error('图层编号重复');ids.add(l.id);if(l.type==='group')visit(l.children);else if(++leaves>MAX_LAYERS)throw new Error('最多保留 64 个图层');});visit(entries);};checkIds(layers);
+  count=0;const initialLayers=(Array.isArray(doc.initialLayers)?doc.initialLayers:layers).map((l,i)=>normalize(l,i));checkIds(initialLayers);
+  return {version:doc.version,name:String(doc.name||'分层作品').slice(0,160),width,height,originalSrc:String(doc.originalSrc||''),layers,initialLayers};
 }
 export function layerBounds(l) {
   const r=l.rotation*Math.PI/180,c=Math.abs(Math.cos(r)),s=Math.abs(Math.sin(r));

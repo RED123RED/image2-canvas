@@ -1,4 +1,5 @@
 import { arkProtocol, arkModels, arkSizes, arkPlanProtocol, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from "./seedream-ark.js";
+import {allLayerSources,leafLayers} from './layer-tree.js';
 
 const $ = selector => document.querySelector(selector);
 const layerJobPollers = new Map();
@@ -993,7 +994,8 @@ function generatedImageFilesForProject(project) {
   const files = new Set();
   (project?.nodes || []).filter(node => node?.type === "image").forEach(node => {
     [node.src, node.originalSrc, node.previewSrc, node.layerSource,
-      ...[node.layerDocument, node.layerDraft].flatMap(doc => doc ? [doc.originalSrc, ...(Array.isArray(doc.layers)?doc.layers:[]).map(l=>l?.src), ...(Array.isArray(doc.initialLayers)?doc.initialLayers:[]).map(l=>l?.src)] : [])].forEach(source => {
+      node.layerRefinement?.sourceLayer?.src,
+      ...[node.layerDocument, node.layerDraft, node.layerRefinement?.candidate].flatMap(doc => doc ? [doc.originalSrc, ...allLayerSources(Array.isArray(doc.layers)?doc.layers:[]), ...allLayerSources(Array.isArray(doc.initialLayers)?doc.initialLayers:[])] : [])].forEach(source => {
       const filename = generatedImageFilename(source);
       if (filename) files.add(filename);
     });
@@ -2954,7 +2956,7 @@ function renderImageNodeHtml(node, selected, style) {
     : hasSource ? `<img class="image-preview node-interactive" data-preview-node="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}" loading="lazy" draggable="false" decoding="async">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}" data-reference-drag-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`;
   return `<article class="canvas-node image-node${loading ? " loading-node" : ""}${disabled ? " is-disabled" : ""}${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, loading ? "loader-circle" : "image", `${actions}${toggle}`, false)}<div class="node-body">
     ${preview}
-    ${candidateActions}${node.layerDocument || node.layerJobId ? `<span class="layered-image-badge">${node.layerJobId ? '拆层处理中 · 可关闭窗口后恢复' : `${(Array.isArray(node.layerDocument.layers)?node.layerDocument.layers.length:0)} 个图层${node.layerDraft ? ' · 有编辑草稿' : ''}`}</span>` : ''}
+    ${candidateActions}${node.layerDocument || node.layerJobId ? `<span class="layered-image-badge">${node.layerJobId ? '拆层处理中 · 可关闭窗口后恢复' : `${leafLayers(node.layerDocument.layers||[]).length} 个图层${node.layerDraft ? ' · 有编辑草稿' : ''}`}</span>` : ''}
     <div class="image-node-meta"><strong>${escapeHtml(node.source || "参考图")}</strong><span>${escapeHtml(dimensions || node.ratio || (hasSource ? "图片" : "未上传"))}</span></div>
     </div></div>${resizeHandleHtml(node)}${(node.generated || node.source === "Image2" || node.source === "豆包 Seedream" || loading) ? portHtml(node, "result", loadingMediaType, "input", "Result", 70) : ""}${portHtml(node, loadingMediaType, loadingMediaType, "output", loadingMediaType === "video" ? "Video" : "Image", 70)}</article>`;
 }
@@ -4371,13 +4373,16 @@ async function openNodeLayerEditor(nodeId) {
   if(node.layerJobId){void pollLayerJob(node.id,node.layerJobId,projectId);return toast(node.layerError?'正在重新检查拆层结果：'+node.layerError:'拆层仍在处理中，完成后会自动回填一个分层节点',!!node.layerError);}
   try{
     const editor=await getLayerEditor();
-    await editor.openLayerEditor({name:node.name,source:node.layerSource||imageSourceFromNode(node),doc:node.layerDraft||node.layerDocument,hasDraft:!!node.layerDraft,
+    await editor.openLayerEditor({name:node.name,source:node.layerSource||imageSourceFromNode(node),doc:node.layerDraft||node.layerDocument,hasDraft:!!node.layerDraft,model:node.layerModel,refinement:node.layerRefinement,
+      onPersist:persistDataUrlImage,
+      onFlush:async()=>{if(state?.id!==projectId||!findNode(nodeId))throw new Error('原项目已关闭，请重新打开后操作');await saveProjectNow(true);},
+      onRefinement:async session=>{if(state?.id!==projectId||!findNode(nodeId))throw new Error('原项目已关闭，请重新打开后操作');const current=findNode(nodeId);if(session)current.layerRefinement=session;else delete current.layerRefinement;await saveProjectNow(true);},
       onDraft:doc=>{if(state?.id!==projectId||!findNode(nodeId))return;findNode(nodeId).layerDraft=doc;scheduleSave();},
       onUpload:async file=>{if(!/^image\/(png|jpeg|webp)$/.test(file.type))throw new Error('请选择 PNG、JPG 或 WebP');if(file.size>30*1024*1024)throw new Error('图层素材不能超过 30 MB');return persistDataUrlImage(await fileToDataUrl(file));},
       onSave:async doc=>{
         const stored=await persistDataUrlImage(await editor.renderLayerComposite(doc));
         if(state?.id!==projectId||!findNode(nodeId))throw new Error('原项目已关闭，请重新打开后保存');
-        recordHistory();const current=findNode(nodeId);current.layerDocument=doc;delete current.layerDraft;current.src=stored.url;current.originalSrc=stored.url;current.previewSrc=stored.url;current.imageWidth=doc.width;current.imageHeight=doc.height;current.source='分层作品 · '+doc.layers.length+' 层';renderWorkspace();await saveProjectNow(true);
+        recordHistory();const current=findNode(nodeId);current.layerDocument=doc;delete current.layerDraft;current.src=stored.url;current.originalSrc=stored.url;current.previewSrc=stored.url;current.imageWidth=doc.width;current.imageHeight=doc.height;current.source='分层作品 · '+leafLayers(doc.layers).length+' 层';renderWorkspace();await saveProjectNow(true);
       },
       onStart:async({model,prompt})=>{
         const status=await requestJson('/api/layers/status',{},10000);

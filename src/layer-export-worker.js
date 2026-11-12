@@ -1,27 +1,34 @@
 import { writePsdUint8Array, initializeCanvas } from 'ag-psd';
 import { normalizeLayerDocument, drawLayer, layerBounds } from '../public/layer-document.js';
+import {allLayerSources,drawLayerTree} from '../public/layer-tree.js';
 initializeCanvas((w,h)=>new OffscreenCanvas(w,h));
 self.onmessage=async({data})=>{
   const images=new Map();
   try{
     const doc=normalizeLayerDocument(data.doc);
     let decodedPixels=0;
-    for(const l of doc.layers)if(!images.has(l.src)){
-      const response=await fetch(l.src);if(!response.ok)throw new Error('图层素材读取失败');
-      const image=await createImageBitmap(await response.blob());images.set(l.src,image);
+    for(const src of allLayerSources(doc.layers))if(!images.has(src)){
+      const response=await fetch(src);if(!response.ok)throw new Error('图层素材读取失败');
+      const image=await createImageBitmap(await response.blob());images.set(src,image);
       decodedPixels+=image.width*image.height;if(decodedPixels>140_000_000)throw new Error('图层素材占用过大，请减少图层后导出');
     }
     const composite=new OffscreenCanvas(doc.width,doc.height),ctx=composite.getContext('2d');
-    for(const l of doc.layers)if(l.visible)drawLayer(ctx,images.get(l.src),l);
+    drawLayerTree(ctx,doc.layers,images,(w,h)=>new OffscreenCanvas(w,h));
     if(data.format==='psd'){
-      const children=[];let pixels=0;
-      for(const l of doc.layers){
+      let pixels=0;
+      const convert=l=>{
+        const common={name:l.name,opacity:l.opacity,hidden:!l.visible,blendMode:'normal',protected:{position:l.locked,composite:l.locked,transparency:l.locked}};
+        if(l.type==='group'){
+          const children=l.children.map(convert).reverse();
+          if(l.backup)children.push({name:'原图层备份',hidden:true,opened:false,blendMode:'normal',children:[convert(l.backup)]});
+          return {...common,opened:!l.collapsed,children};
+        }
         const b=layerBounds(l),left=Math.floor(b.left),top=Math.floor(b.top),w=Math.max(1,Math.ceil(b.right)-left),h=Math.max(1,Math.ceil(b.bottom)-top);
         pixels+=w*h;if(w>16000||h>16000||pixels>140_000_000)throw new Error('图层占用过大，请减小尺寸或分批导出');
         const canvas=new OffscreenCanvas(w,h),c=canvas.getContext('2d');c.translate(-left,-top);drawLayer(c,images.get(l.src),l,false);
-        children.push({name:l.name,left,top,canvas,opacity:l.opacity,hidden:!l.visible,blendMode:'normal',protected:{position:l.locked,composite:l.locked,transparency:l.locked}});
-      }
-      const bytes=writePsdUint8Array({width:doc.width,height:doc.height,canvas:composite,children:children.reverse()},{noBackground:true,trimImageData:true});
+        return {...common,left,top,canvas};
+      };
+      const bytes=writePsdUint8Array({width:doc.width,height:doc.height,canvas:composite,children:doc.layers.map(convert).reverse()},{noBackground:true,trimImageData:true});
       self.postMessage({bytes:bytes.buffer,mime:'image/vnd.adobe.photoshop'},[bytes.buffer]);
     }else{
       const width=Math.round(Number(data.width)||doc.width),height=Math.round(width*doc.height/doc.width);
