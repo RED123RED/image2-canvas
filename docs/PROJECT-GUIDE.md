@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-- 工作目录：`E:\codex\image2-canvas`
+- 当前主线工作目录：E:/codex/image2-canvas-work/mainline-merge；媒体位于 E:/codex/image2-canvas/output。
 - 主分支：`master`
 - 当前稳定提交以 `git log --oneline --decorate -12` 为准；最近已存在按功能命名的提交和标签。
 - 当前工作区可能存在未提交改动。新窗口必须先执行 `git status --short --branch`，不得假设工作区干净。
@@ -51,8 +51,22 @@
 - 套餐地址固定为 https://ark.cn-beijing.volces.com/api/plan/v3/images/generations。实际可用 ID：doubao-seedream-5.0-flash、doubao-seedream-5-0-pro。普通官方带日期 ID 不可跨渠道混用。
 - 本地配置为 providers.json 的 arkPlan.apiKey；环境变量 ARK_PLAN_API_KEY；可选请求头 x-ark-plan-api-key。它们都不会回退到普通 ARK_API_KEY、ark.apiKey 或 Seedream 网关配置。POST /api/providers/ark-plan 只更新该配置项；GET /api/status 的 arkPlan 仅返回就绪状态、地址、模型与协议，不返回密钥。
 - 协议 seedream-ark-plan-v1；旧服务或缺少套餐密钥时，前端阻止创建任务。沿用官方渠道请求校验、异步队列、PNG 文件保存及恢复机制。付费生成 POST 不自动重试、不自动换渠道。
-- 无参考图生成，有参考图自动编辑；目前允许 1–10 张，单张不超过 30 MB，输出单张 2K 档 PNG，按节点比例提交具体像素尺寸。无模式选择、无图层拆分；不发送本次被套餐 Pro 拒绝的 sequential_image_generation 参数。
+- 无参考图生成，有参考图自动编辑；目前允许 1–10 张，单张不超过 30 MB，输出单张 2K 档 PNG，按节点比例提交具体像素尺寸。普通生图节点无模式选择、无拆层控件；不发送本次被套餐 Pro 拒绝的 sequential_image_generation 参数。
 - 两款文字生图及各一次十图编辑已真实通过。十图编辑用同一海报重复十次验证数量，不代表十种素材融合质量或官方所有上限均已验证。具体测试、效果限制及运行记录见 ARK-PLAN-VERIFICATION.md；离线回归沿用 npm run test:ark。
+
+
+## 分层编辑器（2026-11-12）
+
+- 本次确认的实际主线工作目录为 E:/codex/image2-canvas-work/mainline-merge（master）；其 output 是指向 E:/codex/image2-canvas/output 的目录联接。任务提供的 E:/AI剧本/image2-canvas 不存在。以后执行命令仍须先核对实际工作目录和 git 状态。
+- 入口位于参考图节点标题栏；仅创建一个新分层作品节点，原图及其连线保留。沿用 image 类型，新增 layerDocument、layerDraft、layerSource、layerJobId、layerModel、layerError 字段，不改旧节点格式。
+- 分层文档 version=1，以底图像素为坐标系，layers 数组从底到顶，保存每层 src、x/y、width/height、rotation、opacity、visible、locked、flipX/Y 和名称。initialLayers 保留首次拆层的布局，恢复操作也能撤销。UI 最多 64 层，接口单次接受底图加 1–16 层。
+- 独立接口 GET /api/layers/status、POST /api/layers/decompose，协议 seedream-layer-document-v1；只使用 ark-plan 的 Flash/Pro 与独立套餐密钥。请求固定 layer_decomposition=true、size=auto、output_format=png、stream=false，不发送 sequential_image_generation。输入单张 PNG/JPEG，WebP 在前端转换；最大 30 MB，总像素 262144 至 36000000，宽高比 1:16 至 16:1。
+- 服务端用 z_index 排序，以底图尺寸解释 bounding_box.absolute；无 absolute 时按 normalized / 1000 换算。返回图片的原始分辨率可能高于框尺寸，必须按框缩放，不能直接铺满画布或按原始像素坐标放置。缺坐标、重复层序或部分结果失败时明确失败，不猜布局、不重发付费请求。
+- 拆层原始 PNG 存 output/assets，保留透明通道；图层调整只改文档，保存合成 PNG 供现有下游使用。预览也使用合成 PNG 保持透明。generated 清理会检查分层文档、草稿及 layerSource 引用；不能把图层文件当普通无引用生成图自动清理。
+- 编辑器局部撤销/重做与主画布快捷键隔离。未保存的编辑草稿进入项目自动保存；保存到画布生成新的合成图并记录主画布历史。任务恢复复用已有 job ID，刷新或同任务副本不重复调用收费接口。
+- PSD 在 Web Worker 中使用 ag-psd 导出，children 按顶到底排列；位置/缩放/旋转/翻转烘焙到各独立图层像素，名称、透明度、可见性和锁定保留。不是可编辑文字或智能对象，也不支持 PSD 导入、蒙版、滤镜、复杂混合模式。JPG/PNG 为扁平合成，JPG 背景色可选。
+- public/layer-document.js 为前后端共用协议与坐标规范；public/layer-editor.js/.css 为独立弹窗；src/layer-export-worker.js 为导出源代码，scripts/build-layer-export.mjs 生成 public/vendor/layer-export-worker.js 和许可文件。正常运行使用已提交 bundle；开发依赖通过 npm ci 安装。
+- 旧项目打开不要求新增字段；项目导出 JSON 包含图层数据，但本地素材仍按原项目机制引用。跨机器备份应同时复制被引用 assets/generated；PSD/JPG 则是独立可携带文件。完整验证和限制见 LAYER-EDITOR-VERIFICATION.md。
 
 ## 代码分区
 

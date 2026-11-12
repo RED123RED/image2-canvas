@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import os from "node:os";
+import { layerProtocol, buildLayerPayload, createLayerDocument } from './public/layer-document.js';
 import { fileURLToPath } from "node:url";
 import { arkProtocol, arkBaseUrl, arkModels, arkPlanProtocol, arkPlanBaseUrl, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from './public/seedream-ark.js';
 
@@ -839,9 +840,10 @@ async function persistGeneratedImage(job, item, index) {
   const mime = imageMimeFromBuffer(image.buffer, image.mime);
   const extension = extensionForMime(mime);
   const filename = `${job.id}-${index + 1}.${extension}`;
-  await fs.writeFile(path.join(generatedDir, filename), image.buffer);
+  const isLayer = job.kind === 'layer-decomposition';
+  await fs.writeFile(path.join(isLayer ? assetsDir : generatedDir, filename), image.buffer);
   const dimensions = imageDimensions(image.buffer, mime);
-  return { url: `/api/generated/${filename}`, revisedPrompt: item.revised_prompt || "", width: dimensions.width, height: dimensions.height, outputType: extension };
+  return { url: `/api/${isLayer ? 'assets' : 'generated'}/${filename}`, revisedPrompt: item.revised_prompt || "", width: dimensions.width, height: dimensions.height, outputType: extension };
 }
 
 async function persistGeneratedMedia(job, item, index) {
@@ -906,7 +908,8 @@ async function requestImage2Generation(job) {
 }
 
 async function requestArkGeneration(job) {
-  const payload = buildArkPayload({ ...job.request, provider: job.provider, model: job.model });
+  const layerJob = job.kind === 'layer-decomposition';
+  const payload = (layerJob ? buildLayerPayload : buildArkPayload)({ ...job.request, provider: job.provider, model: job.model });
   // A POST is never automatically retried: a lost response may already be billable.
   const response = await fetch(`${job.provider === 'ark-plan' ? arkPlanBaseUrl : arkBaseUrl}/images/generations`, { method: 'POST', headers: { Authorization: `Bearer ${job.request.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(10 * 60_000) });
   let result;
@@ -918,6 +921,10 @@ async function requestArkGeneration(job) {
   }
   const items = Array.isArray(result.data) ? result.data : [];
   if (!items.length || items.some(item => item?.error || (!item?.url && !item?.b64_json))) throw gatewayError(502, '火山引擎未返回完整图片结果，请检查控制台后再手动重试');
+  if (layerJob) {
+    if (items.length < 2 || items.length > 17) throw gatewayError(502, '拆层没有返回有效的底图和图层');
+    return { items, mode: 'layers', referencesUsed: 1 };
+  }
   if (items.length !== 1) throw gatewayError(502, '火山引擎返回的图片数量与请求不符');
   return { items, mode: job.request.references.length ? 'edit' : 'generate', referencesUsed: job.request.references.length };
 }
@@ -1228,6 +1235,10 @@ async function executeJob(job) {
     const result = isArkProvider(job.provider) ? await requestArkGeneration(job) : job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "runninghub-krea2" ? await requestRunningHubKrea2Generation(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : job.provider === "moyu" ? await requestSeedreamGeneration(job) : await requestImage2Generation(job);
     if (result.mediaType === "video") job.media = await Promise.all(result.items.map((item, index) => persistGeneratedMedia(job, item, index)));
     else job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
+    if (job.kind === 'layer-decomposition') {
+      const items = job.images.map((image,index) => ({ ...image, z_index: result.items[index].z_index, name: result.items[index].name, description: result.items[index].description, bounding_box: result.items[index].bounding_box }));
+      job.layerDocument = createLayerDocument(items);
+    }
     if (isArkProvider(job.provider)) job.imageCount = job.images.length;
     job.status = "succeeded";
     job.mode = result.mode;
@@ -1327,6 +1338,22 @@ async function createJob(req, res) {
     const failure = classifyError(error);
     sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
   }
+}
+
+async function createLayerJob(req, res) {
+  try {
+    const body = await readJson(req);
+    const payload = buildLayerPayload(body);
+    const input = Buffer.from(payload.image.split(',')[1], 'base64');
+    const dimensions = imageDimensions(input, imageMimeFromBuffer(input, ''));
+    const pixels = dimensions.width * dimensions.height;
+    if (pixels < 262144 || pixels > 36000000 || dimensions.width / dimensions.height < 1/16 || dimensions.width / dimensions.height > 16) return sendJson(res, 400, { error: '拆层图片总像素需在 512×512 至 3600 万之间，宽高比在 1:16 至 16:1 之间' });
+    const apiKey = await resolveArkApiKey(req, 'ark-plan');
+    if (!apiKey) return sendJson(res, 401, { error: '请先在设置中配置火山 Agent Plan 套餐密钥' });
+    const job = { id: 'job-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8), kind: 'layer-decomposition', status: 'queued', createdAt: Date.now(), provider: 'ark-plan', model: body.model, imageCount: 1, request: { apiKey, image: payload.image, prompt: payload.prompt } };
+    jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, 'queued');
+    sendJson(res, 202, { job: jobView(job) }); void drainJobs();
+  } catch (error) { return sendJson(res, 400, { error: error.message || '拆层任务创建失败' }); }
 }
 
 async function createArkJob(req, res, body) {
@@ -1990,6 +2017,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/video-assets") return storeVideoUpload(req, res);
   if (req.method === "POST" && url.pathname === "/api/audio-assets") return storeAudioUpload(req, res);
   if (req.method === "POST" && url.pathname === "/api/video-compose") return composeVideo(req, res);
+  if (req.method === "GET" && url.pathname === "/api/layers/status") return sendJson(res, 200, { protocol: layerProtocol, ready: Boolean(await resolveArkApiKey(req, 'ark-plan')) });
+  if (req.method === "POST" && url.pathname === "/api/layers/decompose") return createLayerJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/generate") return createJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/respond") return createResponse(req, res);
   if (req.method === "POST" && url.pathname === "/api/generated/delete") return deleteGeneratedImages(req, res);

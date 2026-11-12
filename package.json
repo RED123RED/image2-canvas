@@ -6,10 +6,18 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "verify": "node --check public/app.js && node --check public/seedream-ark.js && node --check server.mjs && node --check image2-desktop-launcher.mjs",
-    "test:ark": "node --test tests/seedream-ark.test.mjs"
+    "verify": "node --check public/app.js && node --check public/seedream-ark.js && node --check public/layer-document.js && node --check public/layer-editor.js && node --check src/layer-export-worker.js && node --check server.mjs && node --check image2-desktop-launcher.mjs",
+    "test:ark": "node --test tests/seedream-ark.test.mjs",
+    "test:layers": "node --test tests/layer-document.test.mjs tests/layer-api.test.mjs",
+    "build:layer-export": "node scripts/build-layer-export.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "ag-psd": "34.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
   }
 }

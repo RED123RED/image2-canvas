@@ -33,6 +33,7 @@ test('real local queue, all outputs, independent keys, failures and saved jobs',
   await fs.mkdir(path.join(dir, 'public'));
   await fs.copyFile(path.join(root, 'server.mjs'), path.join(dir, 'server.mjs'));
   await fs.copyFile(path.join(root, 'public/seedream-ark.js'), path.join(dir, 'public/seedream-ark.js'));
+  await fs.copyFile(path.join(root, 'public/layer-document.js'), path.join(dir, 'public/layer-document.js'));
   await fs.writeFile(path.join(dir, 'package.json'), '{"type":"module"}');
   const recordPath = path.join(dir, 'requests.jsonl');
   const preload = `

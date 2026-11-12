@@ -33,7 +33,18 @@ npm start
 
 生图模型新增“火山套餐 · Seedream 5.0 Flash”和“火山套餐 · Seedream 5.0 Pro”。设置中的“火山 Agent Plan 套餐 API Key”独立保存；也可使用环境变量 ARK_PLAN_API_KEY。套餐使用 /api/plan/v3/images/generations，普通官方渠道保持 /api/v3/images/generations，密钥及模型 ID 分开，不会在套餐不可用时自动切换普通付费渠道。
 
-操作与现有节点一致：无图文字生图，连接参考图后自动编辑，最多 10 张、每次 1 张、2K 档位 PNG；没有模式选择和图层拆分。套餐 Pro 的模型 ID 为 doubao-seedream-5-0-pro，Flash 为 doubao-seedream-5.0-flash；不能直接套用普通渠道带日期的 ID。2026-11-11 已实际验证两款文字生图及 10 图输入编辑，详情见 docs/ARK-PLAN-VERIFICATION.md。图像编辑仍可能重绘细节，小字和规格需人工检查。
+操作与现有节点一致：无图文字生图，连接参考图后自动编辑，最多 10 张、每次 1 张、2K 档位 PNG；普通生图节点没有模式选择或拆层控件。套餐 Pro 的模型 ID 为 doubao-seedream-5-0-pro，Flash 为 doubao-seedream-5.0-flash；不能直接套用普通渠道带日期的 ID。2026-11-11 已实际验证两款文字生图及 10 图输入编辑，详情见 docs/ARK-PLAN-VERIFICATION.md。图像编辑仍可能重绘细节，小字和规格需人工检查。
+
+
+## 分层图片编辑
+
+参考图右上角点击“分层编辑”，选择火山套餐 Pro 或 Flash，按需填写拆分要求。完成后保留原图，并在旁边添加一个分层作品节点，全部图层集中在该节点内。
+
+点击新节点的“编辑图层”，可移动、缩放、旋转、翻转、排序、重命名、隐藏、锁定、复制、删除和添加/替换图层，支持多选对齐、撤销重做、原图对照与恢复初始布局。保存后可将合成结果继续连接到生图、回答或视频节点；未提交的编辑以草稿保存。
+
+导出 PSD 保留独立位图图层、位置、透明度和叠放关系；JPG/PNG 导出当前合成效果，可指定宽度。AI 拆层可能重绘文字和细节，不能保证与原图逐像素一致；PSD 中的文字仍为图片。真实效果与验证记录见 docs/LAYER-EDITOR-VERIFICATION.md。
+
+分层入口独立于普通生图节点，不改变原有文生图和多图自动编辑操作。代码自带导出组件，正常启动无需构建；开发修改导出组件后运行 npm ci、npm run build:layer-export。备份分层项目时同时保留项目 JSON 与 output/assets 中引用的图片，不能仅复制 JSON 后删除素材。
 
 ## 项目管理
 

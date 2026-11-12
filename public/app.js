@@ -1,6 +1,9 @@
 import { arkProtocol, arkModels, arkSizes, arkPlanProtocol, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from "./seedream-ark.js";
 
 const $ = selector => document.querySelector(selector);
+const layerJobPollers = new Map();
+let layerEditorModule;
+const getLayerEditor = () => layerEditorModule ||= import('./layer-editor.js');
 const $$ = selector => [...document.querySelectorAll(selector)];
 
 const sizeMap = {
@@ -989,7 +992,8 @@ function generatedImageFilename(source) {
 function generatedImageFilesForProject(project) {
   const files = new Set();
   (project?.nodes || []).filter(node => node?.type === "image").forEach(node => {
-    [node.src, node.originalSrc, node.previewSrc].forEach(source => {
+    [node.src, node.originalSrc, node.previewSrc, node.layerSource,
+      ...[node.layerDocument, node.layerDraft].flatMap(doc => doc ? [doc.originalSrc, ...(Array.isArray(doc.layers)?doc.layers:[]).map(l=>l?.src), ...(Array.isArray(doc.initialLayers)?doc.initialLayers:[]).map(l=>l?.src)] : [])].forEach(source => {
       const filename = generatedImageFilename(source);
       if (filename) files.add(filename);
     });
@@ -1101,7 +1105,7 @@ function syncDialogueEditorAfterRestore() {
   dialogueEditor.analysisHiddenRoles = structuredClone(card.dialogueAnalysisHiddenRoles || []);
   renderDialogueEditor();
 }
-function restoreSnapshot(next) { state = normalizeProject(structuredClone(next)); applyTheme(state.theme); renderWorkspace(); syncDialogueEditorAfterRestore(); scheduleSave(); }
+function restoreSnapshot(next) { state = normalizeProject(structuredClone(next)); applyTheme(state.theme); renderWorkspace(); syncDialogueEditorAfterRestore(); scheduleSave(); state.nodes.filter(node=>node.layerJobId).forEach(node=>void pollLayerJob(node.id,node.layerJobId,state.id)); }
 function undo() { if (!undoStack.length || isGenerating) return; redoStack.push(snapshot()); restoreSnapshot(undoStack.pop()); updateHistoryButtons(); }
 function redo() { if (!redoStack.length || isGenerating) return; undoStack.push(snapshot()); restoreSnapshot(redoStack.pop()); updateHistoryButtons(); }
 function updateHistoryButtons() { $("#undoButton").disabled = !undoStack.length || isGenerating; $("#redoButton").disabled = !redoStack.length || isGenerating; }
@@ -1128,7 +1132,7 @@ function discardEditableHistory(target) {
   const session = editableHistorySessions.get(target); if (session?.timer) clearTimeout(session.timer);
   editableHistorySessions.delete(target);
 }
-async function saveProjectNow() {
+async function saveProjectNow(reportError = false) {
   if (!state) return;
   clearTimeout(saveTimer); saveTimer = null;
   const cleaned = cleanProjectForSave(); const projectId = cleaned.id; const revision = saveRevision;
@@ -1140,8 +1144,9 @@ async function saveProjectNow() {
     const index = projectMetas.findIndex(meta => meta.id === projectId); const meta = projectMeta(cleaned);
     if (index >= 0) projectMetas[index] = meta; else projectMetas.push(meta);
     if (state?.id === projectId && revision === saveRevision) { $("#saveState").innerHTML = `${icon("cloud-check")} 已保存`; refreshIcons(); }
-  } catch {
+  } catch(error) {
     if (state?.id === projectId && revision === saveRevision) { $("#saveState").innerHTML = `${icon("cloud-off")} 保存失败`; refreshIcons(); }
+    if(reportError)throw new Error("项目保存失败，请保留当前窗口并重试："+error.message);
   }
 }
 function scheduleSave() { if (!state) return; rememberActiveProject(); saveRevision += 1; clearTimeout(saveTimer); $("#saveState").innerHTML = `${icon("cloud-upload")} 保存中`; refreshIcons(); saveTimer = setTimeout(() => { void saveProjectNow(); }, 500); }
@@ -2935,7 +2940,8 @@ function renderImageNodeHtml(node, selected, style) {
   const isVideoLoading = loading && loadingMediaType === "video";
   const elapsed = formatGenerationDuration(Date.now() - Number(node.generationStartedAt || 0)) || "0秒";
   const loadingStage = runningHubGenerationStageLabel(node.generationStage);
-  const actions = loading ? "" : hasSource ? `<button class="icon-button node-interactive" type="button" data-crop-node="${node.id}" aria-label="裁剪参考图" data-tooltip="裁剪参考图">${icon("crop")}</button><button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载图片" data-tooltip="下载图片">${icon("download")}</button>` : `<button class="icon-button node-interactive" type="button" data-upload-node="${node.id}" aria-label="上传图像" data-tooltip="上传图像">${icon("image-plus")}</button>`;
+  const layerAction = !loading && hasSource ? `<button class="icon-button node-interactive" type="button" data-layer-edit="${node.id}" aria-label="${node.layerJobId ? '查看拆层进度' : node.layerDocument ? '编辑图层' : '分层编辑'}" data-tooltip="${node.layerJobId ? '查看拆层进度' : node.layerDocument ? '编辑图层' : '分层编辑'}">${icon(node.layerJobId ? 'loader-circle' : 'layers')}</button>` : '';
+  const actions = loading ? "" : hasSource ? `${layerAction}<button class="icon-button node-interactive" type="button" data-crop-node="${node.id}" aria-label="裁剪参考图" data-tooltip="裁剪参考图">${icon("crop")}</button><button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载图片" data-tooltip="下载图片">${icon("download")}</button>` : `<button class="icon-button node-interactive" type="button" data-upload-node="${node.id}" aria-label="上传图像" data-tooltip="上传图像">${icon("image-plus")}</button>`;
   const toggle = loading ? "" : `<button class="icon-button image-toggle node-interactive${disabled ? " is-disabled" : ""}" type="button" data-toggle-image="${node.id}" aria-label="${disabled ? "启用参考图节点" : "禁用参考图节点"}" title="${disabled ? "启用参考图节点" : "禁用参考图节点"}">${icon(disabled ? "power" : "ban")}</button>`;
   const dimensions = Number(node.imageWidth) > 0 && Number(node.imageHeight) > 0 ? `${node.imageWidth} × ${node.imageHeight}` : "";
   const candidateActions = node.midjourneyCandidate && hasSource
@@ -2948,7 +2954,7 @@ function renderImageNodeHtml(node, selected, style) {
     : hasSource ? `<img class="image-preview node-interactive" data-preview-node="${node.id}" src="${escapeHtml(nodeCanvasSource(node))}" alt="${escapeHtml(node.name)}" loading="lazy" draggable="false" decoding="async">` : `<button class="reference-placeholder node-interactive" type="button" data-upload-node="${node.id}" data-reference-drag-node="${node.id}">${icon("image-plus")}<strong>上传图像</strong><small>点击选择本地文件</small></button>`;
   return `<article class="canvas-node image-node${loading ? " loading-node" : ""}${disabled ? " is-disabled" : ""}${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, loading ? "loader-circle" : "image", `${actions}${toggle}`, false)}<div class="node-body">
     ${preview}
-    ${candidateActions}
+    ${candidateActions}${node.layerDocument || node.layerJobId ? `<span class="layered-image-badge">${node.layerJobId ? '拆层处理中 · 可关闭窗口后恢复' : `${(Array.isArray(node.layerDocument.layers)?node.layerDocument.layers.length:0)} 个图层${node.layerDraft ? ' · 有编辑草稿' : ''}`}</span>` : ''}
     <div class="image-node-meta"><strong>${escapeHtml(node.source || "参考图")}</strong><span>${escapeHtml(dimensions || node.ratio || (hasSource ? "图片" : "未上传"))}</span></div>
     </div></div>${resizeHandleHtml(node)}${(node.generated || node.source === "Image2" || node.source === "豆包 Seedream" || loading) ? portHtml(node, "result", loadingMediaType, "input", "Result", 70) : ""}${portHtml(node, loadingMediaType, loadingMediaType, "output", loadingMediaType === "video" ? "Video" : "Image", 70)}</article>`;
 }
@@ -3116,6 +3122,7 @@ function bindNodeEvents() {
   $$('[data-preview-node], [data-reference-drag-node]').forEach(element => element.addEventListener("pointerdown", event => startNodeDrag(event, element.dataset.previewNode || element.dataset.referenceDragNode)));
   $$('[data-download-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.downloadNode); if (node) downloadNode(node); }));
   $$('[data-crop-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); openCropDialog(button.dataset.cropNode); }));
+  $$('[data-layer-edit]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void openNodeLayerEditor(button.dataset.layerEdit); }));
   $$('[data-midjourney-upscale]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void upscaleMidjourneyCandidate(button.dataset.midjourneyUpscale, Number(button.dataset.midjourneySlot)); }));
   $$('[data-import-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoImportNodeId = button.dataset.importVideo; pendingVideoReferenceNodeId = null; pendingVideoPreviewUploadNodeId = null; videoFileInput.value = ""; videoFileInput.click(); }));
   $$('[data-upload-preview-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoPreviewUploadNodeId = button.dataset.uploadPreviewVideo; pendingVideoImportNodeId = null; pendingVideoReferenceNodeId = null; videoFileInput.value = ""; videoFileInput.click(); }));
@@ -3751,6 +3758,7 @@ function renderNodeInspector(node) {
   refreshIcons();
 }
 async function handleCanvasPaste(event) {
+  if (document.querySelector('#layerEditor[open]')) return;
   const target = event.target instanceof Element ? event.target : null;
   const isEditable = Boolean(target?.closest("input, textarea, select, [contenteditable=true]"));
   if (!state || isEditable) return;
@@ -4191,6 +4199,7 @@ async function upscaleMidjourneyCandidate(candidateId, slot) {
 }
 function resumeGenerationJobs() {
   if (!state) return;
+  state.nodes.filter(node => node.layerJobId).forEach(node => void pollLayerJob(node.id, node.layerJobId, state.id));
   const active = state.nodes.filter(node => node.type === "generator" && node.activeJobId);
   active.forEach(generator => {
     generator.status = "running";
@@ -4356,6 +4365,57 @@ async function runAnswerNode(nodeId) {
   cropSelection.style.left = `${selection.x * 100}%`; cropSelection.style.top = `${selection.y * 100}%`; cropSelection.style.width = `${selection.width * 100}%`; cropSelection.style.height = `${selection.height * 100}%`;
 }
 function resetCropSelection() { if (cropSession) setCropSelection({ x: .15, y: .15, width: .7, height: .7 }); }
+async function openNodeLayerEditor(nodeId) {
+  const node=findNode(nodeId),projectId=state?.id;
+  if(!node||node.type!=='image'||!node.src)return;
+  if(node.layerJobId){void pollLayerJob(node.id,node.layerJobId,projectId);return toast(node.layerError?'正在重新检查拆层结果：'+node.layerError:'拆层仍在处理中，完成后会自动回填一个分层节点',!!node.layerError);}
+  try{
+    const editor=await getLayerEditor();
+    await editor.openLayerEditor({name:node.name,source:node.layerSource||imageSourceFromNode(node),doc:node.layerDraft||node.layerDocument,hasDraft:!!node.layerDraft,
+      onDraft:doc=>{if(state?.id!==projectId||!findNode(nodeId))return;findNode(nodeId).layerDraft=doc;scheduleSave();},
+      onUpload:async file=>{if(!/^image\/(png|jpeg|webp)$/.test(file.type))throw new Error('请选择 PNG、JPG 或 WebP');if(file.size>30*1024*1024)throw new Error('图层素材不能超过 30 MB');return persistDataUrlImage(await fileToDataUrl(file));},
+      onSave:async doc=>{
+        const stored=await persistDataUrlImage(await editor.renderLayerComposite(doc));
+        if(state?.id!==projectId||!findNode(nodeId))throw new Error('原项目已关闭，请重新打开后保存');
+        recordHistory();const current=findNode(nodeId);current.layerDocument=doc;delete current.layerDraft;current.src=stored.url;current.originalSrc=stored.url;current.previewSrc=stored.url;current.imageWidth=doc.width;current.imageHeight=doc.height;current.source='分层作品 · '+doc.layers.length+' 层';renderWorkspace();await saveProjectNow(true);
+      },
+      onStart:async({model,prompt})=>{
+        const status=await requestJson('/api/layers/status',{},10000);
+        if(status.protocol!=='seedream-layer-document-v1')throw new Error('请先恢复生图服务以加载拆层功能');
+        if(!status.ready)throw new Error('请先在设置中保存火山 Agent Plan 套餐密钥');
+        const source=node.layerSource||imageSourceFromNode(node);let image=await sourceToDataUrl(source);
+        if(!/^data:image\/(png|jpeg);/.test(image)){const converted=new Image();await new Promise((resolve,reject)=>{converted.onload=resolve;converted.onerror=reject;converted.src=image;});const c=document.createElement('canvas');c.width=converted.naturalWidth;c.height=converted.naturalHeight;c.getContext('2d').drawImage(converted,0,0);image=c.toDataURL('image/png');}
+        if(state?.id!==projectId)throw new Error('项目已切换，请重新操作');
+        const {job}=await requestJson('/api/layers/decompose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:'ark-plan',model,image,prompt})},60000);
+        recordHistory();const result={id:uid('image'),type:'image',name:node.name+' · 分层',src:source,originalSrc:source,previewSrc:node.previewSrc||source,layerSource:source,layerJobId:job.id,layerModel:model,x:node.x+node.width+60,y:node.y,width:Math.max(360,node.width),height:Math.max(300,node.height),source:'分层处理中',createdAt:Date.now()};
+        state.nodes.push(result);state.selectedIds=[result.id];renderWorkspace();await saveProjectNow();void pollLayerJob(result.id,job.id,projectId);toast('拆层任务已提交，只会生成一个分层作品节点');
+      }
+    });
+  }catch(error){toast(error.message||'无法打开分层编辑',true);}
+}
+async function pollLayerJob(nodeId,jobId,projectId) {
+  const pollKey=projectId+':'+nodeId+':'+jobId;
+  if(layerJobPollers.has(pollKey))return;
+  if(state?.id!==projectId||findNode(nodeId)?.layerJobId!==jobId)return;
+  layerJobPollers.set(pollKey,true);let terminal=false;
+  try{
+    const response=await fetch('/api/jobs/'+encodeURIComponent(jobId),{signal:AbortSignal.timeout(15000)});
+    const result=await response.json();
+    if(!response.ok){terminal=response.status===404;throw new Error(result.error||'拆层状态读取失败');}
+    const {job}=result;
+    if(state?.id!==projectId||findNode(nodeId)?.layerJobId!==jobId)return;
+    const node=findNode(nodeId);
+    if(job.status==='succeeded'){
+      terminal=true;
+      if(!job.layerDocument)throw new Error('服务未返回分层文档，请更新本机服务');
+      const doc=structuredClone(job.layerDocument);doc.originalSrc=node.layerSource;doc.name=node.name;
+      const editor=await getLayerEditor(),stored=await persistDataUrlImage(await editor.renderLayerComposite(doc));
+      if(state?.id!==projectId||findNode(nodeId)?.layerJobId!==jobId)return;
+      recordHistory();Object.assign(findNode(nodeId),{layerDocument:doc,src:stored.url,originalSrc:stored.url,previewSrc:stored.url,imageWidth:doc.width,imageHeight:doc.height,source:'分层作品 · '+doc.layers.length+' 层'});delete findNode(nodeId).layerJobId;terminal=true;renderWorkspace();await saveProjectNow();toast('拆层完成，点击图层按钮即可自由编辑');
+    }else if(['failed','canceled'].includes(job.status)){node.layerError=job.error||'拆层失败';node.source='拆层失败 · 原图保留';delete node.layerJobId;terminal=true;renderWorkspace();await saveProjectNow();toast(node.layerError,true);}
+  }catch(error){const node=findNode(nodeId);if(state?.id===projectId&&node?.layerJobId===jobId){const first=node.layerError!==error.message;node.layerError=error.message;node.source='拆层结果待恢复 · 点击图层按钮重试';scheduleSave();if(first){renderWorkspace();toast(error.message,true);}}}
+  finally{layerJobPollers.delete(pollKey);if(!terminal&&state?.id===projectId&&findNode(nodeId)?.layerJobId===jobId){const timer=setTimeout(()=>{layerJobPollers.delete(pollKey);void pollLayerJob(nodeId,jobId,projectId);},5000);layerJobPollers.set(pollKey,timer);}}
+}
 function openCropDialog(nodeId) {
   const node = findNode(nodeId); const originalSource = node?.originalSrc || node?.src; if (!originalSource) return toast("请先上传或生成一张图片", true);
   cropSession = { nodeId, originalSource, selection: { x: .15, y: .15, width: .7, height: .7 }, start: null }; cropSourceImage.src = originalSource; cropSelection.hidden = true;
@@ -4745,6 +4805,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   document.addEventListener("change", event => { scheduleEditableHistory(event.target); scheduleDialogueEditableHistory(event.target); }, true);
   document.addEventListener("focusout", event => { commitEditableHistory(event.target); commitDialogueEditableHistory(event.target); }, true);
   window.addEventListener("keydown", event => {
+    if (document.querySelector('#layerEditor[open]')) return;
     const target = event.target instanceof Element ? event.target : null;
     const editableTarget = target?.closest("input, textarea, select, [contenteditable=true]");
     const isEditable = Boolean(editableTarget);

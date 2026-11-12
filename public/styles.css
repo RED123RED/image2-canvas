@@ -1579,3 +1579,7 @@ dialog::backdrop { background: rgba(15, 18, 18, 0.54); }
 .script-note-card:hover {
   box-shadow: 0 8px 20px rgba(0, 0, 0, .13);
 }
+
+/* Scoped layered-image status, including restored projects before editor loads. */
+.layered-image-badge{position:absolute;bottom:32px;left:14px;pointer-events:none;background:#173e35ed;color:#aaf0db;padding:5px 8px;border-radius:6px;font-size:11px}
+.image-node .node-body:has(>.layered-image-badge){position:relative}

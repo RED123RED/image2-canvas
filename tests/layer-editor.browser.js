@@ -1,0 +1,48 @@
+async(page)=>{
+  await page.route('**/api/health',r=>r.fulfill({json:{ready:true}}));const checks=[],errors=[];page.on('pageerror',e=>errors.push(e.message));const check=(v,name)=>{if(!v)throw Error(name);checks.push(name);};
+  await page.setViewportSize({width:1600,height:1000});await page.reload();
+  const fixture=await page.evaluate(()=>{
+    const make=(color,w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.fillStyle=color;x.fillRect(0,0,w,h);return c.toDataURL('image/png');};
+    const layers=[{id:'base',src:make('#fff',600,400),name:'背景',x:0,y:0,width:600,height:400,locked:true},{id:'red',src:make('#f00',120,100),name:'红色产品',x:50,y:70,width:120,height:100},{id:'blue',src:make('#00f',80,60),name:'蓝色标题',x:100,y:100,width:80,height:60}].map(l=>({rotation:0,opacity:1,visible:true,locked:false,flipX:false,flipY:false,...l}));
+    return {version:2,projectName:'分层交互全面回归',theme:'dark',viewport:{x:10,y:90,scale:.8},nodes:[{id:'l',type:'image',name:'分层测试',src:layers[0].src,originalSrc:layers[0].src,layerSource:layers[0].src,layerDocument:{version:1,name:'测试',width:600,height:400,originalSrc:layers[0].src,layers,initialLayers:structuredClone(layers)},x:0,y:0,width:600,height:470},{id:'p',type:'prompt',name:'提示词',content:'测试',x:0,y:500,width:320,height:240},{id:'g',type:'generator',provider:'image2',name:'生图',image2Model:'gpt-image-2.5-sunburst',quality:'auto',aspect:'1:1',outputSize:'2K',batch:1,inputSlots:4,promptSlots:1,x:680,y:0,width:420,height:500}],edges:[{id:'edge-image',source:'l',sourcePort:'image',target:'g',targetPort:'image-0',type:'image'},{id:'edge-prompt',source:'p',sourcePort:'prompt',target:'g',targetPort:'prompt',type:'prompt'}]};
+  });
+  await page.locator('#projectFileInput').setInputFiles({name:'interactions.image2.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});await page.getByRole('button',{name:'分层交互全面回归 · 导入',exact:true}).waitFor();
+  const open=async()=>{await page.getByRole('button',{name:'编辑图层',exact:true}).click();await page.locator('.le-row').first().waitFor();await page.evaluate(()=>{window.confirm=()=>true;const file=document.querySelector('#leFile');file.click=()=>{};});};await open();
+  const action=key=>page.locator('#layerEditor [data-action="'+key+'"]');const row=id=>page.locator('[data-layer-id="'+id+'"]');
+  const field=key=>page.locator('[data-property="'+key+'"]');const value=async key=>Number(await field(key).inputValue());
+  const set=async(key,v)=>{await field(key).fill(String(v));await field(key).press('Tab');};
+  await row('red').locator('span').click();
+  const rect=await page.locator('#leCanvas').boundingBox();const point=(x,y)=>({x:rect.x+x*rect.width/600,y:rect.y+y*rect.height/400});
+  let a=point(65,85),b=point(95,105);await page.mouse.move(a.x,a.y);await page.mouse.down();await page.mouse.move(b.x,b.y,{steps:5});await page.mouse.up();
+  check(Math.abs(await value('x')-80)<.1&&Math.abs(await value('y')-90)<.1,'Pointer drag uses document coordinates');
+  await page.keyboard.press('Shift+ArrowRight');check(Math.abs(await value('x')-90)<.1,'Keyboard move remains inside editor');
+  await action('undo').click();check(Math.abs(await value('x')-80)<.1,'Undo move');await action('redo').click();check(Math.abs(await value('x')-90)<.1,'Redo move');
+  await set('width',240);check(await value('height')===200,'Proportional scale');await set('rotation',30);await set('opacity',45);
+  await action('flipX').click();await row('blue').locator('[data-layer-toggle="visible"]').click();
+  await row('red').locator('[data-layer-toggle="locked"]').click();check(await field('x').isDisabled(),'Locked layer cannot transform');await row('red').locator('[data-layer-toggle="locked"]').click();
+  await action('top').click();check(await page.locator('.le-row').first().getAttribute('data-layer-id')==='red','Top layer changes stacking order');
+  const dlWait=page.waitForEvent('download');await action('psd').click();await(await dlWait).saveAs('output/playwright/layers-transformed.psd');
+  await action('duplicate').click();check(await page.locator('.le-row').count()===4,'Duplicate stays inside same node');await action('delete').click();check(await page.locator('.le-row').count()===3,'Delete selected layer');await action('undo').click();check(await page.locator('.le-row').count()===4,'Undo deleted layer');
+  await action('reset').click();check(await page.locator('.le-row').count()===3,'Restore initial decomposition');
+  await row('red').locator('span').click();await row('blue').locator('span').click({modifiers:['Shift']});await page.locator('[data-align="left"]').click();await row('blue').locator('span').click();check(await value('x')===50,'Multi-selection alignment');
+  await row('red').locator('span').click();await set('x',180);await page.getByRole('button',{name:'关闭分层编辑'}).click();await page.waitForTimeout(700);await page.reload();await open();await row('red').locator('span').click();check(await value('x')===180,'Unsaved editor draft survives refresh');
+  await page.route('**/api/assets',route=>route.request().method()==='POST'?route.fulfill({status:500,json:{error:'模拟存储失败'}}):route.continue());
+  await action('save').click();await page.getByText('模拟存储失败',{exact:true}).waitFor();check(true,'Asset save failure is visible and draft retained');await page.unroute('**/api/assets');
+  await page.evaluate(()=>{window.__originalPut=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(...args){if(this.name==='projects')throw new DOMException('模拟磁盘额度不足','QuotaExceededError');return window.__originalPut.apply(this,args);};});
+  await action('save').click();await page.locator('.le-message.is-error').filter({hasText:'项目保存失败'}).waitFor();check(true,'IndexedDB failure does not claim successful save');
+  await page.evaluate(()=>{IDBObjectStore.prototype.put=window.__originalPut;delete window.__originalPut;});
+  await action('save').click();await page.getByText('已保存到画布；各图层仍可继续编辑',{exact:true}).waitFor();
+  await row('base').locator('[data-layer-toggle="visible"]').click();
+  const pngWait=page.waitForEvent('download');await action('png').click();await(await pngWait).saveAs('output/playwright/layers-transparent.png');
+  await page.locator('#leExportWidth').fill('300');const jpgWait=page.waitForEvent('download');await action('jpg').click();await(await jpgWait).saveAs('output/playwright/layers-resized.jpg');
+  const file=Buffer.from(fixture.nodes[0].layerDocument.layers[1].src.split(',')[1],'base64');
+  await action('add').click();await page.locator('#leFile').setInputFiles({name:'added.png',mimeType:'image/png',buffer:file});await page.getByText('图片已载入图层',{exact:true}).waitFor();check(await page.locator('.le-row').count()===4,'Add local image layer');
+  await action('replace').click();await page.locator('#leFile').setInputFiles({name:'replacement.png',mimeType:'image/png',buffer:Buffer.from(fixture.nodes[0].layerDocument.layers[2].src.split(',')[1],'base64')});await page.getByText('图片已载入图层',{exact:true}).waitFor();check(await page.locator('.le-row').count()===4,'Replace preserves layer count');
+  await action('save').click();await page.getByText('已保存到画布；各图层仍可继续编辑',{exact:true}).waitFor();await page.getByRole('button',{name:'关闭分层编辑'}).click();
+  check(await page.locator('.image-node').count()===1,'Canvas contains one layered node');
+  let request;await page.route('**/api/generate',route=>{request=route.request().postDataJSON();return route.fulfill({status:202,json:{job:{id:'layer-downstream',status:'queued'}}});});
+  await page.route('**/api/jobs/layer-downstream',route=>route.fulfill({json:{job:{id:'layer-downstream',status:'failed',error:'测试结束，未调用外部接口'}}}));
+  await page.locator('[data-run-node]').click();await page.waitForTimeout(1000);check(request?.references?.length===1&&request.references[0].startsWith('data:image/png;base64,'),'Downstream receives composite PNG as one reference');
+  const exportWait=page.waitForEvent('download');await page.getByRole('button',{name:'导出项目',exact:true}).click();await(await exportWait).saveAs('output/playwright/layers-interactions.image2.json');
+  check(errors.length===0,'No browser errors');await page.evaluate(report=>window.__layerRegression=report,{checks,errors});return {checks,errors};
+}
