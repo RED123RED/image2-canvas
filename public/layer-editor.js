@@ -1,6 +1,7 @@
 import { normalizeLayerDocument, drawLayer, layerBounds, MAX_LAYERS } from './layer-document.js';
 
 let current=null;
+let preferredListHeight=null;
 const clone=value=>structuredClone(value);
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const layerEditorOpen=()=>!!current;
@@ -36,6 +37,26 @@ export async function openLayerEditor(options) {
   let selected=new Set(),undo=[],redo=[],busy=false,compare=false,zoom=1,drag=null,fileMode='add',dirty=!!options.hasDraft;
   const images=new Map(),alpha=new Map();
   const canvas=$('#leCanvas'),ctx=canvas.getContext('2d'),stage=$('.le-stage');
+  const list=$('.le-list'),listSizer=document.createElement('div');
+  listSizer.className='le-list-resizer';listSizer.tabIndex=0;
+  listSizer.setAttribute('role','separator');listSizer.setAttribute('aria-orientation','horizontal');
+  listSizer.setAttribute('aria-label','调整图层列表高度');listSizer.title='上下拖动调整图层列表高度；双击恢复默认';
+  list.id='leLayerList';listSizer.setAttribute('aria-controls',list.id);list.after(listSizer);
+  let listResize=null;
+  const listHeightLimit=()=>Math.max(100,stage.clientHeight-80);
+  function updateListHeight(height=preferredListHeight){
+    if(height!==null){const value=Math.round(Math.max(100,Math.min(listHeightLimit(),height)));list.style.height=value+'px';list.style.maxHeight='none';}
+    else {list.style.removeProperty('height');list.style.removeProperty('max-height');}
+    listSizer.setAttribute('aria-valuemin','100');listSizer.setAttribute('aria-valuemax',String(listHeightLimit()));
+    listSizer.setAttribute('aria-valuenow',String(Math.round(list.getBoundingClientRect().height)));
+  }
+  const resizeList=height=>{preferredListHeight=Math.round(Math.max(100,Math.min(listHeightLimit(),height)));updateListHeight();};
+  listSizer.addEventListener('pointerdown',e=>{if(busy||e.button!==0)return;e.preventDefault();e.stopPropagation();listSizer.focus({preventScroll:true});listResize={id:e.pointerId,y:e.clientY,height:list.getBoundingClientRect().height};listSizer.setPointerCapture(e.pointerId);listSizer.classList.add('is-resizing');});
+  listSizer.addEventListener('pointermove',e=>{if(listResize?.id===e.pointerId)resizeList(listResize.height+e.clientY-listResize.y);});
+  const finishListResize=()=>{listResize=null;listSizer.classList.remove('is-resizing');};
+  listSizer.addEventListener('pointerup',finishListResize);listSizer.addEventListener('pointercancel',finishListResize);listSizer.addEventListener('lostpointercapture',finishListResize);
+  listSizer.addEventListener('dblclick',()=>{if(!busy){preferredListHeight=null;updateListHeight();}});
+  listSizer.addEventListener('keydown',e=>{if(!['ArrowUp','ArrowDown','Home','End'].includes(e.key))return;e.preventDefault();e.stopPropagation();if(busy)return;const step=e.shiftKey?60:24;resizeList(e.key==='Home'?100:e.key==='End'?listHeightLimit():list.getBoundingClientRect().height+(e.key==='ArrowUp'?-step:step));});
   current={dialog};$('.le-name').textContent=options.name||'图片';$('.le-start-preview img').src=options.source||'';
   const message=(text,error=false)=>{const el=$('.le-message');el.textContent=text;el.classList.toggle('is-error',error);};
   const setBusy=value=>{busy=value;dialog.classList.toggle('is-busy',value);$$('button, input, select, textarea').forEach(e=>e.disabled=value);};
@@ -112,7 +133,7 @@ export async function openLayerEditor(options) {
   let pan=null;stage.addEventListener('pointerdown',e=>{if(e.button===1||e.altKey){e.preventDefault();e.stopPropagation();pan={x:e.clientX,y:e.clientY,left:stage.scrollLeft,top:stage.scrollTop};stage.setPointerCapture(e.pointerId);}},true);stage.addEventListener('pointermove',e=>{if(pan){stage.scrollLeft=pan.left-e.clientX+pan.x;stage.scrollTop=pan.top-e.clientY+pan.y;}});stage.addEventListener('pointerup',()=>pan=null);stage.addEventListener('pointercancel',()=>pan=null);
   let reorderId='';$('.le-list').addEventListener('dragstart',e=>{const row=e.target.closest('[data-layer-id]');if(!row||busy)return e.preventDefault();reorderId=row.dataset.layerId;e.dataTransfer.setData('text/plain',reorderId);});$('.le-list').addEventListener('dragover',e=>{if(reorderId)e.preventDefault();});$('.le-list').addEventListener('drop',e=>{e.preventDefault();const target=e.target.closest('[data-layer-id]')?.dataset.layerId;if(!target||target===reorderId)return;act(()=>{const from=doc.layers.findIndex(l=>l.id===reorderId),to=doc.layers.findIndex(l=>l.id===target);if(from>=0&&!doc.layers[from].locked)doc.layers.splice(to,0,doc.layers.splice(from,1)[0]);});reorderId='';});
   dialog.addEventListener('keydown',e=>{e.stopPropagation();if(busy)return;const input=e.target.closest('input,textarea,select');if(e.key==='Escape'){e.preventDefault();return close();}if(input)return;if((e.ctrlKey||e.metaKey)&&['z','y','s','a'].includes(e.key.toLowerCase())){e.preventDefault();const key=e.key.toLowerCase();if(key==='a'){selected=new Set(doc?.layers.filter(l=>!l.locked).map(l=>l.id));render();}else $('[data-action="'+(key==='s'?'save':key==='y'||e.shiftKey?'redo':'undo')+'"]').click();}else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();$('[data-action="delete"]').click();}else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const step=e.shiftKey?10:1;act(()=>editable().forEach(l=>{if(e.key==='ArrowLeft')l.x-=step;if(e.key==='ArrowRight')l.x+=step;if(e.key==='ArrowUp')l.y-=step;if(e.key==='ArrowDown')l.y+=step;}));}});
-  const observer=new ResizeObserver(()=>{if(doc)draw();});observer.observe(stage);
+  const observer=new ResizeObserver(()=>{if(doc){updateListHeight();draw();}});observer.observe(stage);
   dialog.showModal();
   if(doc){$('.le-start').hidden=true;$('.le-edit').hidden=false;$('#leExportWidth').value=doc.width;message(options.hasDraft?'已恢复上次未提交的编辑草稿':'先检查自动还原效果，再自由调整图层');setBusy(true);try{await ensureImages();fit();render();}catch(error){message(error.message,true);}finally{setBusy(false);render();}}
 }

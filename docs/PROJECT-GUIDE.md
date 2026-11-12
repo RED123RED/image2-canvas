@@ -57,6 +57,8 @@
 
 ## 分层编辑器（2026-11-12）
 
+- 右侧图层列表底边提供上下拖动条，可拉高以显示更多层，也可缩小；双击恢复默认高度。当前页面会话内重新打开编辑器保留该高度，缩小窗口时自动限制到可用高度。此设置不写入项目、不改变图层位置或撤销记录；拖动条聚焦时上下键调整列表高度。
+
 - 本次确认的实际主线工作目录为 E:/codex/image2-canvas-work/mainline-merge（master）；其 output 是指向 E:/codex/image2-canvas/output 的目录联接。任务提供的 E:/AI剧本/image2-canvas 不存在。以后执行命令仍须先核对实际工作目录和 git 状态。
 - 入口位于参考图节点标题栏；仅创建一个新分层作品节点，原图及其连线保留。沿用 image 类型，新增 layerDocument、layerDraft、layerSource、layerJobId、layerModel、layerError 字段，不改旧节点格式。
 - 分层文档 version=1，以底图像素为坐标系，layers 数组从底到顶，保存每层 src、x/y、width/height、rotation、opacity、visible、locked、flipX/Y 和名称。initialLayers 保留首次拆层的布局，恢复操作也能撤销。UI 最多 64 层，接口单次接受底图加 1–16 层。
