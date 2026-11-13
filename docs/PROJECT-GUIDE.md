@@ -14,6 +14,16 @@
 
 ## 产品边界
 
+### 参考图局部修改（2026-11-13）
+
+- 入口：图片节点画笔图标，独立懒加载 public/local-edit.js、local-edit.css、local-edit-render.js，共享契约 local-edit-document.js。不改变普通生图、模型回答或视频请求。
+- 只使用 ark-plan Pro/Flash，默认 Pro。GET /api/local-edit/status 校验 seedream-local-edit-v1 和套餐密钥；POST /api/local-edit 进入现有串行队列，生成单张图。不自动降级到其他渠道，不自动重试生成 POST。
+- 最多 48 条点/框/圈/笔迹/箭头/文字，存 0–1 坐标，转模型 0–999 坐标。发送干净原图和可选示意图（最多 2 张，最长边压至 2048）。服务端再校验单图 30MB/3600万像素/比例；输出用原比例的允许尺寸，合成结果恢复原图尺寸。
+- 保护模式是本地矩形/圈选并集合成，不是 API mask；默认 6px 向内羽化。软件条带混合避免选区外 GPU 取整偏差。选区需覆盖新增物体和阴影；未开启保护时模型可能重绘其他内容。返回比例差超过 1.5% 阻止回填，可另存原始返回图。
+- node.localEdit 可选持久化字段：source、marks、general、model、protect、feather、requestId/jobId、status、rawResult/result、history。提交前保存 UUID，服务端 UUID+payload hash 去重；刷新/重开只查原任务。去重记录随既有 240 条终态任务保留策略管理，重启不重发模型请求。
+- 应用只替换普通节点图片/尺寸，保留 ID、位置、连线、其他节点及历史，写入失败回退并保留候选；支持画布撤销、项目导入导出。生成图清理引用包含 localEdit 原图/结果/历史。分层作品以已保存合成图编辑，只另存普通参考节点，不覆盖 layerDocument/layerDraft；单图层局部修图未加入。
+- 离线验证 npm run test:local-edit；浏览器脚本 tests/local-edit.browser.js、tests/local-edit-layered.browser.js；实测和恢复说明见 docs/LOCAL-EDIT-VERIFICATION.md。
+
 这是一个本地、浏览器/桌面应用式的无限节点画布，核心能力包括：
 
 - 项目首页：新建、打开、搜索、编辑名称、复制、删除项目。

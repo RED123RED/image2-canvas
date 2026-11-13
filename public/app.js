@@ -1,5 +1,8 @@
 import { arkProtocol, arkModels, arkSizes, arkPlanProtocol, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from "./seedream-ark.js";
 import {allLayerSources,leafLayers} from './layer-tree.js';
+import {localEditSources} from './local-edit-document.js';
+let localEditorModule;
+const getLocalEditor=()=>localEditorModule ||= import('./local-edit.js');
 
 const $ = selector => document.querySelector(selector);
 const layerJobPollers = new Map();
@@ -993,7 +996,7 @@ function generatedImageFilename(source) {
 function generatedImageFilesForProject(project) {
   const files = new Set();
   (project?.nodes || []).filter(node => node?.type === "image").forEach(node => {
-    [node.src, node.originalSrc, node.previewSrc, node.layerSource,
+    [node.src, node.originalSrc, node.previewSrc, node.layerSource, ...localEditSources(node.localEdit),
       node.layerRefinement?.sourceLayer?.src,
       ...[node.layerDocument, node.layerDraft, node.layerRefinement?.candidate].flatMap(doc => doc ? [doc.originalSrc, ...allLayerSources(Array.isArray(doc.layers)?doc.layers:[]), ...allLayerSources(Array.isArray(doc.initialLayers)?doc.initialLayers:[])] : [])].forEach(source => {
       const filename = generatedImageFilename(source);
@@ -1112,7 +1115,7 @@ function undo() { if (!undoStack.length || isGenerating) return; redoStack.push(
 function redo() { if (!redoStack.length || isGenerating) return; undoStack.push(snapshot()); restoreSnapshot(redoStack.pop()); updateHistoryButtons(); }
 function updateHistoryButtons() { $("#undoButton").disabled = !undoStack.length || isGenerating; $("#redoButton").disabled = !redoStack.length || isGenerating; }
 function editableHistoryEligible(target) {
-  return Boolean(state && target instanceof Element && target.matches("input, textarea, select, [contenteditable=true]") && !target.matches('input[type="file"]') && !target.closest("#dialogueScriptDialog, #settingsDialog, #newProjectDialog"));
+  return Boolean(state && target instanceof Element && target.matches("input, textarea, select, [contenteditable=true]") && !target.matches('input[type="file"]') && !target.closest("#dialogueScriptDialog, #settingsDialog, #newProjectDialog, #localEditDialog"));
 }
 function beginEditableHistory(target) {
   if (!editableHistoryEligible(target) || editableHistorySessions.has(target)) return;
@@ -2942,8 +2945,9 @@ function renderImageNodeHtml(node, selected, style) {
   const isVideoLoading = loading && loadingMediaType === "video";
   const elapsed = formatGenerationDuration(Date.now() - Number(node.generationStartedAt || 0)) || "0秒";
   const loadingStage = runningHubGenerationStageLabel(node.generationStage);
+  const localAction=!loading&&hasSource&&node.mediaType!=='video'?'<button class="icon-button node-interactive" type="button" data-local-edit="'+node.id+'" aria-label="局部修改" data-tooltip="局部修改">'+icon('paintbrush')+'</button>':'';
   const layerAction = !loading && hasSource ? `<button class="icon-button node-interactive" type="button" data-layer-edit="${node.id}" aria-label="${node.layerJobId ? '查看拆层进度' : node.layerDocument ? '编辑图层' : '分层编辑'}" data-tooltip="${node.layerJobId ? '查看拆层进度' : node.layerDocument ? '编辑图层' : '分层编辑'}">${icon(node.layerJobId ? 'loader-circle' : 'layers')}</button>` : '';
-  const actions = loading ? "" : hasSource ? `${layerAction}<button class="icon-button node-interactive" type="button" data-crop-node="${node.id}" aria-label="裁剪参考图" data-tooltip="裁剪参考图">${icon("crop")}</button><button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载图片" data-tooltip="下载图片">${icon("download")}</button>` : `<button class="icon-button node-interactive" type="button" data-upload-node="${node.id}" aria-label="上传图像" data-tooltip="上传图像">${icon("image-plus")}</button>`;
+  const actions = loading ? "" : hasSource ? `${localAction}${layerAction}<button class="icon-button node-interactive" type="button" data-crop-node="${node.id}" aria-label="裁剪参考图" data-tooltip="裁剪参考图">${icon("crop")}</button><button class="icon-button node-interactive" type="button" data-download-node="${node.id}" aria-label="下载图片" data-tooltip="下载图片">${icon("download")}</button>` : `<button class="icon-button node-interactive" type="button" data-upload-node="${node.id}" aria-label="上传图像" data-tooltip="上传图像">${icon("image-plus")}</button>`;
   const toggle = loading ? "" : `<button class="icon-button image-toggle node-interactive${disabled ? " is-disabled" : ""}" type="button" data-toggle-image="${node.id}" aria-label="${disabled ? "启用参考图节点" : "禁用参考图节点"}" title="${disabled ? "启用参考图节点" : "禁用参考图节点"}">${icon(disabled ? "power" : "ban")}</button>`;
   const dimensions = Number(node.imageWidth) > 0 && Number(node.imageHeight) > 0 ? `${node.imageWidth} × ${node.imageHeight}` : "";
   const candidateActions = node.midjourneyCandidate && hasSource
@@ -3125,6 +3129,7 @@ function bindNodeEvents() {
   $$('[data-download-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); const node = findNode(button.dataset.downloadNode); if (node) downloadNode(node); }));
   $$('[data-crop-node]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); openCropDialog(button.dataset.cropNode); }));
   $$('[data-layer-edit]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void openNodeLayerEditor(button.dataset.layerEdit); }));
+  $$('[data-local-edit]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();void openNodeLocalEditor(button.dataset.localEdit);}));
   $$('[data-midjourney-upscale]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); void upscaleMidjourneyCandidate(button.dataset.midjourneyUpscale, Number(button.dataset.midjourneySlot)); }));
   $$('[data-import-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoImportNodeId = button.dataset.importVideo; pendingVideoReferenceNodeId = null; pendingVideoPreviewUploadNodeId = null; videoFileInput.value = ""; videoFileInput.click(); }));
   $$('[data-upload-preview-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoPreviewUploadNodeId = button.dataset.uploadPreviewVideo; pendingVideoImportNodeId = null; pendingVideoReferenceNodeId = null; videoFileInput.value = ""; videoFileInput.click(); }));
@@ -3760,7 +3765,7 @@ function renderNodeInspector(node) {
   refreshIcons();
 }
 async function handleCanvasPaste(event) {
-  if (document.querySelector('#layerEditor[open]')) return;
+  if (document.querySelector('#layerEditor[open], #localEditDialog[open]')) return;
   const target = event.target instanceof Element ? event.target : null;
   const isEditable = Boolean(target?.closest("input, textarea, select, [contenteditable=true]"));
   if (!state || isEditable) return;
@@ -4367,6 +4372,28 @@ async function runAnswerNode(nodeId) {
   cropSelection.style.left = `${selection.x * 100}%`; cropSelection.style.top = `${selection.y * 100}%`; cropSelection.style.width = `${selection.width * 100}%`; cropSelection.style.height = `${selection.height * 100}%`;
 }
 function resetCropSelection() { if (cropSession) setCropSelection({ x: .15, y: .15, width: .7, height: .7 }); }
+async function openNodeLocalEditor(nodeId){
+  const node=findNode(nodeId),projectId=state?.id;if(!node||node.type!=='image'||!node.src)return;
+  if(node.layerJobId)return toast('请等待当前拆层任务完成后再编辑',true);
+  const current=()=>{if(state?.id!==projectId||!findNode(nodeId))throw Error('原项目或节点已关闭，请重新打开');return findNode(nodeId);};
+  const source=()=>{const n=current();return n.originalSrc||n.src;};
+  try{const editor=await getLocalEditor();await editor.openLocalEditor({name:node.name,source:source(),session:node.localEdit,layered:!!node.layerDocument,currentSource:source,onPersist:persistDataUrlImage,
+    onSession:async(session,durable)=>{const n=current(),old=n.localEdit;n.localEdit=session;if(durable){try{await saveProjectNow(true);}catch(e){if(old)n.localEdit=old;else delete n.localEdit;throw e;}}else scheduleSave();},
+    onCommit:async({session,asset,copy,raw})=>{
+      const dimensions=asset.dimensions||await readImageDimensions(asset.url),n=current();
+      if(!copy&&(n.layerDocument||source()!==session.source))throw Error('原图已变化，请另存为参考图，或开始新一轮修改');
+      const before=snapshot(),backup=structuredClone(n),oldSelection=[...state.selectedIds],next=structuredClone(session);
+      next.status='applied';next.history=[...(next.history||[]),{before:session.source,after:asset.url,model:session.model,createdAt:Date.now()}];
+      const values={src:asset.url,originalSrc:asset.url,previewSrc:asset.previewUrl||asset.url,imageWidth:dimensions.width,imageHeight:dimensions.height,ratio:dimensions.width+':'+dimensions.height,outputType:'png'};
+      let added;
+      if(copy){added={...createReferenceNode(n.x+n.width+46,n.y+36),...values,name:n.name+(raw?' · 原始修改结果':' · 局部修改'),source:'局部修改 · '+(session.model.includes('pro')?'Seedream Pro':'Seedream Flash')};state.nodes.push(added);state.selectedIds=[added.id];}
+      else Object.assign(n,values);
+      n.localEdit=next;
+      try{await saveProjectNow(true);}catch(e){if(added)state.nodes=state.nodes.filter(item=>item.id!==added.id);Object.keys(n).forEach(k=>delete n[k]);Object.assign(n,backup);state.selectedIds=oldSelection;throw e;}
+      recordHistory(before);renderWorkspace();return next;
+    },onClose:()=>{if(state?.id===projectId)renderWorkspace();}});
+  }catch(error){toast(error.message||'无法打开局部修改',true);}
+}
 async function openNodeLayerEditor(nodeId) {
   const node=findNode(nodeId),projectId=state?.id;
   if(!node||node.type!=='image'||!node.src)return;
@@ -4810,7 +4837,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   document.addEventListener("change", event => { scheduleEditableHistory(event.target); scheduleDialogueEditableHistory(event.target); }, true);
   document.addEventListener("focusout", event => { commitEditableHistory(event.target); commitDialogueEditableHistory(event.target); }, true);
   window.addEventListener("keydown", event => {
-    if (document.querySelector('#layerEditor[open]')) return;
+    if (document.querySelector('#layerEditor[open], #localEditDialog[open]')) return;
     const target = event.target instanceof Element ? event.target : null;
     const editableTarget = target?.closest("input, textarea, select, [contenteditable=true]");
     const isEditable = Boolean(editableTarget);

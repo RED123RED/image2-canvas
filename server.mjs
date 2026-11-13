@@ -4,6 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import os from "node:os";
+import {createHash} from 'node:crypto';
+import {localEditProtocol,buildLocalEditPayload} from './public/local-edit-document.js';
 import { layerProtocol, buildLayerPayload, createLayerDocument } from './public/layer-document.js';
 import { fileURLToPath } from "node:url";
 import { arkProtocol, arkBaseUrl, arkModels, arkPlanProtocol, arkPlanBaseUrl, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from './public/seedream-ark.js';
@@ -909,7 +911,7 @@ async function requestImage2Generation(job) {
 
 async function requestArkGeneration(job) {
   const layerJob = job.kind === 'layer-decomposition';
-  const payload = (layerJob ? buildLayerPayload : buildArkPayload)({ ...job.request, provider: job.provider, model: job.model });
+  const payload = (layerJob ? buildLayerPayload : job.kind==='local-image-edit'?buildLocalEditPayload:buildArkPayload)({ ...job.request, provider: job.provider, model: job.model });
   // A POST is never automatically retried: a lost response may already be billable.
   const response = await fetch(`${job.provider === 'ark-plan' ? arkPlanBaseUrl : arkBaseUrl}/images/generations`, { method: 'POST', headers: { Authorization: `Bearer ${job.request.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(10 * 60_000) });
   let result;
@@ -1366,6 +1368,23 @@ async function createArkJob(req, res, body) {
     await persistJobs(); await writeJobLog(job, 'queued');
     sendJson(res, 202, { job: jobView(job) }); void drainJobs();
   } catch (error) { return sendJson(res, 400, { error: error?.message || '火山引擎任务创建失败' }); }
+}
+
+async function createLocalEditJob(req,res){
+  try{
+    const body=await readJson(req,84*1024*1024),payload=buildLocalEditPayload(body);
+    if(!/^[a-f0-9-]{36}$/.test(body.requestId||''))throw Error('缺少有效的编辑请求编号');
+    const id='job-le-'+body.requestId,requestHash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    const existing=()=>{const job=jobs.get(id);if(!job)return false;sendJson(res,job.requestHash===requestHash?200:409,job.requestHash===requestHash?{job:jobView(job)}:{error:'请求编号已用于另一项编辑'});return true;};
+    if(existing())return;
+    for(const image of body.references){const bytes=Buffer.from(image.split(',')[1],'base64'),d=imageDimensions(bytes,imageMimeFromBuffer(bytes,''));if(d.width<=14||d.height<=14||d.width*d.height>36000000||d.width/d.height<1/16||d.width/d.height>16)throw Error('参考图尺寸或宽高比不符合模型要求');}
+    const apiKey=await resolveArkApiKey(req,'ark-plan');if(!apiKey)return sendJson(res,401,{error:'请先配置火山 Agent Plan 套餐密钥'});
+    if(existing())return;
+    const job={id,requestHash,kind:'local-image-edit',status:'queued',createdAt:Date.now(),provider:'ark-plan',model:body.model,imageCount:1,request:{apiKey,prompt:payload.prompt,size:payload.size,references:body.references,n:1}};
+    jobs.set(id,job);
+    try{await persistJobs();}catch(error){jobs.delete(id);throw error;}
+    pendingJobIds.push(id);await writeJobLog(job,'queued').catch(()=>{});sendJson(res,202,{job:jobView(job)});void drainJobs();
+  }catch(error){return sendJson(res,400,{error:error.message||'局部修改任务创建失败'});}
 }
 
 async function createRunningHubKrea2Job(req, res, body) {
@@ -2018,6 +2037,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/audio-assets") return storeAudioUpload(req, res);
   if (req.method === "POST" && url.pathname === "/api/video-compose") return composeVideo(req, res);
   if (req.method === "GET" && url.pathname === "/api/layers/status") return sendJson(res, 200, { protocol: layerProtocol, ready: Boolean(await resolveArkApiKey(req, 'ark-plan')) });
+  if (req.method === 'GET' && url.pathname === '/api/local-edit/status') return sendJson(res,200,{protocol:localEditProtocol,ready:Boolean(await resolveArkApiKey(req,'ark-plan'))});
+  if (req.method === 'POST' && url.pathname === '/api/local-edit') return createLocalEditJob(req,res);
   if (req.method === "POST" && url.pathname === "/api/layers/decompose") return createLayerJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/generate") return createJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/respond") return createResponse(req, res);
