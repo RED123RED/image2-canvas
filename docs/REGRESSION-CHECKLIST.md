@@ -2,11 +2,11 @@
 
 ## 参考图局部修改
 
-- npm run test:local-edit；运行 tests/local-edit.browser.js、tests/local-edit-layered.browser.js（独立浏览器，模拟付费请求）。
+- npm run test:local-edit；运行 tests/local-edit.browser.js、tests/local-edit-layered.browser.js、tests/local-edit-confirm.browser.js（独立浏览器，模拟付费请求）。
 - 多点/框选/圈选/笔迹/箭头/文字、移动/擦除/撤销、标记列表上下拉伸、缩放后的坐标正确；选择 Pro/Flash 使用独立套餐密钥。
-- 提交前保存草稿；刷新/重开继续同一任务，不重复 POST。失败保留原图，比例不一致阻止应用，可另存原始图。模拟 IndexedDB 写失败应回退节点并保留预览。
+- 提交前保存草稿；刷新/重开继续同一任务，不重复 POST。失败保留原图，比例不一致阻止应用，保留原图及返回记录，不出现另存按钮。模拟 IndexedDB 写失败应回退节点并保留预览。
 - 对比轴拖动/键盘可用；两图同时缩放平移，预览不覆盖原图。保护模式检查选区外 RGBA 一致、羽化无透明黑边。
-- 应用保留原节点 ID、位置、连线、其他节点；画布撤销/重做有效。另存只增加一张参考图。分层作品原图、layerDocument、layerDraft 不变，PSD/JPG/PNG 导出和再次拆层通过。
+- 应用保留原节点 ID、位置、连线、其他节点；画布撤销/重做有效。确认不增加节点；完整 PNG 显示及下载尺寸与原图相同。分层已保存文档与草稿独立收纳为可恢复备份；确认后的分层查看、PSD/JPG/PNG 导出显示新结果，恢复旧图层和撤销有效。
 - 项目导入导出保留 localEdit；原图/原始返回/结果/历史不会被未使用生成图清理误删。原生图模型、Astra 回答、视频节点与设置密钥隔离继续回归。
 
 执行 npm run verify 后，在桌面版中确认以下项目：

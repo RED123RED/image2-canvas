@@ -22,7 +22,7 @@ export async function prepareLocalReferences(source,marks){
 }
 export async function compositeLocalEdit(source,result,marks,{protect=false,feather=6}={}){
   const [before,after]=await Promise.all([loadEditImage(source),loadEditImage(result)]),w=before.width,h=before.height;
-  if(Math.abs((after.width/after.height)/(w/h)-1)>.015)throw Error('模型返回画幅与原图不一致，请另存原始结果或重新生成，未套用到原图');
+  if(Math.abs((after.width/after.height)/(w/h)-1)>.015)throw Error('模型返回画幅与原图不一致，请重新生成，原图及本次返回记录保留');
   const out=editCanvas(w,h),ctx=out.getContext('2d',{willReadFrequently:true});
   if(!protect){ctx.drawImage(after,0,0,w,h);return out.toDataURL('image/png');}
   const regions=normalizeMarks(marks).filter(m=>m.enabled&&['rect','lasso'].includes(m.kind));if(!regions.length)throw Error('保护区域外画面需要至少一个框选或圈选范围');

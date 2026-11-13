@@ -1,6 +1,7 @@
 import { arkProtocol, arkModels, arkSizes, arkPlanProtocol, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from "./seedream-ark.js";
 import {allLayerSources,leafLayers} from './layer-tree.js';
 import {localEditSources} from './local-edit-document.js';
+import {applyLocalEditToLayers} from './local-edit-apply.js';
 let localEditorModule;
 const getLocalEditor=()=>localEditorModule ||= import('./local-edit.js');
 
@@ -2936,7 +2937,7 @@ function renderCompositionNodeHtml(node, selected, style) {
 function renderNoteHtml(node, selected, style) {
   return `<article class="canvas-node note-item${selected}" data-node-id="${node.id}" style="${style}"><div class="note-card"><header class="note-header"><span>${icon("sticky-note")}</span><strong>便签</strong></header><textarea class="note-textarea node-interactive" data-note-content="${node.id}" placeholder="记录你的想法…">${escapeHtml(node.content || "")}</textarea></div>${resizeHandleHtml(node)}</article>`;
 }
-function nodeCanvasSource(node) { return node?.previewSrc || node?.src || node?.originalSrc || ""; }
+function nodeCanvasSource(node) { return node?.localEdit?.result?.url&&node.localEdit.result.url===node.src ? node.src : node?.previewSrc || node?.src || node?.originalSrc || ""; }
 function renderImageNodeHtml(node, selected, style) {
   const loading = node.type === "loading";
   const loadingMediaType = loading && node.mediaType === "video" ? "video" : "image";
@@ -4379,17 +4380,18 @@ async function openNodeLocalEditor(nodeId){
   const source=()=>{const n=current();return n.originalSrc||n.src;};
   try{const editor=await getLocalEditor();await editor.openLocalEditor({name:node.name,source:source(),session:node.localEdit,layered:!!node.layerDocument,currentSource:source,onPersist:persistDataUrlImage,
     onSession:async(session,durable)=>{const n=current(),old=n.localEdit;n.localEdit=session;if(durable){try{await saveProjectNow(true);}catch(e){if(old)n.localEdit=old;else delete n.localEdit;throw e;}}else scheduleSave();},
-    onCommit:async({session,asset,copy,raw})=>{
-      const dimensions=asset.dimensions||await readImageDimensions(asset.url),n=current();
-      if(!copy&&(n.layerDocument||source()!==session.source))throw Error('原图已变化，请另存为参考图，或开始新一轮修改');
-      const before=snapshot(),backup=structuredClone(n),oldSelection=[...state.selectedIds],next=structuredClone(session);
-      next.status='applied';next.history=[...(next.history||[]),{before:session.source,after:asset.url,model:session.model,createdAt:Date.now()}];
-      const values={src:asset.url,originalSrc:asset.url,previewSrc:asset.previewUrl||asset.url,imageWidth:dimensions.width,imageHeight:dimensions.height,ratio:dimensions.width+':'+dimensions.height,outputType:'png'};
-      let added;
-      if(copy){added={...createReferenceNode(n.x+n.width+46,n.y+36),...values,name:n.name+(raw?' · 原始修改结果':' · 局部修改'),source:'局部修改 · '+(session.model.includes('pro')?'Seedream Pro':'Seedream Flash')};state.nodes.push(added);state.selectedIds=[added.id];}
-      else Object.assign(n,values);
-      n.localEdit=next;
-      try{await saveProjectNow(true);}catch(e){if(added)state.nodes=state.nodes.filter(item=>item.id!==added.id);Object.keys(n).forEach(k=>delete n[k]);Object.assign(n,backup);state.selectedIds=oldSelection;throw e;}
+    onCommit:async({session,asset})=>{
+      const [dimensions,originalDimensions]=await Promise.all([readImageDimensions(asset.url),readImageDimensions(session.source)]),n=current();
+      if(source()!==session.source)throw Error('原图已变化，请开始新一轮修改，当前对比记录保留');
+      if(dimensions.width!==originalDimensions.width||dimensions.height!==originalDimensions.height)throw Error('修改结果像素尺寸与原图不一致，未应用，请恢复预览后重试');
+      const layerDocument=n.layerDocument?applyLocalEditToLayers(n.layerDocument,asset.url,dimensions.width,dimensions.height):null;
+      const layerDraft=n.layerDraft?applyLocalEditToLayers(n.layerDraft,asset.url,dimensions.width,dimensions.height):null;
+      const before=snapshot(),backup=structuredClone(n),next=structuredClone(session);
+      next.status='applied';next.appliedToNode=true;
+      if(!next.history?.some(h=>h.before===session.source&&h.after===asset.url))next.history=[...(next.history||[]),{before:session.source,after:asset.url,model:session.model,createdAt:Date.now()}];
+      Object.assign(n,{src:asset.url,originalSrc:asset.url,previewSrc:asset.url,imageWidth:dimensions.width,imageHeight:dimensions.height,ratio:dimensions.width+':'+dimensions.height,outputType:'png',localEdit:next});
+      if(layerDocument)n.layerDocument=layerDocument;if(layerDraft)n.layerDraft=layerDraft;
+      try{await saveProjectNow(true);}catch(e){Object.keys(n).forEach(k=>delete n[k]);Object.assign(n,backup);throw e;}
       recordHistory(before);renderWorkspace();return next;
     },onClose:()=>{if(state?.id===projectId)renderWorkspace();}});
   }catch(error){toast(error.message||'无法打开局部修改',true);}
