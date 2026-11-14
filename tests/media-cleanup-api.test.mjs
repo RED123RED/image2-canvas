@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import {spawn} from 'node:child_process';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {mediaCleanupProtocol} from '../public/media-references.js';
+const root=fileURLToPath(new URL('../',import.meta.url));
+
+test('HTTP cleanup requires current protocol and preview; protects pending completed jobs and deletes both stores',async t=>{
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'canvas-cleanup-api-'));
+  await fs.mkdir(path.join(dir,'public'));
+  for(const file of ['server.mjs','media-cleanup.mjs','public/media-references.js','public/local-edit-document.js','public/layer-document.js','public/seedream-ark.js'])await fs.copyFile(path.join(root,file),path.join(dir,file));
+  await fs.writeFile(path.join(dir,'package.json'),JSON.stringify({type:'module'}));
+  await fs.writeFile(path.join(dir,'offline.mjs'),"globalThis.fetch=async()=>{throw Error('External requests disabled in cleanup test');};");
+  for(const folder of ['generated','assets'])await fs.mkdir(path.join(dir,'output',folder),{recursive:true});
+  const put=async key=>{const p=path.join(dir,'output',key);await fs.writeFile(p,'fixture');await fs.utimes(p,new Date(0),new Date(0));};
+  for(const key of ['generated/job-orphan-1.png','assets/asset-orphan.png','assets/asset-used.png','assets/job-awaiting-1.png','generated/job-video-1.mp4'])await put(key);
+  await fs.writeFile(path.join(dir,'output/image2-generation-jobs.json'),JSON.stringify([{id:'job-awaiting',status:'succeeded',kind:'layer-decomposition',images:[{url:'/api/assets/job-awaiting-1.png'}]}]));
+  const probe=net.createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));
+  const child=spawn(process.execPath,['--import',pathToFileURL(path.join(dir,'offline.mjs')).href,path.join(dir,'server.mjs')],{cwd:dir,windowsHide:true,env:{...process.env,PORT:String(port),APPDATA:path.join(dir,'config'),OPENAI_API_KEY:'cleanup-test'},stdio:'ignore'});
+  t.after(async()=>{if(child.exitCode===null){const stopped=new Promise(r=>child.once('exit',r));child.kill();await stopped;}await fs.rm(dir,{recursive:true,force:true});});
+  const base='http://127.0.0.1:'+port;
+  const call=async(url,body)=>{const r=await fetch(base+url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return {status:r.status,data:await r.json()};};
+  const references={protocol:mediaCleanupProtocol,action:'preview',referencedImages:['assets/asset-used.png'],referencedJobIds:['job-awaiting']};
+  let ready=false;for(let i=0;i<100;i++){try{await fetch(base+'/api/local-edit/status');ready=true;break;}catch{await new Promise(r=>setTimeout(r,40));}}assert.ok(ready,'isolated server ready');
+  assert.equal((await call('/api/generated/cleanup-unused',{action:'delete',referencedFilenames:[]})).status,409);
+  assert.equal((await call('/api/media/cleanup-unused',{})).status,400);
+  assert.equal((await call('/api/media/cleanup-unused',{...references,action:'delete'})).status,409);
+  const preview=await call('/api/media/cleanup-unused',references);assert.equal(preview.status,200);assert.equal(preview.data.unusedCount,2);
+  const removed=await call('/api/media/cleanup-unused',{...references,action:'delete',previewToken:preview.data.previewToken});assert.equal(removed.data.deleted,2);
+  for(const url of ['/api/assets/asset-used.png','/api/assets/job-awaiting-1.png','/api/generated/job-video-1.mp4'])assert.equal((await fetch(base+url)).status,200);
+  for(const url of ['/api/assets/asset-orphan.png','/api/generated/job-orphan-1.png'])assert.equal((await fetch(base+url)).status,404);
+  assert.equal((await call('/api/media/cleanup-unused',{...references,action:'delete',previewToken:preview.data.previewToken})).status,409);
+});

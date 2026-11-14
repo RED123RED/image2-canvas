@@ -14,6 +14,15 @@
 
 ## 产品边界
 
+### 未使用图片清理（2026-11-14）
+
+- 首页按钮统一清理 output/generated 与 output/assets 中受管 PNG/JPG/WebP；视频、音频、未知文件、子目录和符号链接不处理。删除需要先预览数量/空间，再确认，不自动清理。
+- public/media-references.js 递归收集当前浏览器所有项目的本机图片引用，包括分层文档、草稿、initialLayers、嵌套组 backup、再次拆分候选、局部修改原图/结果/原始返回/历史，以及其他节点内素材。当前状态、可用撤销/重做和节点剪贴板一并保护；保存队列或 IndexedDB 读取失败时停止清理。
+- 收集 activeJobId/layerJobId/jobId 等待恢复任务编号，局部修改 requestId 映射 job-le-ID；已成功但尚未回填项目的结果也保留。服务端额外保护 queued/running 任务及其输入图片；新写入文件有 10 分钟保护期。
+- media-cleanup.mjs 执行扫描与删除，POST /api/media/cleanup-unused 使用 canvas-media-cleanup-v1。五分钟、一次性预览令牌限定删除集合；确认重新读取项目引用，服务端再次检查引用、任务、文件签名、时间和文件类型。新出现或变化的文件不纳入本次删除，部分失败如实报告。旧 /api/generated/cleanup-unused 拒绝执行并要求刷新，避免旧页面扩大删除范围。
+- 保护范围不是跨浏览器/跨机器的全局登记；清理前保存并关闭其他编辑窗口。磁盘导出 JSON 与其他浏览器项目须导入或独立备份素材；不能仅删除所有当前不可见图片。
+- 验证：npm run test:cleanup；浏览器隔离删除、取消、二次引用、跨项目保护、数据库失败等见 docs/MEDIA-CLEANUP-VERIFICATION.md。此次未清理用户真实素材、未更改生图/回答/视频请求。
+
 ### 参考图局部修改（2026-11-13）
 
 - 入口：图片节点画笔图标，独立懒加载 public/local-edit.js、local-edit.css、local-edit-render.js，共享契约 local-edit-document.js。不改变普通生图、模型回答或视频请求。

@@ -17,7 +17,7 @@ function png(w,h){
 test('local edit API: isolated keys, idempotency and restart',async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'canvas-local-edit-'));
   await fs.mkdir(path.join(dir,'public'));
-  for(const f of ['server.mjs','public/seedream-ark.js','public/layer-document.js','public/local-edit-document.js'])await fs.copyFile(path.join(root,f),path.join(dir,f));
+  for(const f of ['server.mjs','media-cleanup.mjs','public/media-references.js','public/seedream-ark.js','public/layer-document.js','public/local-edit-document.js'])await fs.copyFile(path.join(root,f),path.join(dir,f));
   await fs.writeFile(path.join(dir,'package.json'),' {"type":"module"}');
   const record=path.join(dir,'requests.jsonl'),data=png(512,512),part=png(100,80);
   const mock=[

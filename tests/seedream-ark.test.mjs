@@ -32,6 +32,7 @@ test('real local queue, all outputs, independent keys, failures and saved jobs',
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'canvas-ark-test-'));
   await fs.mkdir(path.join(dir, 'public'));
   await fs.copyFile(path.join(root, 'server.mjs'), path.join(dir, 'server.mjs'));
+  for(const f of ['media-cleanup.mjs','public/media-references.js']) await fs.copyFile(path.join(root,f),path.join(dir,f));
   await fs.copyFile(path.join(root, 'public/seedream-ark.js'), path.join(dir, 'public/seedream-ark.js'));
   await fs.copyFile(path.join(root, 'public/layer-document.js'), path.join(dir, 'public/layer-document.js')); await fs.copyFile(path.join(root, 'public/local-edit-document.js'), path.join(dir, 'public/local-edit-document.js'));
   await fs.writeFile(path.join(dir, 'package.json'), '{"type":"module"}');

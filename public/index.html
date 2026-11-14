@@ -249,10 +249,11 @@
 
   <dialog class="settings-dialog generated-cleanup-dialog" id="generatedCleanupDialog" aria-labelledby="generatedCleanupTitle">
     <section class="generated-cleanup-shell">
-      <div class="dialog-heading"><div><span class="eyebrow">STORAGE MAINTENANCE</span><h2 id="generatedCleanupTitle">清理未使用生成图片</h2></div><button class="icon-button" id="closeGeneratedCleanupButton" type="button" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <div class="dialog-heading"><div><span class="eyebrow">STORAGE MAINTENANCE</span><h2 id="generatedCleanupTitle">清理未使用图片</h2></div><button class="icon-button" id="closeGeneratedCleanupButton" type="button" aria-label="关闭"><i data-lucide="x"></i></button></div>
       <p class="generated-cleanup-copy" id="generatedCleanupCopy">正在检查全部项目画布中的图片引用…</p>
       <div class="generated-cleanup-summary" id="generatedCleanupSummary" hidden></div>
-      <p class="field-note">只检查 <code>output/generated</code> 中的生成图片。视频、上传素材、项目数据及仍显示在任意项目画布中的图片都会保留。</p>
+      <p class="field-note">检查 <code>output/generated</code> 和 <code>output/assets</code>。保留全部项目使用的图片、图层、草稿、对比原图、恢复备份及待接收任务结果。视频、音频和项目数据不受影响。</p>
+      <p class="field-note">以当前浏览器保存的全部项目为准。请先保存并关闭其他编辑窗口；其他浏览器的项目、仅导出在磁盘的项目不会自动纳入保护，请先导入或备份其素材。</p>
       <p class="generated-cleanup-warning" id="generatedCleanupWarning" hidden>删除后不会进入回收站，无法从软件中撤销。</p>
       <div class="dialog-actions"><button class="button button-subtle" id="cancelGeneratedCleanupButton" type="button">取消</button><button class="button button-primary danger-button" id="confirmGeneratedCleanupButton" type="button" disabled><i data-lucide="trash-2"></i> 删除未使用图片</button></div>
     </section>

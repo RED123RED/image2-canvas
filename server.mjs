@@ -1,4 +1,5 @@
 import http from "node:http";
+import {createMediaCleanup} from './media-cleanup.mjs';
 import fsNative from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -1757,36 +1758,13 @@ async function deleteGeneratedImages(req, res) {
   }
 }
 
+const cleanupMedia = createMediaCleanup({generatedDir, assetsDir, getJobs: () => jobs.values()});
 async function cleanupUnusedGeneratedImages(req, res) {
   try {
     const body = await readJson(req, 2 * 1024 * 1024);
-    const action = body?.action === "delete" ? "delete" : "preview";
-    const referenced = new Set((Array.isArray(body?.referencedFilenames) ? body.referencedFilenames : []).map(generatedImageFilename).filter(Boolean));
-    const activeJobIds = new Set([...jobs.values()].filter(job => ["queued", "running"].includes(job.status)).map(job => job.id));
-    const entries = await fs.readdir(generatedDir, { withFileTypes: true });
-    const unused = [];
-    let totalImageCount = 0;
-    let activeImageCount = 0;
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      const filename = generatedImageFilename(entry.name);
-      if (!filename) continue;
-      totalImageCount += 1;
-      if (referenced.has(filename)) continue;
-      if ([...activeJobIds].some(id => filename.startsWith(`${id}-`))) { activeImageCount += 1; continue; }
-      const stat = await fs.stat(path.join(generatedDir, filename));
-      unused.push({ filename, bytes: stat.size });
-    }
-    const reclaimBytes = unused.reduce((total, item) => total + item.bytes, 0);
-    if (action !== "delete") return sendJson(res, 200, { totalImageCount, referencedCount: referenced.size, activeImageCount, unusedCount: unused.length, reclaimBytes });
-    let deleted = 0; let deletedBytes = 0; let missing = 0;
-    for (const item of unused) {
-      try { await fs.unlink(path.join(generatedDir, item.filename)); deleted += 1; deletedBytes += item.bytes; }
-      catch (error) { if (error?.code === "ENOENT") missing += 1; else throw error; }
-    }
-    return sendJson(res, 200, { totalImageCount, referencedCount: referenced.size, activeImageCount, unusedCount: unused.length, reclaimBytes, deleted, deletedBytes, missing });
+    return sendJson(res, 200, await cleanupMedia(body));
   } catch (error) {
-    return sendJson(res, 500, { error: error?.message || "未使用生成图片清理失败" });
+    return sendJson(res, error.status || 500, { error: error?.message || "未使用图片清理失败" });
   }
 }
 
@@ -2043,7 +2021,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/generate") return createJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/respond") return createResponse(req, res);
   if (req.method === "POST" && url.pathname === "/api/generated/delete") return deleteGeneratedImages(req, res);
-  if (req.method === "POST" && url.pathname === "/api/generated/cleanup-unused") return cleanupUnusedGeneratedImages(req, res);
+  if (req.method === "POST" && url.pathname === "/api/generated/cleanup-unused") return sendJson(res, 409, { error: "清理功能已更新，请刷新页面后重试" });
+  if (req.method === "POST" && url.pathname === "/api/media/cleanup-unused") return cleanupUnusedGeneratedImages(req, res);
   if (req.method === "POST" && url.pathname === "/api/generated/open-folder") return openGeneratedFolder(req, res);
   const mjUpscaleMatch = req.method === "POST" && /^\/api\/jobs\/([^/]+)\/midjourney\/upscale$/.exec(url.pathname);
   if (mjUpscaleMatch) { const id = safeDecodePath(mjUpscaleMatch[1]); return id === null ? sendJson(res, 400, { error: "任务地址无效" }) : createMjUpscaleJob(req, res, id); }

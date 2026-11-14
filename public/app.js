@@ -2,6 +2,7 @@ import { arkProtocol, arkModels, arkSizes, arkPlanProtocol, arkPlanModels, isArk
 import {allLayerSources,leafLayers} from './layer-tree.js';
 import {localEditSources} from './local-edit-document.js';
 import {applyLocalEditToLayers} from './local-edit-apply.js';
+import {collectMediaReferences,mediaCleanupProtocol} from './media-references.js';
 let localEditorModule;
 const getLocalEditor=()=>localEditorModule ||= import('./local-edit.js');
 
@@ -1031,17 +1032,23 @@ function formatStorageSize(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 async function collectAllGeneratedImageReferences() {
+  // Wait for pending writes and fail closed if a save failed.
+  if (state) await saveProjectNow(true);
+  await projectSaveQueue;
   const projects = await dbGetAll("projects");
-  const files = new Set();
-  projects.filter(project => project?.id).forEach(project => generatedImageFilesForProject(project).forEach(file => files.add(file)));
-  return [...files];
+  return collectMediaReferences([projects, state, ...(state ? [...undoStack, ...redoStack] : []), workflowClipboard], window.location.origin);
 }
-async function inspectUnusedGeneratedImages(referencedFilenames, action = "preview") {
-  return requestJson("/api/generated/cleanup-unused", {
+async function inspectUnusedGeneratedImages(references, action = "preview", previewToken) {
+  const result = await requestJson("/api/media/cleanup-unused", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, referencedFilenames })
-  }, 60_000);
+    body: JSON.stringify({ protocol: mediaCleanupProtocol, action, ...references, previewToken })
+  }, 60_000).catch(error => {
+    if (error.message.includes("404") || error.message.includes("405") || error.message === "不支持的请求方法") throw new Error("清理服务尚未更新，请点击首页的恢复生图服务后刷新页面");
+    throw error;
+  });
+  if (result.protocol !== mediaCleanupProtocol) throw new Error("清理服务版本不匹配，请通过首页恢复生图服务后刷新页面");
+  return result;
 }
 function setGeneratedCleanupDialogState({ copy, summary = "", warning = false, canConfirm = false, busy = false }) {
   $("#generatedCleanupCopy").textContent = copy;
@@ -1062,16 +1069,17 @@ async function openGeneratedCleanupDialog() {
   setGeneratedCleanupDialogState({ copy: "正在检查全部项目画布中的图片引用…", busy: true });
   dialog.showModal();
   try {
-    const referencedFilenames = await collectAllGeneratedImageReferences();
-    const preview = await inspectUnusedGeneratedImages(referencedFilenames);
-    generatedCleanupPreview = { ...preview, referencedFilenames };
+    const references = await collectAllGeneratedImageReferences();
+    const preview = await inspectUnusedGeneratedImages(references);
+    generatedCleanupPreview = preview;
+    const detail = `生成图片 ${preview.byDirectory.generated.unusedCount} 个；上传/图层/合成素材 ${preview.byDirectory.assets.unusedCount} 个。` + (preview.recentCount ? ` ${preview.recentCount} 个最近写入的文件暂时保留，10 分钟后可重新检查。` : "");
     if (!preview.unusedCount) {
-      setGeneratedCleanupDialogState({ copy: "当前没有可清理的未使用生成图片。", summary: `已检查 ${preview.totalImageCount} 张本地生成图片，所有仍被项目画布引用的图片均会保留。` });
+      setGeneratedCleanupDialogState({ copy: "当前没有可清理的未使用图片。", summary: `已检查 ${preview.totalImageCount} 个图片文件。${detail}` });
       return;
     }
     setGeneratedCleanupDialogState({
-      copy: "以下图片没有出现在任何项目画布中，可以清理以释放 E 盘空间。",
-      summary: `可清理 ${preview.unusedCount} 张图片，预计释放 ${formatStorageSize(preview.reclaimBytes)}。`,
+      copy: "以下图片不再被当前浏览器保存的项目及编辑记录引用，可以清理以释放空间。",
+      summary: `可清理 ${preview.unusedCount} 个图片文件，预计释放 ${formatStorageSize(preview.reclaimBytes)}。${detail}`,
       warning: true,
       canConfirm: true
     });
@@ -1084,11 +1092,12 @@ async function confirmGeneratedCleanup() {
   if (!generatedCleanupPreview?.unusedCount) return;
   setGeneratedCleanupDialogState({ copy: "正在重新核对项目引用并删除未使用图片…", busy: true });
   try {
-    const referencedFilenames = await collectAllGeneratedImageReferences();
-    const result = await inspectUnusedGeneratedImages(referencedFilenames, "delete");
+    const references = await collectAllGeneratedImageReferences();
+    const result = await inspectUnusedGeneratedImages(references, "delete", generatedCleanupPreview.previewToken);
     generatedCleanupPreview = null;
     $("#generatedCleanupDialog").close();
-    toast(result.deleted ? `已清理 ${result.deleted} 张未使用生成图片，释放 ${formatStorageSize(result.deletedBytes)}` : "没有需要清理的生成图片");
+    const message = result.deleted ? `已清理 ${result.deleted} 个未使用图片文件，释放 ${formatStorageSize(result.deletedBytes)}` : "没有需要清理的图片";
+    toast(message + (result.skipped ? `；${result.skipped} 个文件因引用或内容变化已保留` : "") + (result.failed ? `；${result.failed} 个文件删除失败，请稍后重新检查` : ""), !!result.failed);
   } catch (error) {
     setGeneratedCleanupDialogState({ copy: `清理失败：${error?.message || "未知错误"}` });
     toast(`本地图片清理失败：${error?.message || "未知错误"}`, true);

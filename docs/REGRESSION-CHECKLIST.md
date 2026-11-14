@@ -1,5 +1,12 @@
 # 发布前回归清单
 
+## 未使用图片清理
+
+- npm run test:cleanup：临时目录中验证双目录删除、全部项目引用、隐藏/备份图层、草稿、局部修改历史、已完成待接收任务、活跃任务输入、新写入保护及无关文件保留。
+- 浏览器 tests/media-cleanup.browser.js 仅连接隔离测试服务：预览显示两个目录，取消不删，确认重新核对引用，文件只在预览范围内删除；清理后项目内容不变，空结果/版本错误/数据库错误禁用确认。
+- 重启服务及刷新旧页面；旧清理路由必须拒绝请求。不得使用真实用户目录或空测试浏览器对正式服务执行删除。
+- 生成/模型回答/视频参数不得变更；分层和局部修改已有回归继续通过。验证记录见 MEDIA-CLEANUP-VERIFICATION.md。
+
 ## 参考图局部修改
 
 - npm run test:local-edit；运行 tests/local-edit.browser.js、tests/local-edit-layered.browser.js、tests/local-edit-confirm.browser.js（独立浏览器，模拟付费请求）。
