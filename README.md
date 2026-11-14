@@ -33,6 +33,8 @@ npm start
 
 ## 火山 Agent Plan 套餐渠道
 
+模型回答节点新增「火山套餐 · Kimi K3.1 Pro」，使用同一设置项中的 Agent Plan 专属密钥。无参考图可文字问答，连接参考图后可看图回答，沿用最多八张参考图和原有提示词 Skill。发送参考图时生成最长边 2560px、每张编码后最多 4MiB 的副本，超限再缩至 1600px；画布原图与像素不改变。该模型通过套餐 chat/completions 调用，不替换 GPT-6 Astra、魔芋或 Moonshot Kimi。2026-11-14 真实文字/看图调用均成功；验证见 docs/KIMI-PLAN-VERIFICATION.md。
+
 生图模型新增“火山套餐 · Seedream 5.0 Flash”和“火山套餐 · Seedream 5.0 Pro”。设置中的“火山 Agent Plan 套餐 API Key”独立保存；也可使用环境变量 ARK_PLAN_API_KEY。套餐使用 /api/plan/v3/images/generations，普通官方渠道保持 /api/v3/images/generations，密钥及模型 ID 分开，不会在套餐不可用时自动切换普通付费渠道。
 
 操作与现有节点一致：无图文字生图，连接参考图后自动编辑，最多 10 张、每次 1 张、2K 档位 PNG；普通生图节点没有模式选择或拆层控件。套餐 Pro 的模型 ID 为 doubao-seedream-5-0-pro，Flash 为 doubao-seedream-5.0-flash；不能直接套用普通渠道带日期的 ID。2026-11-11 已实际验证两款文字生图及 10 图输入编辑，详情见 docs/ARK-PLAN-VERIFICATION.md。图像编辑仍可能重绘细节，小字和规格需人工检查。

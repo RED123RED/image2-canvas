@@ -56,6 +56,11 @@
 
 ## 当前模型与服务提供商
 
+- 火山套餐 Kimi K3.1 Pro（2026-11-14）：模型回答新增独立值 kimi-k3.1-pro，provider 标签 ark-plan-answer；既有 GPT-6 Astra 默认值、魔芋/Moonshot Kimi 及其他模型保持原值。后端精确匹配该 ID，使用 resolveArkApiKey(req,'ark-plan') 和 /api/plan/v3/chat/completions，不读其他渠道密钥，不自动回退或重试。/api/status 增加 arkPlanAnswer（kimi-ark-plan-v1）；旧服务或缺套餐密钥时前端阻止运行。
+- 新 Kimi 沿用 0–8 图、纯文本、已有四种提示词 Skill；无新模式控件。发送图片副本最长边 2560px、JPEG quality .9；编码超 4MiB 改为 1600px/.8，再超限则报错。原画布图不变，反推尺寸元数据来自原图。服务器拒绝超过八张、非 data URL、非 PNG/JPEG/WebP 或编码超 4MiB 的图片，图片内容不添加 detail 字段。
+- 套餐 Kimi 默认 reasoning_effort=high、max_tokens=16384（含模型思考消耗）；不传 temperature/top_p。单次上游超时 210 秒、前端等待 240 秒，不自动重试避免重复消耗。既有模型的参数/重试策略不变。普通方舟按量渠道的 kimi-k3-1-pro 与套餐 kimi-k3.1-pro 不混用。
+- 验证命令 npm run test:kimi-plan，浏览器 tests/kimi-plan.browser.js 26 项，真实单次文字与单图看图均 HTTP 200；详细请求隔离、原图保护与已验证边界见 KIMI-PLAN-VERIFICATION.md。未新增视频理解、联网工具调用或自动绘图。
+
 - Image2：新建节点默认 `gpt-image-2.5-sunburst`，当前可选 `gpt-image-2` 与 `gpt-image-2.5-sunburst`，2.5 系列只保留 Sunburst 作为可选项。基础版 `gpt-image-2.5` 与 Flare 标记为 `legacyOnly`，仅在旧节点当前使用该模型时显示选中且禁用的兼容选项；加载、运行、保存、导出和撤销仍保留实际模型与原参数，切换离开后不再列出。服务端支持列表不变，支持提示词和最多 8 张参考图。2.5 模型沿用 Image2 的五档比例，并提供 `1K`、`2K`、`4K` 分辨率档位，默认 `2K`；各组合使用 16 的倍数、比例在 `1:3` 至 `3:1`、单边不超过 3840、总像素不超过 4K 的有效尺寸。1K 的 `3:4` 为 `912 × 1216`，`9:16` 为 `864 × 1536`；`9:16` 的 `4K` 为已实测的 `2160 × 3840`。Flare 与 Sunburst 支持 `auto/low/medium/high/xhigh/max`，基础 `gpt-image-2.5` 仅使用 `low/medium/high`。Image2 的生成和编辑请求统一提交 `output_format: "png"`，避免兼容网关默认转为有损 JPEG；结果图片仍以网关返回的原始字节写入本机，不做缩放或重新编码。若网关 MIME 标头与实际字节不符，以图片签名识别格式与尺寸。旧项目没有 `image2Model` 字段的节点保持使用 `gpt-image-2` 与原有尺寸行为。
 - Seedream：使用独立 Seedream 网关配置，支持豆包图像模型、参考图与 2K 输出。
 - 火山引擎官方 Seedream：生图模型下拉框新增 `火山官方 · Seedream 5.0 Flash`（`doubao-seedream-5-0-flash-260915`）与 `火山官方 · Seedream 5.0 Pro`（`doubao-seedream-5-0-pro-260628`）。两者使用独立 `provider: ark` 和 `arkModel`，经 `https://ark.cn-beijing.volces.com/api/v3/images/generations` 提交。无参考图自动文字生图，有参考图自动编辑，最多 10 张参考图；沿用现有添加图片输入和连线操作，没有模式选择或图层拆分。每次输出 1 张 PNG、2K 档位，采用节点所选比例；不自动重试付费生成请求。设置中的官方密钥保存在 `providers.json` 的 `ark.apiKey`，亦可通过 `ARK_API_KEY` 提供，与既有 `seedream` 网关密钥互不覆盖。前后端协议为 `seedream-ark-auto-v1`，旧服务未重启时阻止官方任务创建。共用协议与请求校验位于 `public/seedream-ark.js`，离线回归命令为 `npm run test:ark`。

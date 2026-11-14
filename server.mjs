@@ -66,6 +66,7 @@ const claudeDefaultModel = claudeModels[0];
 const kimiBaseUrl = (process.env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, "");
 const kimiMoyuBaseUrl = "https://www.moyu.cn/v1";
 const kimiApiModel = "kimi-k3";
+const kimiPlanModel = "kimi-k3.1-pro";
 const kimiModels = Object.freeze(["kimi-k3-moyu", "kimi-k3-moonshot"]);
 const kimiDefaultModel = "kimi-k3-moonshot";
 const kimiModelAliases = Object.freeze({ "kimi-k3": kimiDefaultModel });
@@ -1881,9 +1882,13 @@ async function createResponse(req, res) {
     const isDeepseek = deepseekModels.includes(requestedModel);
     const isClaude = claudeModels.includes(requestedModel);
     const isKimi = kimiModels.includes(normalizedKimiModel);
+    const isKimiPlan = requestedModel === kimiPlanModel;
     const selectedModel = isKimi ? normalizedKimiModel : requestedModel;
-    const textModel = isKimi ? kimiApiModel : isDeepseek || isClaude ? requestedModel : openAiChatModels.includes(requestedModel) ? requestedModel : "gpt-5.6";
-    const apiKey = isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : isKimi ? await resolveKimiApiKey(req, selectedModel) : await resolveApiKey(req);
+    const textModel = isKimiPlan ? kimiPlanModel : isKimi ? kimiApiModel : isDeepseek || isClaude ? requestedModel : openAiChatModels.includes(requestedModel) ? requestedModel : "gpt-5.6";
+    const apiKey = isKimiPlan ? await resolveArkApiKey(req, 'ark-plan') : isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : isKimi ? await resolveKimiApiKey(req, selectedModel) : await resolveApiKey(req);
+    if (isKimiPlan && !apiKey) return sendJson(res, 401, {error: "未配置火山 Agent Plan 套餐密钥，请在设置中保存"});
+    if (isKimiPlan && (body.references !== undefined && !Array.isArray(body.references) || (body.references || []).length > 8)) return sendJson(res, 400, {error: "火山套餐 Kimi 节点最多支持 8 张参考图"});
+    if (isKimiPlan && (body.references || []).some(value => typeof value !== 'string' || !/^data:image[/](png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value) || value.length > 4 * 1024 * 1024)) return sendJson(res, 400, {error: "Kimi 参考图需为 PNG/JPEG/WebP，编码后每张不超过 4MB；请刷新画布后重试"});
     if (!apiKey) return sendJson(res, 401, { error: isDeepseek ? "未配置 DeepSeek API Key，请在设置中保存密钥" : isClaude ? "未配置 Claude API Key，请在设置中保存密钥" : isKimi ? `未配置 ${kimiGatewayForModel(selectedModel) === "moyu" ? "魔芋 AI" : "Moonshot 官方"} Kimi API Key，请在设置中保存密钥` : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, 8);
     if (isDeepseek && references.length && textModel !== deepseekVisionModel) return sendJson(res, 400, { error: "当前 DeepSeek 模型不支持图片输入，请切换到 DeepSeek V4.1 Flash" });
@@ -1898,7 +1903,7 @@ async function createResponse(req, res) {
     const durationSeconds = Math.min(30, Math.max(3, Math.round(Number(body.durationSeconds) || 6)));
     const adDurationSeconds = Math.min(usingBrandPromoVideoSkill ? 30 : 15, Math.max(3, Math.round(Number(body.adDurationSeconds) || (usingMinimalistProductAdSkill ? 10 : 15))));
     const content = [{ type: "text", text: prompt }];
-    references.forEach(url => content.push({ type: "image_url", image_url: isKimi ? { url } : { url, detail: "auto" } }));
+    references.forEach(url => content.push({ type: "image_url", image_url: isKimi || isKimiPlan ? { url } : { url, detail: "auto" } }));
     if (isClaude) {
       const claudeContent = [...references.map(claudeImageContentFromDataUrl).filter(Boolean), { type: "text", text: prompt }];
       const claudeRequestBody = {
@@ -1935,18 +1940,22 @@ async function createResponse(req, res) {
       if (thinking === "enabled") requestBody.reasoning_effort = ["low", "high", "max"].includes(body.deepseekReasoningEffort) ? body.deepseekReasoningEffort : "high";
     }
     if (isKimi) requestBody.reasoning_effort = ["low", "high", "max"].includes(body.kimiReasoningEffort) ? body.kimiReasoningEffort : "max";
-    const responseBaseUrl = isDeepseek ? deepseekBaseUrl : isKimi ? await resolveKimiBaseUrl(selectedModel) : baseUrl;
+    if (isKimiPlan) {
+      requestBody.reasoning_effort = ["low", "high", "max"].includes(body.kimiReasoningEffort) ? body.kimiReasoningEffort : "high";
+      requestBody.max_tokens = 16_384;
+    }
+    const responseBaseUrl = isKimiPlan ? arkPlanBaseUrl : isDeepseek ? deepseekBaseUrl : isKimi ? await resolveKimiBaseUrl(selectedModel) : baseUrl;
     let response;
     let raw = "";
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt < (isKimiPlan ? 1 : 2); attempt += 1) {
       response = await fetch(`${responseBaseUrl}/chat/completions`, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(150_000)
+        signal: AbortSignal.timeout(isKimiPlan ? 210_000 : 150_000)
       });
       raw = await response.text();
-      if (response.ok || ![502, 503, 504].includes(response.status) || attempt === 1) break;
+      if (isKimiPlan || response.ok || ![502, 503, 504].includes(response.status) || attempt === 1) break;
       let retrySeconds = Number(response.headers.get("retry-after")) || 0;
       try {
         const retryPayload = JSON.parse(raw);
@@ -1959,7 +1968,7 @@ async function createResponse(req, res) {
     if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || diagnosticText(raw) || `模型回答失败 (${response.status})`);
     const answer = usingNuyoahSkill ? removeNuyoahSignature(responseTextFrom(result)) : responseTextFrom(result);
     if (!answer) throw gatewayError(502, "接口没有返回可显示的文本回答");
-    return sendJson(res, 200, { answer, model: selectedModel, provider: isDeepseek ? "deepseek" : isKimi ? "kimi" : "openai", references: references.length, skill: answerSkill, h3Mode: usingDirectH3Skill ? h3Mode : undefined });
+    return sendJson(res, 200, { answer, model: selectedModel, provider: isKimiPlan ? "ark-plan" : isDeepseek ? "deepseek" : isKimi ? "kimi" : "openai", references: references.length, skill: answerSkill, h3Mode: usingDirectH3Skill ? h3Mode : undefined });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, failure.code === "REQUEST" ? 400 : 502, { error: failure.message, code: failure.code });
@@ -1993,7 +2002,7 @@ const server = http.createServer(async (req, res) => {
     const claudeKey = await resolveClaudeApiKey(req);
     const moyuKimiKey = await resolveKimiApiKey(req, "kimi-k3-moyu");
     const moonshotKimiKey = await resolveKimiApiKey(req, "kimi-k3-moonshot");
-    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, arkPlanAnswer: { ready: Boolean(arkPlanKey), protocol: "kimi-ark-plan-v1", model: kimiPlanModel, vision: true, referenceLimit: 8 }, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);

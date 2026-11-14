@@ -1,0 +1,33 @@
+async page => {
+  const checks=[],requests=[],errors=[],check=(ok,name)=>{if(!ok)throw Error(name);checks.push(name);};
+  page.on('pageerror',e=>errors.push(e.message));await page.setViewportSize({width:1600,height:1100});
+  let ready=true,protocol='kimi-ark-plan-v1';
+  const actual=await(await page.request.get(new URL('/api/status',page.url()).href)).json();
+  await page.route('**/api/status',r=>r.fulfill({json:{...actual,ready:false,arkPlanAnswer:{ready,protocol,model:'kimi-k3.1-pro'}}}));
+  await page.route('**/api/respond',r=>{const body=r.request().postDataJSON();requests.push({body,headers:r.request().headers()});return r.fulfill({json:{answer:'模拟回答 '+requests.length,model:body.model}});});
+  const name='Kimi套餐回归 '+Date.now();
+  const project=await page.evaluate(name=>{
+    const c=document.createElement('canvas');c.width=4800;c.height=2400;const ctx=c.getContext('2d');ctx.fillStyle='#2255aa';ctx.fillRect(0,0,c.width,c.height);const src=c.toDataURL();
+    const images=Array.from({length:8},(_,i)=>({id:'i'+i,type:'image',name:'原图'+i,src,originalSrc:src,imageWidth:4800,imageHeight:2400,x:-800-i*300,y:0,width:260,height:200}));
+    return {version:2,projectName:name,theme:'dark',viewport:{x:20,y:70,scale:.65},nodes:[{id:'prompt',type:'prompt',name:'测试提示词',content:'比较这些图片并回答。',x:0,y:0,width:300,height:300},{id:'answer',type:'answer',name:'Kimi参考图测试',model:'kimi-k3.1-pro',inputSlots:8,promptSlots:1,x:400,y:0,width:410,height:1000},{id:'text',type:'answer',name:'Kimi文字测试',model:'kimi-k3.1-pro',inputSlots:0,promptSlots:1,x:950,y:0,width:400,height:700},...images],edges:[{id:'p1',source:'prompt',sourcePort:'prompt',target:'answer',targetPort:'prompt',type:'prompt'},{id:'p2',source:'prompt',sourcePort:'prompt',target:'text',targetPort:'prompt',type:'prompt'},...images.map((im,i)=>({id:'e'+i,source:im.id,sourcePort:'image',target:'answer',targetPort:'image-'+i,type:'image'}))]};
+  },name);
+  await page.locator('#projectFileInput').setInputFiles({name:'kimi-plan.image2.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(project))});await page.getByRole('button',{name:name+' · 导入',exact:true}).waitFor();
+  const state=()=>page.evaluate(name=>new Promise(resolve=>{const r=indexedDB.open('image2-canvas',3);r.onsuccess=()=>{const db=r.result,q=db.transaction('projects').objectStore('projects').getAll();q.onsuccess=()=>{db.close();resolve(q.result.find(p=>p.projectName===name+' · 导入'));};};}),name);
+  let saved=await state();const id=saved.nodes.find(n=>n.name==='Kimi参考图测试').id,textId=saved.nodes.find(n=>n.name==='Kimi文字测试').id;
+  const select=()=>page.locator('[data-answer-model="'+id+'"]'),run=()=>page.locator('[data-run-answer="'+id+'"]');
+  const options=await select().locator('option').evaluateAll(items=>items.map(x=>({value:x.value,text:x.textContent})));
+  check(options.length===8&&options.some(x=>x.value==='kimi-k3.1-pro'&&x.text==='火山套餐 · Kimi K3.1 Pro'),'Separate eighth model option');
+  for(const value of ['gpt-6-astra','deepseek-flash','deepseek-v4-pro','claude-sonnet-4-6','claude-opus-5-5','kimi-k3-moyu','kimi-k3-moonshot'])check(options.some(x=>x.value===value),'Retained '+value);
+  check(!options.some(x=>x.value==='gpt-5.6'),'GPT-5.6 remains removed');
+  ready=false;await run().evaluate(el=>el.click());await page.locator('#settingsDialog').waitFor({state:'visible'});check(requests.length===0,'Missing plan key blocks requests');await page.keyboard.press('Escape');ready=true;
+  protocol='old';await run().evaluate(el=>el.click());await page.getByText('请先恢复生图服务，以加载火山套餐 Kimi K3.1 Pro',{exact:true}).waitFor();check(requests.length===0,'Old service cannot fall back to another model');protocol='kimi-ark-plan-v1';
+  await run().evaluate(el=>el.click());await page.getByText('模拟回答 1',{exact:true}).waitFor();check(requests.length===1&&requests[0].body.references.length===8,'Eight references in one request');check(requests[0].body.model==='kimi-k3.1-pro'&&requests[0].body.kimiReasoningEffort==='high','Correct model and reasoning');check(!requests[0].headers['x-image2-api-key'],'No other provider key forwarded');
+  const dimensions=await page.evaluate(async refs=>Promise.all(refs.map(src=>new Promise(resolve=>{const i=new Image();i.onload=()=>resolve([i.width,i.height]);i.src=src;}))),requests[0].body.references);check(dimensions.every(([w,h])=>w===2560&&h===1280),'Large references resized for sending');check(requests[0].body.references.every(x=>x.length<=4*1024*1024),'Encoded reference size bounded');
+  await page.locator('[data-run-answer="'+textId+'"]').evaluate(el=>el.click());await page.getByText('模拟回答 2',{exact:true}).waitFor();check(requests[1].body.references.length===0,'Text-only mode works');
+  await page.waitForTimeout(700);saved=await state();check(saved.nodes.filter(n=>n.type==='image').every(n=>n.src===project.nodes.find(x=>x.type==='image').src&&n.imageWidth===4800&&n.imageHeight===2400),'Original image pixels and source unchanged');check(saved.edges.length===10,'Connections unchanged');
+  await page.reload();await select().waitFor();check(await select().inputValue()==='kimi-k3.1-pro','Refresh retains model');check((await state()).nodes.find(n=>n.id===id).answer==='模拟回答 1','Refresh retains answer');
+  await select().selectOption('gpt-6-astra');await page.locator('#undoButton').click();check(await select().inputValue()==='kimi-k3.1-pro','Undo restores Kimi');await page.locator('#redoButton').click();check(await select().inputValue()==='gpt-6-astra','Redo restores Astra');await select().selectOption('kimi-k3.1-pro');
+  await page.locator('[data-answer-skill="'+id+'"]').selectOption('nuyoah-reverse');await run().evaluate(el=>el.click());await page.getByText('模拟回答 3',{exact:true}).waitFor();check(requests[2].body.skill==='nuyoah-reverse'&&requests[2].body.referenceMetadata.every(m=>m.width===4800),'Image analysis skill retains original metadata');
+  await page.evaluate(()=>{window.__exportBlob=null;const original=URL.createObjectURL;URL.createObjectURL=function(blob){if(blob.type==='application/json')window.__exportBlob=blob;return original.call(this,blob);};});await page.locator('#exportProjectButton').evaluate(el=>el.click());await page.waitForFunction(()=>!!window.__exportBlob);const exported=await page.evaluate(async()=>JSON.parse(await window.__exportBlob.text()));check(exported.nodes.find(n=>n.id===id).model==='kimi-k3.1-pro'&&exported.edges.length===10,'Export retains model and links');
+  await page.screenshot({path:'output/playwright/kimi-plan-node.png'});check(errors.length===0,'No browser exceptions');return {checks,requests:requests.length,errors};
+}

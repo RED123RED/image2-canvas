@@ -126,7 +126,8 @@ const answerModelOptions = Object.freeze([
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "claude", vision: true },
   { value: "claude-opus-5-5", label: "Claude Opus 5.5", provider: "claude", vision: true },
   { value: "kimi-k3-moyu", label: "Kimi K3 · 魔芋 AI", provider: "kimi", vision: true },
-  { value: "kimi-k3-moonshot", label: "Kimi K3 · Moonshot 官方", provider: "kimi", vision: true }
+  { value: "kimi-k3-moonshot", label: "Kimi K3 · Moonshot 官方", provider: "kimi", vision: true },
+  { value: "kimi-k3.1-pro", label: "火山套餐 · Kimi K3.1 Pro", provider: "ark-plan-answer", vision: true }
 ]);
 const deepseekAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "deepseek").map(option => option.value));
 const deepseekVisionAnswerModel = "deepseek-flash";
@@ -4023,6 +4024,13 @@ async function sourceToCompressedDataUrl(src, maxSize, quality, providerLabel) {
 }
 async function sourceToClaudeDataUrl(src) { return sourceToCompressedDataUrl(src, 1400, .8, "Claude "); }
 async function sourceToAstraDataUrl(src) { return sourceToCompressedDataUrl(src, 1600, .82, "GPT-6 Astra "); }
+async function sourceToKimiPlanDataUrl(src) {
+  // Send an optimized copy only; never replace the original canvas image.
+  let data = await sourceToCompressedDataUrl(src, 2560, .9, "Kimi K3.1 Pro ");
+  if (data.length > 4 * 1024 * 1024) data = await sourceToCompressedDataUrl(src, 1600, .8, "Kimi K3.1 Pro ");
+  if (data.length > 4 * 1024 * 1024) throw new Error("Kimi 参考图处理后仍过大，请缩小图片后重试");
+  return data;
+}
 function nodeDisplaySource(node) { return node?.previewSrc || node?.src || ""; }
 function imageSourceFromNode(node) {
   if (!node || node.disabled) return ""; if (node.type === "image") return node.originalSrc || node.src || "";
@@ -4329,13 +4337,18 @@ async function runAnswerNode(nodeId) {
   const usesDeepseek = answerModelIsDeepseek(node.model);
   const usesClaude = answerModelIsClaude(node.model);
   const usesKimi = answerModelIsKimi(node.model);
+  const usesKimiPlan = node.model === "kimi-k3.1-pro";
   const usesAstra = node.model === "gpt-6-astra";
   const kimiModel = usesKimi ? normalizedKimiAnswerModel(node.model) : "";
   try {
     const status = await requestJson("/api/status", {}, 8_000);
+    if (usesKimiPlan) {
+      if (status.arkPlanAnswer?.protocol !== "kimi-ark-plan-v1") return toast("请先恢复生图服务，以加载火山套餐 Kimi K3.1 Pro", true);
+      if (!status.arkPlanAnswer.ready) { openSettings(); setTimeout(() => { const input = $("#arkPlanApiKeyInput"); input?.scrollIntoView({block:"center"}); input?.focus(); }, 50); return toast("请先在设置中保存火山 Agent Plan 套餐密钥", true); }
+    }
     const kimiGateway = kimiModel === "kimi-k3-moyu" ? "moyu" : "moonshot";
     const kimiReady = status.kimi?.providers?.[kimiGateway]?.ready;
-    if (usesDeepseek ? !status.deepseek?.ready : usesClaude ? !status.claude?.ready : usesKimi ? !kimiReady : !status.ready && !apiKey) { openSettings(usesKimi ? "kimi" : ""); return toast(usesDeepseek ? "请先在设置中保存 DeepSeek API Key" : usesClaude ? "请先在设置中保存 Claude API Key" : usesKimi ? `请先在设置中保存 ${kimiGateway === "moyu" ? "魔芋 AI" : "Moonshot 官方"} Kimi API Key` : "请先连接 API", true); }
+    if (!usesKimiPlan && (usesDeepseek ? !status.deepseek?.ready : usesClaude ? !status.claude?.ready : usesKimi ? !kimiReady : !status.ready && !apiKey)) { openSettings(usesKimi ? "kimi" : ""); return toast(usesDeepseek ? "请先在设置中保存 DeepSeek API Key" : usesClaude ? "请先在设置中保存 Claude API Key" : usesKimi ? `请先在设置中保存 ${kimiGateway === "moyu" ? "魔芋 AI" : "Moonshot 官方"} Kimi API Key` : "请先连接 API", true); }
   } catch { openSettings(); return toast("本机服务不可用，无法检查模型配置", true); }
   if (usesDeepseek) {
     try {
@@ -4364,11 +4377,11 @@ async function runAnswerNode(nodeId) {
   try {
     const originalReferences = await Promise.all(sources.map(sourceToDataUrl));
     const referenceMetadata = nuyoahEnabled ? await Promise.all(originalReferences.map(async dataUrl => { try { return await readImageDimensions(dataUrl); } catch { return null; } })) : undefined;
-    const references = usesClaude ? await Promise.all(originalReferences.map(sourceToClaudeDataUrl)) : usesAstra ? await Promise.all(originalReferences.map(sourceToAstraDataUrl)) : originalReferences;
+    const references = usesKimiPlan ? await Promise.all(originalReferences.map(sourceToKimiPlanDataUrl)) : usesClaude ? await Promise.all(originalReferences.map(sourceToClaudeDataUrl)) : usesAstra ? await Promise.all(originalReferences.map(sourceToAstraDataUrl)) : originalReferences;
     const h3Enabled = node.answerSkill === "minimax-h3";
     const h3Mode = h3Enabled ? resolveH3AnswerMode(node, references.length) : node.answerSkill === "minimalist-product-ad" ? resolveH3AnswerMode({ h3Mode: node.productAdH3Mode }, references.length) : node.answerSkill === "brand-promo-video" ? resolveH3AnswerMode({ h3Mode: node.brandPromoH3Mode }, references.length) : undefined;
     const adDurationSeconds = node.answerSkill === "minimalist-product-ad" ? normalizedProductAdDuration(node.productAdDuration, 10) : node.answerSkill === "brand-promo-video" ? normalizedBrandPromoDuration(node.brandPromoDuration, 15) : undefined;
-    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && !usesClaude && !usesKimi && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt: prompt || "请对连接的参考图进行完整图片反推。", model: usesKimi ? kimiModel : node.model, references, referenceMetadata, skill: node.answerSkill, h3Mode, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, adDurationSeconds, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined, kimiReasoningEffort: usesKimi ? "max" : undefined }) }, 240_000);
+    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(!usesDeepseek && !usesClaude && !usesKimi && !usesKimiPlan && apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt: prompt || "请对连接的参考图进行完整图片反推。", model: usesKimi ? kimiModel : node.model, references, referenceMetadata, skill: node.answerSkill, h3Mode, durationSeconds: h3Enabled ? normalizedH3Duration(node.h3Duration) : undefined, adDurationSeconds, deepseekThinking: usesDeepseek ? node.deepseekThinking : undefined, deepseekReasoningEffort: usesDeepseek ? node.deepseekReasoningEffort : undefined, kimiReasoningEffort: usesKimiPlan ? "high" : usesKimi ? "max" : undefined }) }, 240_000);
     node.answer = String(result.answer || ""); node.model = result.model || node.model; node.status = "idle";
     toast("模型回答已完成");
   } catch (error) {
