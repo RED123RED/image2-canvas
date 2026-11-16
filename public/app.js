@@ -709,9 +709,6 @@ function stripPromptQuickMarkers(content) {
 function createVideoNode(x, y) {
   return { id: uid("h3-video"), type: "generator", mediaType: "video", provider: "runninghub-h3", name: "海螺 H3 视频", x, y, videoMode: "reference", videoAspect: "16:9", videoMegapixels: 0.9, videoSeconds: 6, promptSlots: 1, inputSlots: 6, videoInputSlotsInitialized: true, localVideoReference: "", localAudioReference: "", width: 420, height: nodeHeight("video-generator", 6, 1), status: "idle", lastResultIds: [], createdAt: Date.now() };
 }
-function createVideoEditorNode(x, y) {
-  return { id: uid("video-editor"), type: "video-editor", name: "视频剪辑", x, y, width: 680, height: nodeHeight("video-editor"), clips: [], inputSlots: 6, selectedClipId: "", timelinePlayhead: 0, previewPlaying: false, status: "idle", outputSrc: "", outputType: "mp4", createdAt: Date.now() };
-}
 function createVideoPreviewNode(x, y) {
   return { id: uid("video-preview"), type: "video-preview", name: "成片预览", x, y, width: 360, height: nodeHeight("video-preview"), localVideoSrc: "", localVideoName: "", outputType: "mp4", createdAt: Date.now() };
 }
@@ -1407,7 +1404,6 @@ function connectionChoicesForDraft(draft) {
   if (!source) return [];
   const generatorChoice = { kind: "generator", title: "新建生图节点", subtitle: "默认 Image2，可切换 Seedream", icon: "sparkles" };
   const videoChoice = { kind: "video", title: "新建视频节点", subtitle: "海螺 H3 · RunningHub", icon: "clapperboard" };
-  const videoEditorChoice = { kind: "video-editor", title: "新建视频剪辑节点", subtitle: "导入、裁切并调整多条视频顺序", icon: "scissors" };
   const videoPreviewChoice = { kind: "video-preview", title: "新建成片预览节点", subtitle: "上传、预览并输出本地视频", icon: "monitor-play" };
   const answerChoice = { kind: "answer", title: "新建模型回答节点", subtitle: "自动连接并用于文本回答", icon: "message-square-text" };
   const compositionChoice = { kind: "composition", title: "新建参数控制节点", subtitle: "自动写入已连接的提示词", icon: "sliders-horizontal" };
@@ -1415,7 +1411,7 @@ function connectionChoicesForDraft(draft) {
   if (source.type === "prompt" && draft.direction === "input" && draft.dataType === "composition") return [compositionChoice];
   if (source.type === "composition" && draft.direction === "output" && draft.dataType === "composition") return [{ kind: "prompt", title: "新建提示词节点", subtitle: "自动接收构图指令", icon: "text-cursor-input" }];
   if ((source.type === "image" || source.type === "loading") && draft.direction === "output" && draft.dataType === "image") return [generatorChoice, videoChoice, answerChoice];
-  if ((source.type === "video" || source.type === "video-editor" || source.type === "video-preview") && draft.direction === "output" && draft.dataType === "video") return source.type === "video-editor" ? [videoPreviewChoice] : source.type === "video-preview" ? [videoChoice, videoEditorChoice] : [videoChoice, videoEditorChoice, videoPreviewChoice];
+  if ((source.type === "video" || source.type === "video-editor" || source.type === "video-preview") && draft.direction === "output" && draft.dataType === "video") return source.type === "video-editor" ? [videoPreviewChoice] : source.type === "video-preview" ? [videoChoice] : [videoChoice, videoPreviewChoice];
   if (source.type === "generator" && source.mediaType === "video" && draft.direction === "input" && draft.dataType === "video") return [videoPreviewChoice];
   if ((source.type === "generator" || source.type === "answer") && draft.direction === "input" && draft.dataType === "prompt") return [{ kind: "prompt", title: "新建提示词节点", subtitle: "自动连接到此提示词输入", icon: "text-cursor-input" }];
   if ((source.type === "generator" || source.type === "answer") && draft.direction === "input" && draft.dataType === "image") return [{ kind: "reference", title: "新建参考图节点", subtitle: "连接到参考图输入，随后手动上传", icon: "image-plus" }];
@@ -1444,7 +1440,6 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   let node = null;
   if (kind === "generator") node = createGeneratorNode(Math.round(screenToScene(clientX, clientY).x - 180), Math.round(screenToScene(clientX, clientY).y - 180));
   if (kind === "video") node = createVideoNode(Math.round(screenToScene(clientX, clientY).x - 195), Math.round(screenToScene(clientX, clientY).y - 235));
-  if (kind === "video-editor") node = createVideoEditorNode(Math.round(screenToScene(clientX, clientY).x - 340), Math.round(screenToScene(clientX, clientY).y - 195));
   if (kind === "video-preview") node = createVideoPreviewNode(Math.round(screenToScene(clientX, clientY).x - 180), Math.round(screenToScene(clientX, clientY).y - 160));
   if (kind === "answer") node = createAnswerNode(Math.round(screenToScene(clientX, clientY).x - 190), Math.round(screenToScene(clientX, clientY).y - 185));
   if (kind === "prompt") node = createPromptNode(Math.round(screenToScene(clientX, clientY).x - 160), Math.round(screenToScene(clientX, clientY).y - 145), "");
@@ -1453,10 +1448,10 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   if (!node) return;
   state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null;
   if (draft.direction === "output") {
-    const targetPort = kind === "video" ? (draft.dataType === "video" ? "video-reference" : draft.dataType === "prompt" ? "prompt" : "image-0") : (kind === "generator" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "video-editor" && draft.dataType === "video" ? "video-0" : kind === "video-preview" && draft.dataType === "video" ? "video" : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
+    const targetPort = kind === "video" ? (draft.dataType === "video" ? "video-reference" : draft.dataType === "prompt" ? "prompt" : "image-0") : (kind === "generator" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "video-preview" && draft.dataType === "video" ? "video" : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
     if (targetPort) connectPorts(draft, { nodeId: node.id, portId: targetPort, dataType: draft.dataType, direction: "input" }, false);
   } else {
-    const outputPort = kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : kind === "video-preview" ? "video-output" : kind === "video" || kind === "video-editor" ? "video" : "image";
+    const outputPort = kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : kind === "video-preview" ? "video-output" : kind === "video" ? "video" : "image";
     connectPorts({ nodeId: node.id, portId: outputPort, dataType: draft.dataType, direction: "output" }, draft, false);
   }
   renderCanvas(); renderInspector(); scheduleSave();
@@ -1539,7 +1534,6 @@ function createCanvasElementAt(kind, clientX, clientY) {
   if (kind === "reference") node = createReferenceNode(Math.round(point.x - 135), Math.round(point.y - 160));
   if (kind === "generator") node = createGeneratorNode(Math.round(point.x - 180), Math.round(point.y - 180));
   if (kind === "video") node = createVideoNode(Math.round(point.x - 195), Math.round(point.y - 235));
-  if (kind === "video-editor") node = createVideoEditorNode(Math.round(point.x - 340), Math.round(point.y - 195));
   if (kind === "video-preview") node = createVideoPreviewNode(Math.round(point.x - 180), Math.round(point.y - 160));
   if (kind === "answer") node = createAnswerNode(Math.round(point.x - 190), Math.round(point.y - 185));
   if (kind === "note") node = createNote(Math.round(point.x - 130), Math.round(point.y - 95));
@@ -1556,7 +1550,6 @@ function showCanvasContextMenu(event) {
     { kind: "reference", title: "参考图", icon: "image-plus" },
     { kind: "generator", title: "生图", icon: "sparkles" },
     { kind: "video", title: "视频", icon: "clapperboard" },
-    { kind: "video-editor", title: "视频剪辑", icon: "scissors" },
     { kind: "video-preview", title: "成片预览", icon: "monitor-play" },
     { kind: "answer", title: "模型回答", icon: "message-square-text" },
     { kind: "note", title: "便签", icon: "sticky-note" },
@@ -3574,7 +3567,6 @@ function fitContent() {
   if (type === "prompt") node = createPromptNode(Math.round(center.x - 160), Math.round(center.y - 145));
   if (type === "generator") node = createGeneratorNode(Math.round(center.x - 180), Math.round(center.y - 180));
   if (type === "video") node = createVideoNode(Math.round(center.x - 195), Math.round(center.y - 235));
-  if (type === "video-editor") node = createVideoEditorNode(Math.round(center.x - 340), Math.round(center.y - 195));
   if (type === "video-preview") node = createVideoPreviewNode(Math.round(center.x - 180), Math.round(center.y - 160));
   if (type === "answer") node = createAnswerNode(Math.round(center.x - 190), Math.round(center.y - 185));
   if (type === "composition") node = createCompositionNode(Math.round(center.x - 175), Math.round(center.y - 145));
@@ -3645,7 +3637,6 @@ function renderLibrary() {
     <button class="module-item" type="button" data-library-image><span class="module-icon image">${icon("image-plus")}</span><span class="module-copy"><strong>参考图</strong><small>输出 Image 图像</small></span></button>
     <button class="module-item" type="button" data-library-add="generator"><span class="module-icon generator">${icon("sparkles")}</span><span class="module-copy"><strong>生图</strong><small>Image2 / Seedream / Midjourney</small></span></button>
     <button class="module-item" type="button" data-library-add="video"><span class="module-icon video">${icon("clapperboard")}</span><span class="module-copy"><strong>视频</strong><small>海螺 H3 · API plus · MP4</small></span></button>
-    <button class="module-item" type="button" data-library-add="video-editor"><span class="module-icon video">${icon("scissors")}</span><span class="module-copy"><strong>视频剪辑</strong><small>多段裁切、排序与合成预览</small></span></button>
     <button class="module-item" type="button" data-library-add="video-preview"><span class="module-icon video">${icon("monitor-play")}</span><span class="module-copy"><strong>成片预览</strong><small>上传、预览并输出本地视频</small></span></button>
     <button class="module-item" type="button" data-library-add="answer"><span class="module-icon answer">${icon("message-square-text")}</span><span class="module-copy"><strong>模型回答</strong><small>最多 6 条提示词 · 8 张参考图</small></span></button>
     </div><div class="section-label"><span>当前结构</span><span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词模块</span><strong>${counts("prompt")}</strong></div><div class="summary-row"><span>参数控制</span><strong>${counts("composition")}</strong></div><div class="summary-row"><span>图像模块</span><strong>${counts("image")}</strong></div><div class="summary-row"><span>生图模块</span><strong>${counts("generator")}</strong></div><div class="summary-row"><span>模型回答</span><strong>${counts("answer")}</strong></div>`;
