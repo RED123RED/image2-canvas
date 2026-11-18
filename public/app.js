@@ -1,4 +1,6 @@
 import { arkProtocol, arkModels, arkSizes, arkPlanProtocol, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from "./seedream-ark.js";
+import {createSpeechController} from './speech.js';
+import {createSpeechNode,createAudioNode,normalizeSpeechNode} from './speech-document.js';
 import {allLayerSources,leafLayers} from './layer-tree.js';
 import {localEditSources} from './local-edit-document.js';
 import {applyLocalEditToLayers} from './local-edit-apply.js';
@@ -241,7 +243,7 @@ function generatorModelLabel(modelId, fallback = "Image2") {
     || fallback;
 }
 function generatorReferenceLimit(node) { if (isArkProvider(node?.provider)) return 10; if (node?.mediaType === "video") return runningHubVideoMode(node).inputs.length; if (node?.provider === "runninghub-krea2") return 0; if (node?.provider === "midjourney") return 4; if (node?.provider === "moyu") return 6; return 8; }
-const nodeLabels = { prompt: "提示词", composition: "参数控制", image: "图像", video: "视频", "video-editor": "视频剪辑", "video-preview": "成片预览", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
+const nodeLabels = { speech: "语音生成", audio: "音频结果", prompt: "提示词", composition: "参数控制", image: "图像", video: "视频", "video-editor": "视频剪辑", "video-preview": "成片预览", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
 const scriptRoleTypes = [
   { id: "male-1", gender: "male", label: "男性 1" },
   { id: "male-2", gender: "male", label: "男性 2" },
@@ -828,6 +830,7 @@ function normalizeProject(project) {
     normalized.selectedIds = [];
     normalized.selectedEdgeId = null;
     normalized.nodes = normalized.nodes.filter(Boolean).map(node => {
+      if(node.type==='speech'||node.type==='audio') return normalizeSpeechNode(node);
       if (node.type === "generator") {
         if (node.mediaType === "video" || node.provider === "runninghub-h3") {
           const connectedImageSlots = normalized.edges.filter(edge => edge.target === node.id && edge.type === "image" && /^image-\d+$/.test(edge.targetPort)).reduce((largest, edge) => Math.max(largest, Number(edge.targetPort.split("-")[1]) + 1 || 0), 0);
@@ -1118,7 +1121,7 @@ function syncDialogueEditorAfterRestore() {
   dialogueEditor.analysisHiddenRoles = structuredClone(card.dialogueAnalysisHiddenRoles || []);
   renderDialogueEditor();
 }
-function restoreSnapshot(next) { state = normalizeProject(structuredClone(next)); applyTheme(state.theme); renderWorkspace(); syncDialogueEditorAfterRestore(); scheduleSave(); state.nodes.filter(node=>node.layerJobId).forEach(node=>void pollLayerJob(node.id,node.layerJobId,state.id)); }
+function restoreSnapshot(next) { state = normalizeProject(structuredClone(next)); applyTheme(state.theme); renderWorkspace(); syncDialogueEditorAfterRestore(); scheduleSave(); speechController.resume(); state.nodes.filter(node=>node.layerJobId).forEach(node=>void pollLayerJob(node.id,node.layerJobId,state.id)); }
 function undo() { if (!undoStack.length || isGenerating) return; redoStack.push(snapshot()); restoreSnapshot(undoStack.pop()); updateHistoryButtons(); }
 function redo() { if (!redoStack.length || isGenerating) return; undoStack.push(snapshot()); restoreSnapshot(redoStack.pop()); updateHistoryButtons(); }
 function updateHistoryButtons() { $("#undoButton").disabled = !undoStack.length || isGenerating; $("#redoButton").disabled = !redoStack.length || isGenerating; }
@@ -1406,8 +1409,12 @@ function connectionChoicesForDraft(draft) {
   const videoChoice = { kind: "video", title: "新建视频节点", subtitle: "海螺 H3 · RunningHub", icon: "clapperboard" };
   const videoPreviewChoice = { kind: "video-preview", title: "新建成片预览节点", subtitle: "上传、预览并输出本地视频", icon: "monitor-play" };
   const answerChoice = { kind: "answer", title: "新建模型回答节点", subtitle: "自动连接并用于文本回答", icon: "message-square-text" };
+  const speechChoice={kind:'speech',title:'新建语音生成节点',subtitle:'豆包配音 · 正文与表达要求分开',icon:'mic'};
+  if(source.type==='audio'&&draft.direction==='input'&&draft.dataType==='audio') return [speechChoice];
+  if(source.type==='speech'&&draft.direction==='input') return [{kind:'prompt',title:'新建提示词节点',subtitle:draft.portId==='direction'?'声音表达要求，不朗读':'需要朗读的正文',icon:'text-cursor-input'}];
+  if(source.type==='speech'&&draft.direction==='output'&&draft.dataType==='audio') return [{kind:'audio',title:'新建音频结果节点',subtitle:'生成后直接试听',icon:'audio-lines'}];
   const compositionChoice = { kind: "composition", title: "新建参数控制节点", subtitle: "自动写入已连接的提示词", icon: "sliders-horizontal" };
-  if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, videoChoice, answerChoice];
+  if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, videoChoice, answerChoice, speechChoice];
   if (source.type === "prompt" && draft.direction === "input" && draft.dataType === "composition") return [compositionChoice];
   if (source.type === "composition" && draft.direction === "output" && draft.dataType === "composition") return [{ kind: "prompt", title: "新建提示词节点", subtitle: "自动接收构图指令", icon: "text-cursor-input" }];
   if ((source.type === "image" || source.type === "loading") && draft.direction === "output" && draft.dataType === "image") return [generatorChoice, videoChoice, answerChoice];
@@ -1438,6 +1445,8 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   if (!draft || !state) return;
   recordHistory();
   let node = null;
+  if(kind==='speech') node=createSpeechNode(uid('speech'),screenToScene(clientX,clientY).x-200,screenToScene(clientX,clientY).y-100);
+  if(kind==='audio') node=createAudioNode(uid('audio'),screenToScene(clientX,clientY).x-200,screenToScene(clientX,clientY).y-100);
   if (kind === "generator") node = createGeneratorNode(Math.round(screenToScene(clientX, clientY).x - 180), Math.round(screenToScene(clientX, clientY).y - 180));
   if (kind === "video") node = createVideoNode(Math.round(screenToScene(clientX, clientY).x - 195), Math.round(screenToScene(clientX, clientY).y - 235));
   if (kind === "video-preview") node = createVideoPreviewNode(Math.round(screenToScene(clientX, clientY).x - 180), Math.round(screenToScene(clientX, clientY).y - 160));
@@ -1448,10 +1457,10 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   if (!node) return;
   state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null;
   if (draft.direction === "output") {
-    const targetPort = kind === "video" ? (draft.dataType === "video" ? "video-reference" : draft.dataType === "prompt" ? "prompt" : "image-0") : (kind === "generator" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "video-preview" && draft.dataType === "video" ? "video" : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
+    const targetPort = kind==='speech'?'text':kind==='audio'?'result':kind === "video" ? (draft.dataType === "video" ? "video-reference" : draft.dataType === "prompt" ? "prompt" : "image-0") : (kind === "generator" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "video-preview" && draft.dataType === "video" ? "video" : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
     if (targetPort) connectPorts(draft, { nodeId: node.id, portId: targetPort, dataType: draft.dataType, direction: "input" }, false);
   } else {
-    const outputPort = kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : kind === "video-preview" ? "video-output" : kind === "video" ? "video" : "image";
+    const outputPort = kind === "speech" ? "audio" : kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : kind === "video-preview" ? "video-output" : kind === "video" ? "video" : "image";
     connectPorts({ nodeId: node.id, portId: outputPort, dataType: draft.dataType, direction: "output" }, draft, false);
   }
   renderCanvas(); renderInspector(); scheduleSave();
@@ -1529,6 +1538,8 @@ function closeCanvasContextMenu() {
 function handleCanvasContextMenuOutside(event) { if (canvasContextMenu && !canvasContextMenu.contains(event.target)) closeCanvasContextMenu(); }
 function createCanvasElementAt(kind, clientX, clientY) {
   const point = screenToScene(clientX, clientY); let node;
+  if(kind==='speech') node=createSpeechNode(uid('speech'),point.x-200,point.y-100);
+  if(kind==='audio') node=createAudioNode(uid('audio'),point.x-200,point.y-100);
   if (kind === "prompt") node = createPromptNode(Math.round(point.x - 160), Math.round(point.y - 145));
   if (kind === "composition") node = createCompositionNode(Math.round(point.x - 175), Math.round(point.y - 145));
   if (kind === "reference") node = createReferenceNode(Math.round(point.x - 135), Math.round(point.y - 160));
@@ -1552,6 +1563,8 @@ function showCanvasContextMenu(event) {
     { kind: "video", title: "视频", icon: "clapperboard" },
     { kind: "video-preview", title: "成片预览", icon: "monitor-play" },
     { kind: "answer", title: "模型回答", icon: "message-square-text" },
+    {kind:'speech',title:'语音生成',icon:'mic'},
+    {kind:'audio',title:'音频结果',icon:'audio-lines'},
     { kind: "note", title: "便签", icon: "sticky-note" },
     { kind: "frame", title: "分组画板", icon: "frame" }
   ];
@@ -2543,6 +2556,8 @@ function videoPreviewSource(node, seen = new Set()) {
 }
 function portPoint(node, portId) {
   if (!node) return { x: 0, y: 0 };
+  if(node.type==='speech') return {x:node.x+(portId==='audio'?node.width:0),y:node.y+(portId==='text'?110:portId==='direction'?235:72)};
+  if(node.type==='audio') return {x:node.x,y:node.y+72};
   if (node.type === "prompt") return portId === "composition" ? { x: node.x, y: node.y + 104 } : { x: node.x + node.width, y: node.y + 72 };
   if (node.type === "composition") return { x: node.x + node.width, y: node.y + 72 };
   if (node.type === "image" || node.type === "loading" || node.type === "video") return portId === "result" ? { x: node.x, y: node.y + 70 } : { x: node.x + node.width, y: node.y + 70 };
@@ -2682,6 +2697,7 @@ function renderNodeHtml(node) {
     const count = frameContainedNodes(node).length;
     return `<div class="canvas-node frame-node${selected}" data-node-id="${node.id}" style="${style}"><div class="frame-body"><span class="frame-title">${escapeHtml(node.name)}</span><span class="frame-meta">${count} 个节点 · 拖动画板可整体移动</span>${resizeHandleHtml(node)}</div></div>`;
   }
+  if(node.type==='speech'||node.type==='audio') return speechController.render(node,selected,style);
   if (node.type === "prompt") return renderPromptNodeHtml(node, selected, style);
     if (node.type === "composition") return renderCompositionNodeHtml(node, selected, style);
   if (node.type === "note") return renderNoteHtml(node, selected, style);
@@ -3125,6 +3141,7 @@ function renderAnswerNodeHtml(node, selected, style) {
 }
 
 function bindNodeEvents() {
+  speechController.bind(nodeLayer);
   $$('[data-answer-selectable]').forEach(element => { element.tabIndex = 0; });
   $$(".canvas-node").forEach(element => element.addEventListener("pointerdown", handleNodePointerDown));
   $$('[data-node-drag-handle]').forEach(handle => handle.addEventListener("pointerdown", event => { if (event.target.closest(".node-interactive, .node-port")) return; event.preventDefault(); event.stopPropagation(); startNodeDrag(event, handle.dataset.nodeDragHandle); }));
@@ -3389,6 +3406,8 @@ function startNodeDrag(event, nodeId) {
   workspace.classList.add("is-flow-interacting"); dragSession.elements.forEach(item => { item.element.classList.add("is-dragging"); item.element.style.willChange = "transform"; });
 }
 function resizeMinimum(node) {
+  if(node.type==='speech') return {width:340,height:560};
+  if(node.type==='audio') return {width:340,height:300};
   if (node.type === "frame") return { width: 320, height: 220 };
   if (node.type === "generator") {
     const element = canvasNodeElement(node.id);
@@ -3564,6 +3583,8 @@ function fitContent() {
   state.viewport.scale = scale; state.viewport.x = rect.width / 2 - (minX + width / 2) * scale; state.viewport.y = rect.height / 2 - (minY + height / 2) * scale - 15; updateViewport(); scheduleSave();
 }function addNode(type) {
   const center = sceneCenter(); recordHistory(); let node;
+  if(type==='speech') node=createSpeechNode(uid('speech'),center.x-200,center.y-250);
+  if(type==='audio') node=createAudioNode(uid('audio'),center.x-200,center.y-160);
   if (type === "prompt") node = createPromptNode(Math.round(center.x - 160), Math.round(center.y - 145));
   if (type === "generator") node = createGeneratorNode(Math.round(center.x - 180), Math.round(center.y - 180));
   if (type === "video") node = createVideoNode(Math.round(center.x - 195), Math.round(center.y - 235));
@@ -3639,6 +3660,8 @@ function renderLibrary() {
     <button class="module-item" type="button" data-library-add="video"><span class="module-icon video">${icon("clapperboard")}</span><span class="module-copy"><strong>视频</strong><small>海螺 H3 · API plus · MP4</small></span></button>
     <button class="module-item" type="button" data-library-add="video-preview"><span class="module-icon video">${icon("monitor-play")}</span><span class="module-copy"><strong>成片预览</strong><small>上传、预览并输出本地视频</small></span></button>
     <button class="module-item" type="button" data-library-add="answer"><span class="module-icon answer">${icon("message-square-text")}</span><span class="module-copy"><strong>模型回答</strong><small>最多 6 条提示词 · 8 张参考图</small></span></button>
+<button class="module-item" type="button" data-library-add="speech"><span class="module-icon speech">♫</span><span class="module-copy"><strong>语音生成</strong><small>豆包配音 · 分段与多角色</small></span></button>
+<button class="module-item" type="button" data-library-add="audio"><span class="module-icon speech">♪</span><span class="module-copy"><strong>音频结果</strong><small>试听、版本对比与下载</small></span></button>
     </div><div class="section-label"><span>当前结构</span><span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词模块</span><strong>${counts("prompt")}</strong></div><div class="summary-row"><span>参数控制</span><strong>${counts("composition")}</strong></div><div class="summary-row"><span>图像模块</span><strong>${counts("image")}</strong></div><div class="summary-row"><span>生图模块</span><strong>${counts("generator")}</strong></div><div class="summary-row"><span>模型回答</span><strong>${counts("answer")}</strong></div>`;
   $$('[data-library-add]').forEach(button => button.addEventListener("click", () => addNode(button.dataset.libraryAdd))); $("[data-library-image]")?.addEventListener("click", () => imageFileInput.click()); refreshIcons();
 }
@@ -4214,6 +4237,7 @@ async function upscaleMidjourneyCandidate(candidateId, slot) {
   }
 }
 function resumeGenerationJobs() {
+  speechController.resume();
   if (!state) return;
   state.nodes.filter(node => node.layerJobId).forEach(node => void pollLayerJob(node.id, node.layerJobId, state.id));
   const active = state.nodes.filter(node => node.type === "generator" && node.activeJobId);
@@ -4852,7 +4876,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   document.addEventListener("change", event => { scheduleEditableHistory(event.target); scheduleDialogueEditableHistory(event.target); }, true);
   document.addEventListener("focusout", event => { commitEditableHistory(event.target); commitDialogueEditableHistory(event.target); }, true);
   window.addEventListener("keydown", event => {
-    if (document.querySelector('#layerEditor[open], #localEditDialog[open]')) return;
+    if (document.querySelector('#layerEditor[open], #localEditDialog[open], .speech-dialog[open]')) return;
     const target = event.target instanceof Element ? event.target : null;
     const editableTarget = target?.closest("input, textarea, select, [contenteditable=true]");
     const isEditable = Boolean(editableTarget);
@@ -4906,6 +4930,7 @@ async function init() {
   else { if (savedSession) clearActiveProjectSession(); renderHome(); }
   await checkApiStatus();
 }
+const speechController=createSpeechController({getState:()=>state,findNode,recordHistory,save:()=>saveProjectNow(true),scheduleSave,render:()=>renderWorkspace(),toast,uid,escapeHtml,header:nodeHeaderHtml,port:portHtml,resize:resizeHandleHtml,openSettings});
 init();
 
 

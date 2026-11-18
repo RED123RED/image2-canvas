@@ -1989,8 +1989,13 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
+let speechServicePromise;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  if (url.pathname.startsWith('/api/speech/')) {
+    try { speechServicePromise ||= import('./speech-service.mjs').then(({createSpeechService})=>createSpeechService({outputDir,resolveKey:req=>resolveArkApiKey(req,'ark-plan'),readJson,sendJson})); return (await speechServicePromise)(req,res,url); }
+    catch(error) { speechServicePromise=null; return sendJson(res,503,{error:'语音服务初始化失败：'+error.message}); }
+  }
   if (req.method === "GET" && url.pathname === "/api/status") {
     const key = await resolveApiKey(req);
     const seedreamKey = await resolveSeedreamApiKey(req);

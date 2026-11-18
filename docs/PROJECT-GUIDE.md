@@ -14,6 +14,19 @@
 
 ## 产品边界
 
+### 画布语音合成（2026-11-18）
+
+- 新节点 speech（语音生成）、audio（音频结果）。入口复用模块库、空白右键和拖线菜单；不新增侧边工作台，不关联 H3。speech 的 text / direction 是两个 prompt 输入，audio 是音频输出；audio 节点的 result 是音频输入。原节点类型、模型及媒体路径不变。
+- public/speech-document.js 负责默认值、官方示例音色、请求校验、持久化归一化和字幕；public/speech.js 负责两种节点、详细编辑及试听；public/speech.css 样式限定于语音节点和弹窗。public/app.js 只挂接创建、端口、渲染、事件、恢复及弹窗快捷键隔离。
+- speech-service.mjs 通过独立 /api/speech/ 路由懒加载，复用已有 ark-plan 密钥读取，不改变密钥配置。固定套餐 HTTP 地址 https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional，X-Api-Key、X-Api-Resource-Id: seed-tts-2.0。禁止自动回退普通计费接口或重试生成。
+- 本地串行队列最多 8 个活跃任务。先持久化请求，再提交模型；同一 UUID 与请求内容幂等，网络状态未知只 GET 查询原任务。刷新、撤销恢复、重开项目不重复 POST；进程重启把未完成任务标记 interrupted，保留完成段落供手动复用。项目保存失败保留请求编号和已存结果，不自动重发。
+- 正文与表达要求分开。直接配音每次点击生成新的声音；详细编辑使用独立 draft，主动同步上游正文。支持 1–40 段、每段 1–2000 字、全篇不超过 12000 字，这是本工具限制，并非模型官方上限。段间停顿、角色预设、段落历史及一致内容复用；重新生成某段才重新提交该段。
+- output/speech/jobs.json 保存请求正文、设置、状态、段落及用量，不含密钥。output/speech/files 保存 PCM 封装的 24kHz 单声道 WAV 和可选 MP3；MP3 使用已有 FFmpeg，不安装二进制或新增依赖。当前媒体目录为 E:/codex/image2-canvas/output。
+- audio.versions / currentVersionId / previewVersionId 分别保存所有候选、已应用版本和试听版本；首次生成成为当前，以后仅增加候选。所有连接的结果节点接收同一作品，不增加模型请求。草稿、音频版本和任务编号随项目保存、复制、导入导出；JSON 只引用本地音频，迁移须同时复制 output/speech。
+- 内置 12 个官方示例音色，允许已开通的自定义 ID；仅对 4 个已确认音色开放受支持方言校验。具体音色/语言/语气效果仍受模型及账户权限约束。首次音色试读是明确的独立付费请求，同一试读正文与音色再次播放复用缓存。
+- 结果支持播放器、波形定位、A/B、试听变速、区间循环、单段试听、独立结果副本、WAV/MP3/文本/SRT。SRT 只采用模型返回时间戳，不猜测；MP3 须在生成时选择，WAV 始终保留。当前不实现 ASR、实时对话、声音克隆或剪辑时间轴。
+- 首页图片清理仍只处理 generated/assets 的图片，排除 output/speech；不借本任务扩展删除范围。用户素材和原项目未改写。验证见 SPEECH-VERIFICATION.md，回归脚本 tests/speech.test.mjs、tests/speech.browser.js。
+
 ### 未使用图片清理（2026-11-14）
 
 - 首页按钮统一清理 output/generated 与 output/assets 中受管 PNG/JPG/WebP；视频、音频、未知文件、子目录和符号链接不处理。删除需要先预览数量/空间，再确认，不自动清理。

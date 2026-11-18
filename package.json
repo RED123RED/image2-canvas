@@ -6,13 +6,14 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "verify": "node --check public/app.js && node --check public/seedream-ark.js && node --check public/layer-document.js && node --check public/layer-editor.js && node --check public/layer-tree.js && node --check public/layer-refine.js && node --check src/layer-export-worker.js && node --check server.mjs && node --check image2-desktop-launcher.mjs && node --check public/local-edit-document.js && node --check public/local-edit-render.js && node --check public/local-edit.js && node --check public/local-edit-apply.js && node --check public/media-references.js && node --check media-cleanup.mjs",
+    "verify": "node --check public/app.js && node --check public/seedream-ark.js && node --check public/layer-document.js && node --check public/layer-editor.js && node --check public/layer-tree.js && node --check public/layer-refine.js && node --check src/layer-export-worker.js && node --check server.mjs && node --check image2-desktop-launcher.mjs && node --check public/local-edit-document.js && node --check public/local-edit-render.js && node --check public/local-edit.js && node --check public/local-edit-apply.js && node --check public/media-references.js && node --check media-cleanup.mjs && node --check speech-service.mjs && node --check public/speech-document.js && node --check public/speech.js",
     "test:cleanup": "node --test tests/media-cleanup.test.mjs tests/media-cleanup-api.test.mjs",
     "test:kimi-plan": "node --test tests/kimi-plan-api.test.mjs",
     "test:ark": "node --test tests/seedream-ark.test.mjs",
     "test:layers": "node --test tests/layer-document.test.mjs tests/layer-api.test.mjs tests/layer-tree.test.mjs",
     "build:layer-export": "node scripts/build-layer-export.mjs",
-    "test:local-edit": "node --test tests/local-edit.test.mjs tests/local-edit-api.test.mjs tests/local-edit-apply.test.mjs"
+    "test:local-edit": "node --test tests/local-edit.test.mjs tests/local-edit-api.test.mjs tests/local-edit-apply.test.mjs",
+    "test:speech": "node --test tests/speech.test.mjs"
   },
   "engines": {
     "node": ">=20"
