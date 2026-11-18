@@ -5,20 +5,26 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import {randomUUID} from 'node:crypto';
-import {speechProtocol,speechEndpoint,validateSpeechRequest,speechPayload,speechFingerprint,speechSrt,normalizeSpeechNode} from '../public/speech-document.js';
+import {speechProtocol,speechEndpoint,validateSpeechRequest,speechPayload,speechFingerprint,speechSrt,normalizeSpeechNode,speechDirectionInstruction,safeSpeechFingerprint,speechSettingsError} from '../public/speech-document.js';
 import {createSpeechService,parseSpeechResponse,pcmToWav} from '../speech-service.mjs';
 const segment=(text='你好')=>({id:'first',text,role:'旁白',pauseMs:300,settings:{speaker:'zh_female_vv_uranus_bigtts',direction:'自然温柔',rate:10,volume:0,pitch:1,subtitle:true}});
 const body=()=>({requestId:randomUUID(),format:'wav',segments:[segment()]});
 const pcm=Buffer.alloc(4800);for(let n=0;n<2400;n++)pcm.writeInt16LE(Math.round(Math.sin(n*.2)*2000),n*2);
 const wire=()=>JSON.stringify({code:0,data:pcm.toString('base64'),sentence:{text:'你好',words:[{word:'你好',startTime:0,endTime:.1}]}})+'\n'+JSON.stringify({code:20000000,usage:{text_words:2}})+'\n';
 test('Request and payload preserve separate direction, supported settings and limits',()=>{
-  const value=validateSpeechRequest(body()),payload=speechPayload(value.segments[0]);assert.equal(payload.req_params.text,'你好');assert.equal(payload.req_params.audio_params.speech_rate,10);assert.deepEqual(JSON.parse(payload.req_params.additions).context_texts,['自然温柔']);
+  const value=validateSpeechRequest(body()),payload=speechPayload(value.segments[0]);assert.equal(payload.req_params.text,'你好');assert.equal(payload.req_params.audio_params.speech_rate,10);assert.deepEqual(JSON.parse(payload.req_params.additions).context_texts,[speechDirectionInstruction('自然温柔')]);
   for(const change of [{segments:[]},{format:'exe'},{requestId:'../../x'},{segments:[segment('')]},{segments:[segment('x'.repeat(2001))]},{segments:[{...segment(),settings:{rate:999}}]},{segments:[{...segment(),settings:{pronunciation:'重复/a\n重复/b'}}]}])assert.throws(()=>validateSpeechRequest({...body(),...change}));
   assert.equal(speechSrt([{text:'你好',start:1.2,end:2.34}]),'1\n00:00:01,200 --> 00:00:02,340\n你好\n');
   assert.equal(normalizeSpeechNode({id:'a',type:'audio',versions:[{id:'x',src:'javascript:bad'}]}).versions.length,0);
   assert.equal(JSON.parse(speechPayload({...segment(),settings:{...segment().settings,dialect:'sichuan'}}).req_params.additions).explicit_dialect,'sichuan');
   assert.throws(()=>speechPayload({...segment(),settings:{speaker:'en_male_tim_uranus_bigtts',dialect:'sichuan'}}),/方言/);
   assert.throws(()=>speechPayload({...segment(),settings:{language:'fr',dialect:'yue'}}),/方言/);
+  const invalid={...segment(),settings:{...segment().settings,speaker:'zh_female_gaolengyujie_uranus_bigtts',dialect:'sichuan'}};
+  assert.equal(safeSpeechFingerprint(invalid),null);assert.match(speechSettingsError(invalid.settings),/方言/);
+  const saved=normalizeSpeechNode({id:'old',type:'speech',settings:invalid.settings,draft:{segments:[invalid]}});
+  assert.equal(saved.settings.dialect,'sichuan');assert.equal(saved.draft.segments[0].settings.dialect,'sichuan');assert.equal(saved.draft.segments[0].inputSources.text,'local');
+  assert.equal(normalizeSpeechNode({id:'empty',type:'speech',draft:{segments:[]}}).draft.segments.length,1);
+  assert.match(speechPayload(segment()).req_params.additions,/声音表演要求/);assert.match(speechFingerprint(segment()),/directionInstructionVersion/);
 });
 test('Stream parser accepts fragmented data and rejects missing completion, upstream errors and empty audio',async()=>{
   const raw=wire(),stream=new ReadableStream({start(c){for(let i=0;i<raw.length;i+=13)c.enqueue(new TextEncoder().encode(raw.slice(i,i+13)));c.close();}});const result=await parseSpeechResponse(new Response(stream));assert.deepEqual(result.pcm,pcm);assert.equal(result.cues[0].end,.1);

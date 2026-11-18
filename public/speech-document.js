@@ -1,4 +1,4 @@
-export const speechProtocol = 'canvas-speech-v1';
+export const speechProtocol = 'canvas-speech-v2';
 export const speechEndpoint = 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional';
 // Official 2.0 catalog, checked 2026-11-18. Account access is verified when generating.
 // https://docs.volcengine.com/docs/doubao-voice/tone-list-3?lang=zh
@@ -20,6 +20,14 @@ export const speechDefaults = {speaker:speechVoices[0].id,rate:0,volume:0,pitch:
 export const speechDialects=[['','普通话 / 默认'],['beijing','北京话'],['dongbei','东北话'],['henan','河南话'],['shaanxi','陕西话'],['shanghai','上海话'],['sichuan','四川话'],['tianjin','天津话'],['yue','粤语']];
 export const dialectSpeakers=new Set(['zh_female_vv_uranus_bigtts','zh_female_xiaohe_uranus_bigtts','zh_male_m191_uranus_bigtts','zh_male_taocheng_uranus_bigtts']);
 export const speechLanguages = [['','自动'],['zh-cn','中文 / 中英混读'],['en','英语'],['ja','日语'],['ko','韩语'],['fr','法语'],['de','德语'],['es-mx','西班牙语（墨西哥）'],['pt-br','葡萄牙语（巴西）'],['it','意大利语'],['ru','俄语'],['th','泰语'],['vi','越南语'],['id','印度尼西亚语']];
+export function speechCapabilities(speaker){
+  const voice=speechVoices.find(v=>v.id===speaker),dialects=dialectSpeakers.has(speaker),english=String(speaker).startsWith('en_');
+  return {dialects,english,known:!!voice,label:voice?.name||'自定义音色',hint:dialects?'支持普通话及粤语、上海、河南、北京、天津、四川、陕西、东北方言。':english?'英语音色：请选择自动或英语；不支持中文方言。':voice?'支持中文及多语言；官方未标注方言能力，方言选择不可用。':'自定义音色能力尚未核验，请按账户音色说明使用；暂不开放方言。'};
+}
+export function speechSettingsError(settings){try{normalizeSpeechSettings(settings);return '';}catch(error){return error.message;}}
+export function safeSpeechFingerprint(segment){try{return speechFingerprint(segment);}catch{return null;}}
+export function speechDirectionInstruction(direction){return direction?'请按照以下声音表演要求朗读正文，要求本身不要读出来：'+direction:'';}
+export const speechDirectionExamples=[['忧郁 / 难过','请用明显忧郁、低落、难过的语气说话。声音轻而沉，节奏舒缓，句尾收低，带有失落感，不要带笑意或欢快上扬的语调。'],['平静自然','请用平静、自然的语气说话，像认真和朋友聊天，语调平稳，不夸张。'],['开心活泼','请用开心、轻快、有活力的语气说话，带着自然的笑意，表达亲切。']];
 const bounded = (value,min,max,label) => { const n=Number(value);if(!Number.isFinite(n)||n<min||n>max)throw Error(label+'超出允许范围');return Math.round(n); };
 export function normalizeSpeechSettings(value={}) {
   const s={...speechDefaults,...value};
@@ -37,7 +45,7 @@ export function normalizeSpeechSettings(value={}) {
 export function speechPayload(segment) {
   const s=normalizeSpeechSettings(segment.settings);
   const additions={post_process:{pitch:s.pitch},disable_markdown_filter:true,disable_emoji_filter:true};
-  if(s.direction)additions.context_texts=[s.direction];
+  if(s.direction)additions.context_texts=[speechDirectionInstruction(s.direction)];
   if(s.language)additions.explicit_language=s.language;else additions.enable_auto_language_recognition=true;
   if(s.dialect)additions.explicit_dialect=s.dialect;
   if(s.pronunciation)additions.pronunciation_dict={tone:s.pronunciation.split('\n')};
@@ -59,13 +67,18 @@ export function validateSpeechRequest(body) {
   if(length>12000)throw Error('单次作品最多 12000 字，请拆成多个节点');
   return {requestId:body.requestId,format:body.format,segments};
 }
-export function speechFingerprint(segment){return JSON.stringify({text:segment.text,settings:normalizeSpeechSettings(segment.settings)});}
+export function speechFingerprint(segment){const settings=normalizeSpeechSettings(segment.settings);return JSON.stringify({text:segment.text,settings,...(settings.direction?{directionInstructionVersion:2}:{})});}
 export function createSpeechNode(id,x,y){return {id,type:'speech',name:'语音生成',x,y,width:400,height:615,text:'',direction:'',settings:{...speechDefaults},format:'wav',autoplay:false,status:'idle',speechRequestId:'',draft:null,segmentClips:{},presets:[],favorites:[],createdAt:Date.now()};}
 export function createAudioNode(id,x,y){return {id,type:'audio',name:'音频结果',x,y,width:440,height:340,versions:[],currentVersionId:'',previewVersionId:'',src:'',createdAt:Date.now()};}
 export function normalizeSpeechNode(node){
   const base=node.type==='speech'?createSpeechNode(node.id,0,0):createAudioNode(node.id,0,0);
   const next={...base,...node,width:Math.max(340,Number(node.width)||base.width),height:Math.max(node.type==='speech'?560:300,Number(node.height)||base.height)};
-  if(node.type==='speech'){try{next.settings=normalizeSpeechSettings(node.settings);}catch{next.settings={...speechDefaults};}next.segmentClips=node.segmentClips||{};next.presets=Array.isArray(node.presets)?node.presets:[];next.favorites=Array.isArray(node.favorites)?node.favorites:[];}
+  if(node.type==='speech'){
+    // Preserve invalid saved choices so the user can repair them; validate only before submission.
+    next.settings={...speechDefaults,...node.settings};next.segmentClips=node.segmentClips||{};next.presets=Array.isArray(node.presets)?node.presets:[];next.favorites=Array.isArray(node.favorites)?node.favorites:[];
+    next.inputSources={text:'auto',direction:'auto',...node.inputSources};
+    if(node.draft){const rows=Array.isArray(node.draft.segments)?node.draft.segments.filter(Boolean):[];next.draft={...node.draft,segments:(rows.length?rows:[{id:'main',text:String(node.text||''),settings:next.settings}]).map((s,i)=>({...s,id:s.id||'restored-'+i,text:String(s.text||''),role:String(s.role||'旁白'),pauseMs:s.pauseMs??300,settings:{...speechDefaults,...s.settings},inputSources:{text:'local',direction:'local',...s.inputSources}}))};}
+  }
   else {next.versions=(Array.isArray(node.versions)?node.versions:[]).filter(v=>v&&/^\/api\/speech\/files\/[\w.-]+\.(wav|mp3)$/.test(v.src));const current=next.versions.find(v=>v.id===next.currentVersionId)||next.versions[0];next.currentVersionId=current?.id||'';next.src=current?.src||'';}
   return next;
 }

@@ -1,9 +1,9 @@
 async page => {
   const checks=[],errors=[],posts=[],jobs=new Map(),check=(ok,name)=>{if(!ok)throw Error(name);checks.push(name);};
-  page.on('pageerror',e=>errors.push(e.message));await page.setViewportSize({width:1600,height:1100});
+  page.on('pageerror',e=>errors.push(e.message));await page.setViewportSize({width:1600,height:1100});await page.reload();
   const actual=await(await page.request.get(new URL('/api/status',page.url()).href)).json();
   const wav=Buffer.alloc(44+48000);wav.write('RIFF');wav.writeUInt32LE(36+48000,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(24000,24);wav.writeUInt32LE(48000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(48000,40);for(let n=0;n<24000;n++)wav.writeInt16LE(Math.sin(n*.09)*2000,44+n*2);
-  let ready=true,protocol='canvas-speech-v1',hold=false,fail=false,failSave=false;
+  let ready=true,protocol='canvas-speech-v2',hold=false,fail=false,failSave=false;
   await page.route('**/api/**',async route=>{
     const r=route.request(),p=new URL(r.url()).pathname;
     if(p==='/api/status')return route.fulfill({json:actual});
@@ -11,7 +11,7 @@ async page => {
     if(p==='/api/speech/status')return route.fulfill({json:{ready,protocol,formats:['wav','mp3']}});
     if(p.startsWith('/api/speech/files/'))return route.fulfill({contentType:'audio/wav',body:wav});
     if(p==='/api/speech/jobs'&&r.method()==='POST'){
-      const body=r.postDataJSON();posts.push(body);if(failSave)await page.evaluate(()=>{window.__speechPut=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(...args){if(this.name==='projects')throw new DOMException('模拟项目保存失败','QuotaExceededError');return window.__speechPut.apply(this,args);};});const id='sp-'+body.requestId,parts=body.segments.map((s,i)=>({segmentId:s.id,src:'/api/speech/files/'+id+'-'+i+'.wav',duration:1,cues:[{text:s.text,start:0,end:1}],fingerprint:JSON.stringify({text:s.text,settings:s.settings})}));
+      const body=r.postDataJSON();posts.push(body);if(failSave)await page.evaluate(()=>{window.__speechPut=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(...args){if(this.name==='projects')throw new DOMException('模拟项目保存失败','QuotaExceededError');return window.__speechPut.apply(this,args);};});const id='sp-'+body.requestId,parts=body.segments.map((s,i)=>({segmentId:s.id,src:'/api/speech/files/'+id+'-'+i+'.wav',duration:1,cues:[{text:s.text,start:0,end:1}],fingerprint:JSON.stringify({text:s.text,settings:s.settings,...(s.settings.direction?{directionInstructionVersion:2}:{})})}));
       const result={id,src:'/api/speech/files/'+id+'-complete.wav',wavSrc:'/api/speech/files/'+id+'-complete.wav',duration:body.segments.length,format:'wav',createdAt:Date.now(),parts,segments:body.segments,cues:body.segments.map((s,i)=>({text:s.text,start:i,end:i+1}))};jobs.set(id,{id,status:fail?'failed':hold?'running':'succeeded',parts,completed:parts.length,request:body,result,error:fail?'模拟额度不足':''});return route.fulfill({status:202,json:{id,status:'queued'}});
     }
     if(p.startsWith('/api/speech/jobs/')){const job=jobs.get(p.split('/').pop());return route.fulfill({status:job?200:404,json:job||{error:'未找到'}});}
@@ -31,7 +31,7 @@ async page => {
   check(await page.locator('[data-library-add="speech"]').count()===1&&await page.locator('[data-library-add="audio"]').count()===1,'Both node types in library');
   check(await page.locator('[data-speech-field="text"]').inputValue()===project.nodes[0].content,'Connected prompt becomes speech text');check(await page.locator('[data-speech-field="direction"]').inputValue()===project.nodes[1].content,'Direction uses independent prompt');
   ready=false;await act('generate').evaluate(el=>el.click());await page.locator('#settingsDialog').waitFor({state:'visible'});check(posts.length===0,'Missing key blocks paid requests');await page.keyboard.press('Escape');ready=true;
-  protocol='old';await act('generate').evaluate(el=>el.click());await page.getByText('请先恢复生图服务，加载语音功能',{exact:true}).waitFor();check(posts.length===0,'Old service cannot silently fall back');protocol='canvas-speech-v1';
+  protocol='old';await act('generate').evaluate(el=>el.click());await page.getByText('请先恢复生图服务，加载语音功能',{exact:true}).waitFor();check(posts.length===0,'Old service cannot silently fall back');protocol='canvas-speech-v2';
   await act('generate').evaluate(el=>{el.click();el.click();});await page.locator('.audio-node audio').waitFor();await page.waitForTimeout(650);check(posts.length===1,'Double click creates only one job');check(posts[0].segments[0].text===project.nodes[0].content&&posts[0].segments[0].settings.direction===project.nodes[1].content,'Narration and direction stay separate');
   let state=await saved(),aid=state.nodes.find(n=>n.type==='audio').id,first=state.nodes.find(n=>n.id===aid).currentVersionId;
   const audio=()=>page.locator('[data-speech-player="'+aid+'"]');await audio().evaluate(async el=>{await el.play();});await page.waitForTimeout(150);check(await audio().evaluate(el=>!el.paused&&el.currentTime>0),'Audio result can actually play');await audio().evaluate(el=>el.pause());
@@ -63,7 +63,7 @@ async page => {
   await page.locator('[data-voice-picker]').click();await page.locator('[data-audition]').click();await page.locator('.speech-audition audio:not([hidden])').waitFor();check(posts.length===7,'Explicit audition makes one dedicated short request');
   await page.locator('[data-audition]').click();await page.waitForTimeout(500);check(posts.length===7,'Repeated audition replays cache without a request');
   await page.locator('.speech-voices [data-close]').click();await page.locator('#speechDialog [data-close]').click();
-  check(await page.locator('[data-speech-field="text"]').getAttribute('readonly')!==null,'Draft mode clearly locks direct source controls');
+  check(await page.locator('[data-speech-field="text"]').getAttribute('readonly')===null,'Draft text remains editable in compact node');
   await page.locator('[data-speech-action="listen"][data-speech-node="'+aid+'"]').evaluate(el=>el.click());await page.screenshot({path:'output/playwright/speech-listener.png'});await page.locator('#speechDialog [data-close]').click();
   check(await page.locator('[data-speech-field="format"]').isEnabled(),'Draft format remains editable');
   failSave=true;await act('generate').evaluate(el=>el.click());await page.locator('.speech-state').filter({hasText:'项目保存失败'}).waitFor();
