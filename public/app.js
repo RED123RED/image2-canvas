@@ -1,6 +1,6 @@
 import { arkProtocol, arkModels, arkSizes, arkPlanProtocol, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from "./seedream-ark.js";
 import {createSpeechController} from './speech.js';
-import {createSpeechNode,createAudioNode,normalizeSpeechNode} from './speech-document.js';
+import {createSpeechNode,normalizeSpeechNode} from './speech-document.js';
 import {allLayerSources,leafLayers} from './layer-tree.js';
 import {localEditSources} from './local-edit-document.js';
 import {applyLocalEditToLayers} from './local-edit-apply.js';
@@ -1410,9 +1410,7 @@ function connectionChoicesForDraft(draft) {
   const videoPreviewChoice = { kind: "video-preview", title: "新建成片预览节点", subtitle: "上传、预览并输出本地视频", icon: "monitor-play" };
   const answerChoice = { kind: "answer", title: "新建模型回答节点", subtitle: "自动连接并用于文本回答", icon: "message-square-text" };
   const speechChoice={kind:'speech',title:'新建声音克隆节点',subtitle:'RunningHub · 音色与情感参考',icon:'mic'};
-  if(source.type==='audio'&&draft.direction==='input'&&draft.dataType==='audio') return [speechChoice];
   if(source.type==='speech'&&draft.direction==='input') return [{kind:'prompt',title:'新建提示词节点',subtitle:draft.portId==='direction'?'旧表达要求':'需要朗读的正文',icon:'text-cursor-input'}];
-  if(source.type==='speech'&&draft.direction==='output'&&draft.dataType==='audio') return [{kind:'audio',title:'新建音频结果节点',subtitle:'生成后直接试听',icon:'audio-lines'}];
   const compositionChoice = { kind: "composition", title: "新建参数控制节点", subtitle: "自动写入已连接的提示词", icon: "sliders-horizontal" };
   if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, videoChoice, answerChoice, speechChoice];
   if (source.type === "prompt" && draft.direction === "input" && draft.dataType === "composition") return [compositionChoice];
@@ -1446,7 +1444,6 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   recordHistory();
   let node = null;
   if(kind==='speech') node=createSpeechNode(uid('speech'),screenToScene(clientX,clientY).x-200,screenToScene(clientX,clientY).y-100);
-  if(kind==='audio') node=createAudioNode(uid('audio'),screenToScene(clientX,clientY).x-200,screenToScene(clientX,clientY).y-100);
   if (kind === "generator") node = createGeneratorNode(Math.round(screenToScene(clientX, clientY).x - 180), Math.round(screenToScene(clientX, clientY).y - 180));
   if (kind === "video") node = createVideoNode(Math.round(screenToScene(clientX, clientY).x - 195), Math.round(screenToScene(clientX, clientY).y - 235));
   if (kind === "video-preview") node = createVideoPreviewNode(Math.round(screenToScene(clientX, clientY).x - 180), Math.round(screenToScene(clientX, clientY).y - 160));
@@ -1457,7 +1454,7 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   if (!node) return;
   state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null;
   if (draft.direction === "output") {
-    const targetPort = kind==='speech'?'text':kind==='audio'?'result':kind === "video" ? (draft.dataType === "video" ? "video-reference" : draft.dataType === "prompt" ? "prompt" : "image-0") : (kind === "generator" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "video-preview" && draft.dataType === "video" ? "video" : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
+    const targetPort = kind==='speech'?'text':kind === "video" ? (draft.dataType === "video" ? "video-reference" : draft.dataType === "prompt" ? "prompt" : "image-0") : (kind === "generator" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "video-preview" && draft.dataType === "video" ? "video" : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
     if (targetPort) connectPorts(draft, { nodeId: node.id, portId: targetPort, dataType: draft.dataType, direction: "input" }, false);
   } else {
     const outputPort = kind === "speech" ? "audio" : kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : kind === "video-preview" ? "video-output" : kind === "video" ? "video" : "image";
@@ -1539,7 +1536,6 @@ function handleCanvasContextMenuOutside(event) { if (canvasContextMenu && !canva
 function createCanvasElementAt(kind, clientX, clientY) {
   const point = screenToScene(clientX, clientY); let node;
   if(kind==='speech') node=createSpeechNode(uid('speech'),point.x-200,point.y-100);
-  if(kind==='audio') node=createAudioNode(uid('audio'),point.x-200,point.y-100);
   if (kind === "prompt") node = createPromptNode(Math.round(point.x - 160), Math.round(point.y - 145));
   if (kind === "composition") node = createCompositionNode(Math.round(point.x - 175), Math.round(point.y - 145));
   if (kind === "reference") node = createReferenceNode(Math.round(point.x - 135), Math.round(point.y - 160));
@@ -1564,7 +1560,6 @@ function showCanvasContextMenu(event) {
     { kind: "video-preview", title: "成片预览", icon: "monitor-play" },
     { kind: "answer", title: "模型回答", icon: "message-square-text" },
     {kind:'speech',title:'声音克隆 · IndexTTS2',icon:'mic'},
-    {kind:'audio',title:'音频结果',icon:'audio-lines'},
     { kind: "note", title: "便签", icon: "sticky-note" },
     { kind: "frame", title: "分组画板", icon: "frame" }
   ];
@@ -3584,7 +3579,6 @@ function fitContent() {
 }function addNode(type) {
   const center = sceneCenter(); recordHistory(); let node;
   if(type==='speech') node=createSpeechNode(uid('speech'),center.x-200,center.y-250);
-  if(type==='audio') node=createAudioNode(uid('audio'),center.x-200,center.y-160);
   if (type === "prompt") node = createPromptNode(Math.round(center.x - 160), Math.round(center.y - 145));
   if (type === "generator") node = createGeneratorNode(Math.round(center.x - 180), Math.round(center.y - 180));
   if (type === "video") node = createVideoNode(Math.round(center.x - 195), Math.round(center.y - 235));
@@ -3661,7 +3655,6 @@ function renderLibrary() {
     <button class="module-item" type="button" data-library-add="video-preview"><span class="module-icon video">${icon("monitor-play")}</span><span class="module-copy"><strong>成片预览</strong><small>上传、预览并输出本地视频</small></span></button>
     <button class="module-item" type="button" data-library-add="answer"><span class="module-icon answer">${icon("message-square-text")}</span><span class="module-copy"><strong>模型回答</strong><small>最多 6 条提示词 · 8 张参考图</small></span></button>
 <button class="module-item" type="button" data-library-add="speech"><span class="module-icon speech">♫</span><span class="module-copy"><strong>声音克隆 · IndexTTS2</strong><small>RunningHub · 参考音频与历史结果</small></span></button>
-<button class="module-item" type="button" data-library-add="audio"><span class="module-icon speech">♪</span><span class="module-copy"><strong>音频结果</strong><small>试听、版本对比与下载</small></span></button>
     </div><div class="section-label"><span>当前结构</span><span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词模块</span><strong>${counts("prompt")}</strong></div><div class="summary-row"><span>参数控制</span><strong>${counts("composition")}</strong></div><div class="summary-row"><span>图像模块</span><strong>${counts("image")}</strong></div><div class="summary-row"><span>生图模块</span><strong>${counts("generator")}</strong></div><div class="summary-row"><span>模型回答</span><strong>${counts("answer")}</strong></div>`;
   $$('[data-library-add]').forEach(button => button.addEventListener("click", () => addNode(button.dataset.libraryAdd))); $("[data-library-image]")?.addEventListener("click", () => imageFileInput.click()); refreshIcons();
 }
