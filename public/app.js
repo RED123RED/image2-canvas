@@ -243,7 +243,7 @@ function generatorModelLabel(modelId, fallback = "Image2") {
     || fallback;
 }
 function generatorReferenceLimit(node) { if (isArkProvider(node?.provider)) return 10; if (node?.mediaType === "video") return runningHubVideoMode(node).inputs.length; if (node?.provider === "runninghub-krea2") return 0; if (node?.provider === "midjourney") return 4; if (node?.provider === "moyu") return 6; return 8; }
-const nodeLabels = { speech: "语音生成", audio: "音频结果", prompt: "提示词", composition: "参数控制", image: "图像", video: "视频", "video-editor": "视频剪辑", "video-preview": "成片预览", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
+const nodeLabels = { speech: "声音克隆", audio: "音频结果", prompt: "提示词", composition: "参数控制", image: "图像", video: "视频", "video-editor": "视频剪辑", "video-preview": "成片预览", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
 const scriptRoleTypes = [
   { id: "male-1", gender: "male", label: "男性 1" },
   { id: "male-2", gender: "male", label: "男性 2" },
@@ -1409,9 +1409,9 @@ function connectionChoicesForDraft(draft) {
   const videoChoice = { kind: "video", title: "新建视频节点", subtitle: "海螺 H3 · RunningHub", icon: "clapperboard" };
   const videoPreviewChoice = { kind: "video-preview", title: "新建成片预览节点", subtitle: "上传、预览并输出本地视频", icon: "monitor-play" };
   const answerChoice = { kind: "answer", title: "新建模型回答节点", subtitle: "自动连接并用于文本回答", icon: "message-square-text" };
-  const speechChoice={kind:'speech',title:'新建语音生成节点',subtitle:'豆包配音 · 正文与表达要求分开',icon:'mic'};
+  const speechChoice={kind:'speech',title:'新建声音克隆节点',subtitle:'RunningHub · 音色与情感参考',icon:'mic'};
   if(source.type==='audio'&&draft.direction==='input'&&draft.dataType==='audio') return [speechChoice];
-  if(source.type==='speech'&&draft.direction==='input') return [{kind:'prompt',title:'新建提示词节点',subtitle:draft.portId==='direction'?'声音表达要求，不朗读':'需要朗读的正文',icon:'text-cursor-input'}];
+  if(source.type==='speech'&&draft.direction==='input') return [{kind:'prompt',title:'新建提示词节点',subtitle:draft.portId==='direction'?'旧表达要求':'需要朗读的正文',icon:'text-cursor-input'}];
   if(source.type==='speech'&&draft.direction==='output'&&draft.dataType==='audio') return [{kind:'audio',title:'新建音频结果节点',subtitle:'生成后直接试听',icon:'audio-lines'}];
   const compositionChoice = { kind: "composition", title: "新建参数控制节点", subtitle: "自动写入已连接的提示词", icon: "sliders-horizontal" };
   if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, videoChoice, answerChoice, speechChoice];
@@ -1563,7 +1563,7 @@ function showCanvasContextMenu(event) {
     { kind: "video", title: "视频", icon: "clapperboard" },
     { kind: "video-preview", title: "成片预览", icon: "monitor-play" },
     { kind: "answer", title: "模型回答", icon: "message-square-text" },
-    {kind:'speech',title:'语音生成',icon:'mic'},
+    {kind:'speech',title:'声音克隆 · IndexTTS2',icon:'mic'},
     {kind:'audio',title:'音频结果',icon:'audio-lines'},
     { kind: "note", title: "便签", icon: "sticky-note" },
     { kind: "frame", title: "分组画板", icon: "frame" }
@@ -3660,7 +3660,7 @@ function renderLibrary() {
     <button class="module-item" type="button" data-library-add="video"><span class="module-icon video">${icon("clapperboard")}</span><span class="module-copy"><strong>视频</strong><small>海螺 H3 · API plus · MP4</small></span></button>
     <button class="module-item" type="button" data-library-add="video-preview"><span class="module-icon video">${icon("monitor-play")}</span><span class="module-copy"><strong>成片预览</strong><small>上传、预览并输出本地视频</small></span></button>
     <button class="module-item" type="button" data-library-add="answer"><span class="module-icon answer">${icon("message-square-text")}</span><span class="module-copy"><strong>模型回答</strong><small>最多 6 条提示词 · 8 张参考图</small></span></button>
-<button class="module-item" type="button" data-library-add="speech"><span class="module-icon speech">♫</span><span class="module-copy"><strong>语音生成</strong><small>豆包配音 · 分段与多角色</small></span></button>
+<button class="module-item" type="button" data-library-add="speech"><span class="module-icon speech">♫</span><span class="module-copy"><strong>声音克隆 · IndexTTS2</strong><small>RunningHub · 参考音频与历史结果</small></span></button>
 <button class="module-item" type="button" data-library-add="audio"><span class="module-icon speech">♪</span><span class="module-copy"><strong>音频结果</strong><small>试听、版本对比与下载</small></span></button>
     </div><div class="section-label"><span>当前结构</span><span>${state.edges.length} 条连接</span></div><div class="summary-row"><span>提示词模块</span><strong>${counts("prompt")}</strong></div><div class="summary-row"><span>参数控制</span><strong>${counts("composition")}</strong></div><div class="summary-row"><span>图像模块</span><strong>${counts("image")}</strong></div><div class="summary-row"><span>生图模块</span><strong>${counts("generator")}</strong></div><div class="summary-row"><span>模型回答</span><strong>${counts("answer")}</strong></div>`;
   $$('[data-library-add]').forEach(button => button.addEventListener("click", () => addNode(button.dataset.libraryAdd))); $("[data-library-image]")?.addEventListener("click", () => imageFileInput.click()); refreshIcons();

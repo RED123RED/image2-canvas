@@ -1,87 +1,55 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {createHash,randomUUID} from 'node:crypto';
+import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
-import {speechProtocol,speechEndpoint,validateSpeechRequest,speechPayload,speechFingerprint} from './public/speech-document.js';
-const sampleRate=24000,maxAudioBytes=160*1024*1024;
-export function pcmToWav(pcm){const header=Buffer.alloc(44);header.write('RIFF');header.writeUInt32LE(36+pcm.length,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(sampleRate,24);header.writeUInt32LE(sampleRate*2,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(pcm.length,40);return Buffer.concat([header,pcm]);}
-export async function parseSpeechResponse(response){
-  if(!response.ok){const message=(await response.text()).slice(0,1000);throw Error('语音服务 HTTP '+response.status+'：'+message);}
-  const chunks=[],cues=[];let bytes=0,buffer='',done=false,usage=null;const decoder=new TextDecoder();
-  const consume=line=>{
-    const trimmed=line.trim().replace(/^data:\s*/,'');if(!trimmed||trimmed==='[DONE]')return;
-    let item;try{item=JSON.parse(trimmed);}catch{throw Error('语音服务返回了无法识别的数据');}
-    if(item.code!==0&&item.code!==20000000)throw Error('语音服务：'+String(item.message||item.code).slice(0,400));
-    if(item.code===20000000)done=true;
-    if(item.data){if(typeof item.data!=='string'||!/^[A-Za-z0-9+/=\r\n]+$/.test(item.data))throw Error('无效音频数据');const chunk=Buffer.from(item.data,'base64');bytes+=chunk.length;if(bytes>maxAudioBytes)throw Error('音频超过本工具的安全长度');chunks.push(chunk);}
-    const sentence=item.sentence;
-    if(sentence?.words?.length){const words=sentence.words.filter(w=>Number.isFinite(w.startTime)&&Number.isFinite(w.endTime));if(words.length)cues.push({text:String(sentence.text||words.map(w=>w.word).join('')),start:words[0].startTime,end:words.at(-1).endTime});}
-    if(item.usage)usage=item.usage;
-  };
-  for await(const part of response.body){buffer+=decoder.decode(part,{stream:true});if(buffer.length>40*1024*1024)throw Error('语音响应单包过大');let newline;while((newline=buffer.indexOf('\n'))>=0){consume(buffer.slice(0,newline));buffer=buffer.slice(newline+1);}}
-  buffer+=decoder.decode();if(buffer.trim())consume(buffer);
-  const pcm=Buffer.concat(chunks);if(!pcm.length||pcm.length%2)throw Error('语音服务未返回完整音频');
-  // Current HTTP endpoint ends with 20000000; never publish truncated streams.
-  if(!done)throw Error('语音返回中断，未收到结束标记；保留原版本，请核对后再生成');
-  const unique=[...new Map(cues.map(c=>[JSON.stringify(c),c])).values()];return {pcm,cues:unique,usage};
+import {speechProtocol,voiceWorkflowId,validateCloneRequest,workflowNodeInfo} from './public/speech-document.js';
+const terminal=new Set(['succeeded','failed','cancelled','interrupted']);
+export async function serveAudioFile(req,res,file){
+ const bytes=await fs.readFile(file);let start=0,end=bytes.length-1,status=200;
+ if(req.headers.range){const m=/^bytes=([0-9]*)-([0-9]*)$/.exec(req.headers.range);if(!m||(!m[1]&&!m[2]))return res.writeHead(416,{'Content-Range':'bytes */'+bytes.length}).end();if(!m[1])start=Math.max(0,bytes.length-Number(m[2]));else{start=Number(m[1]);if(m[2])end=Math.min(end,Number(m[2]));}if(start>end||start>=bytes.length)return res.writeHead(416,{'Content-Range':'bytes */'+bytes.length}).end();status=206;}
+ res.writeHead(status,{'Content-Type':file.endsWith('.wav')?'audio/wav':'audio/mpeg','Content-Length':end-start+1,'Accept-Ranges':'bytes','Cache-Control':'private, max-age=31536000, immutable',...(status===206?{'Content-Range':`bytes ${start}-${end}/${bytes.length}`}:{})});res.end(req.method==='HEAD'?undefined:bytes.subarray(start,end+1));
 }
-export async function createSpeechService({outputDir,resolveKey,readJson,sendJson,fetchImpl=fetch}){
-  const dir=path.join(outputDir,'speech'),files=path.join(dir,'files'),jobsPath=path.join(dir,'jobs.json');
-  const jobs=new Map();let saving=Promise.resolve(),queue=Promise.resolve(),ffmpeg='';
-  const save=()=>{saving=saving.catch(()=>{}).then(async()=>{await fs.mkdir(files,{recursive:true});await fs.writeFile(jobsPath+'.tmp',JSON.stringify([...jobs.values()]));await fs.rename(jobsPath+'.tmp',jobsPath);});return saving;};
-  try{const data=JSON.parse(await fs.readFile(jobsPath,'utf8'));if(!Array.isArray(data))throw Error('Invalid jobs');for(const job of data){if(['queued','running'].includes(job.status)){job.status='interrupted';job.error='服务曾中断，未自动重发；已完成段落保留，请检查后重新生成';}jobs.set(job.id,job);}}catch(error){if(error.code!=='ENOENT')throw Error('语音任务记录读取失败，请保留文件并检查：'+error.message);}
-  for(const candidate of [process.env.FFMPEG_PATH,path.join(path.dirname(outputDir),'tools/ffmpeg/bin/ffmpeg.exe'),path.join(path.dirname(await fs.realpath(outputDir).catch(()=>outputDir)),'tools/ffmpeg/bin/ffmpeg.exe')].filter(Boolean)){try{await fs.access(candidate);ffmpeg=candidate;break;}catch{}}
-  const safeJob=job=>{const {hash,...safe}=job;return safe;};
-  const fileUrl=name=>'/api/speech/files/'+name;
-  const run=async(job,key)=>{
-    try{
-      job.status='running';await save();const buffers=[],cues=[];let offset=0,total=0;
-      for(const [index,segment] of job.request.segments.entries()){
-        const fingerprint=speechFingerprint(segment);let pcm,part;
-        if(segment.reuse){const old=jobs.get(segment.reuse.jobId);part=old?.parts?.find(p=>p.segmentId===segment.reuse.segmentId&&p.fingerprint===fingerprint);if(!part)throw Error('复用段落与当前正文/设置不一致，请重新生成该段');const content=await fs.readFile(path.join(files,path.basename(part.src)));if(content.toString('ascii',0,4)!=='RIFF'||content.length<44)throw Error('缓存音频已损坏');pcm=content.subarray(44);part={...part,segmentId:segment.id,reused:true};}
-        else{
-          const response=await fetchImpl(speechEndpoint,{method:'POST',redirect:'error',signal:AbortSignal.timeout(210000),headers:{'Content-Type':'application/json','X-Api-Key':key,'X-Api-Resource-Id':'seed-tts-2.0','X-Api-Request-Id':randomUUID(),'X-Control-Require-Usage-Tokens-Return':'*'},body:JSON.stringify(speechPayload(segment))});
-          const data=await parseSpeechResponse(response);pcm=data.pcm;const filename=job.id+'-'+index+'.wav';await fs.writeFile(path.join(files,filename),pcmToWav(pcm),{flag:'wx'});
-          part={segmentId:segment.id,src:fileUrl(filename),duration:pcm.length/(sampleRate*2),cues:data.cues,usage:data.usage,fingerprint};
-        }
-        job.parts.push(part);job.completed=job.parts.length;await save();
-        cues.push(...part.cues.map(c=>({...c,start:c.start+offset,end:c.end+offset})));buffers.push(pcm);offset+=part.duration;total+=pcm.length;
-        if(index<job.request.segments.length-1&&segment.pauseMs){const silence=Buffer.alloc(Math.round(segment.pauseMs*sampleRate/1000)*2);buffers.push(silence);offset+=segment.pauseMs/1000;total+=silence.length;}
-        if(total>maxAudioBytes)throw Error('合成作品过大，请拆成多个语音节点');
-      }
-      const basename=job.id+'-complete',wavName=basename+'.wav';await fs.writeFile(path.join(files,wavName),pcmToWav(Buffer.concat(buffers)),{flag:'wx'});
-      let src=fileUrl(wavName);
-      if(job.request.format==='mp3'){
-        if(!ffmpeg)throw Error('MP3 导出需要本地 FFmpeg，请改选 WAV');
-        await new Promise((resolve,reject)=>{const child=spawn(ffmpeg,['-nostdin','-y','-i',path.join(files,wavName),'-codec:a','libmp3lame','-b:a','160k',path.join(files,basename+'.mp3')],{windowsHide:true,stdio:'ignore'});const timer=setTimeout(()=>{child.kill();reject(Error('MP3 编码超时'));},60000);child.once('error',e=>{clearTimeout(timer);reject(e);});child.once('exit',code=>{clearTimeout(timer);code===0?resolve():reject(Error('MP3 编码失败'));});});src=fileUrl(basename+'.mp3');
-      }
-      job.result={id:job.id,src,wavSrc:fileUrl(wavName),duration:offset,cues,parts:job.parts,segments:job.request.segments,format:job.request.format,createdAt:Date.now()};job.status='succeeded';
-    }catch(error){job.status='failed';job.error=String(error.message||error).split(key).join('[已隐藏密钥]').slice(0,1000);}
-    job.updatedAt=Date.now();await save();
-  };
-  return async function handle(req,res,url){
-    try{
-      if(req.method==='GET'&&url.pathname==='/api/speech/status')return sendJson(res,200,{protocol:speechProtocol,ready:Boolean(await resolveKey(req)),formats:ffmpeg?['wav','mp3']:['wav'],model:'seed-tts-2.0'});
-      if(req.method==='POST'&&url.pathname==='/api/speech/jobs'){
-        const body=validateSpeechRequest(await readJson(req,512*1024));const id='sp-'+body.requestId,hash=createHash('sha256').update(JSON.stringify(body)).digest('hex');
-        const existing=jobs.get(id);if(existing){await saving;return sendJson(res,existing.hash===hash?200:409,existing.hash===hash?safeJob(existing):{error:'同一请求编号不能提交不同内容'});}
-        if([...jobs.values()].filter(j=>['queued','running'].includes(j.status)).length>=8)return sendJson(res,429,{error:'语音队列已满，请等待已有任务完成'});
-        if(body.format==='mp3'&&!ffmpeg)return sendJson(res,400,{error:'当前未检测到 MP3 编码工具，请选择 WAV'});
-        const key=await resolveKey(req);if(!key)return sendJson(res,401,{error:'请先在设置中保存火山 Agent Plan 套餐密钥'});
-        // Resolving a saved key yields: recheck identity before reserving the job.
-        const raced=jobs.get(id);if(raced){await saving;return sendJson(res,raced.hash===hash?200:409,raced.hash===hash?safeJob(raced):{error:'同一请求编号不能提交不同内容'});}
-        if([...jobs.values()].filter(j=>['queued','running'].includes(j.status)).length>=8)return sendJson(res,429,{error:'语音队列已满，请等待已有任务完成'});
-        const job={id,hash,request:body,status:'queued',completed:0,parts:[],createdAt:Date.now()};jobs.set(id,job);
-        try{await save();}catch(error){jobs.delete(id);throw error;}
-        queue=queue.catch(()=>{}).then(()=>run(job,key)).catch(error=>console.error('Speech task save failure:',error.message));return sendJson(res,202,safeJob(job));
-      }
-      if(req.method==='GET'&&/^\/api\/speech\/jobs\/sp-[a-f0-9-]{36}$/i.test(url.pathname)){const job=jobs.get(path.basename(url.pathname));return sendJson(res,job?200:404,job?safeJob(job):{error:'未找到该语音任务；没有自动重发'});}
-      if(['GET','HEAD'].includes(req.method)&&/^\/api\/speech\/files\/sp-[a-f0-9-]{36}-(\d+|complete)\.(wav|mp3)$/i.test(url.pathname)){
-        const name=path.basename(url.pathname),bytes=await fs.readFile(path.join(files,name));const range=req.headers.range;let start=0,end=bytes.length-1,status=200;
-        if(range){const match=/^bytes=(\d+)-(\d*)$/.exec(range);if(!match)return res.writeHead(416).end();start=Number(match[1]);end=match[2]?Math.min(end,Number(match[2])):end;if(start>end)return res.writeHead(416,{'Content-Range':'bytes */'+bytes.length}).end();status=206;}
-        res.writeHead(status,{'Content-Type':name.endsWith('.mp3')?'audio/mpeg':'audio/wav','Content-Length':end-start+1,'Accept-Ranges':'bytes','Cache-Control':'private, max-age=31536000, immutable',...(status===206?{'Content-Range':`bytes ${start}-${end}/${bytes.length}`}:{})});res.end(req.method==='HEAD'?undefined:bytes.subarray(start,end+1));return;
-      }
-      return sendJson(res,404,{error:'语音接口不存在'});
-    }catch(error){return sendJson(res,error.code==='ENOENT'?404:400,{error:String(error.message||error).slice(0,1000)});}
-  };
+export async function createSpeechService({outputDir,resolveKey,readJson,sendJson,fetchImpl=fetch,baseUrl='https://www.runninghub.cn',pollMs=4000,probeAudio}){
+ const dir=path.join(outputDir,'voice-clone'),files=path.join(dir,'files'),jobsPath=path.join(dir,'jobs.json'),jobs=new Map(),active=new Set();let saving=Promise.resolve(),queue=Promise.resolve();
+ let ffprobe=process.env.FFPROBE_PATH||'';const realOutput=await fs.realpath(outputDir).catch(()=>outputDir);
+ for(const candidate of [ffprobe,path.join(path.dirname(outputDir),'tools/ffmpeg/bin/ffprobe.exe'),path.join(path.dirname(realOutput),'tools/ffmpeg/bin/ffprobe.exe')].filter(Boolean)){try{await fs.access(candidate);ffprobe=candidate;break;}catch{}}
+ const probe=probeAudio||((file)=>new Promise((resolve,reject)=>{if(!ffprobe)return reject(Error('未找到音频校验工具 FFprobe，请检查媒体工具配置'));const child=spawn(ffprobe,['-v','error','-show_entries','format=duration','-of','json',file],{windowsHide:true});let out='';const timer=setTimeout(()=>{child.kill();reject(Error('音频检查超时'));},20000);child.stdout.on('data',b=>{out+=b;if(out.length>100000)child.kill();});child.on('error',e=>{clearTimeout(timer);reject(e);});child.on('close',code=>{clearTimeout(timer);try{const d=Number(JSON.parse(out).format.duration);if(code!==0||!Number.isFinite(d)||d<=0)throw Error('无法读取音频时长，请换用有效音频');resolve(d);}catch(e){reject(e);}});}));
+ const save=()=>{saving=saving.catch(()=>{}).then(async()=>{await fs.mkdir(files,{recursive:true});await fs.writeFile(jobsPath+'.tmp',JSON.stringify([...jobs.values()]));await fs.rename(jobsPath+'.tmp',jobsPath);});return saving;};
+ try{for(const job of JSON.parse(await fs.readFile(jobsPath,'utf8'))){if(!terminal.has(job.status)){job.status=job.remoteTaskId?'waiting':'interrupted';job.error=job.remoteTaskId?'服务已重启，检查原任务即可继续':'服务已中断，没有自动重新提交；请核对后再生成';}jobs.set(job.id,job);}}catch(e){if(e.code!=='ENOENT')throw Error('声音克隆记录读取失败，请保留记录文件：'+e.message);}
+ const safe=job=>{const {hash,remoteTaskId,...rest}=job;return {...rest,canResume:Boolean(remoteTaskId)&&!terminal.has(job.status)};};
+ const clean=(e,key)=>String(e?.message||e).split(key||'__no_key__').join('[已隐藏密钥]').slice(0,700);
+ const call=async(endpoint,key,body)=>{const r=await fetchImpl(baseUrl+endpoint,{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});const j=await r.json().catch(()=>({}));if(!r.ok||j.code!==undefined&&Number(j.code)!==0)throw Error('RunningHub：'+String(j.errorMessage||j.msg||j.message||r.status));return j;};
+ const refPath=r=>path.join(outputDir,'audio-assets',decodeURIComponent(r.src.split('/').pop()));
+ const validateFile=async r=>{const f=refPath(r),stat=await fs.lstat(f);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>80*1024*1024||!stat.size)throw Error('参考音频须为本地有效文件，且不超过 80 MB（本工具限制）');const d=await probe(f);if(r.end>d+.06)throw Error('参考片段超过实际音频时长 '+d.toFixed(2)+' 秒');return f;};
+ const upload=async(r,key)=>{const f=await validateFile(r),form=new FormData();form.append('file',new Blob([await fs.readFile(f)]),path.basename(f));const response=await fetchImpl(baseUrl+'/openapi/v2/media/upload/binary',{method:'POST',headers:{Authorization:'Bearer '+key},body:form,signal:AbortSignal.timeout(120000)});const j=await response.json();if(!response.ok||Number(j.code)!==0||!j.data?.fileName)throw Error('参考音频上传失败：'+String(j.msg||response.status));return j.data.fileName;};
+ const download=async(item,job,index)=>{const remote=new URL(item.url);if(remote.protocol!=='https:')throw Error('结果地址须为 HTTPS');const r=await fetchImpl(remote.href,{signal:AbortSignal.timeout(120000)});if(!r.ok)throw Error('下载音频失败 '+r.status);let size=0;const chunks=[];for await(const chunk of r.body){size+=chunk.length;if(size>160*1024*1024)throw Error('生成音频超过本工具 160 MB 限制');chunks.push(chunk);}const b=Buffer.concat(chunks);const wav=b.toString('ascii',0,4)==='RIFF'&&b.toString('ascii',8,12)==='WAVE';const mp3=b.toString('ascii',0,3)==='ID3'||b[0]===255&&(b[1]&224)===224;if(!wav&&!mp3)throw Error('工作流未返回可识别的 MP3/WAV 音频');const format=wav?'wav':'mp3',filename=job.id+'-'+index+'.'+format,file=path.join(files,filename);await fs.mkdir(files,{recursive:true});await fs.writeFile(file+'.part',b);await fs.rename(file+'.part',file);const duration=await probe(file);return {id:job.id+'-'+index,src:'/api/voice-clone/files/'+filename,format,duration,size,sha256:createHash('sha256').update(b).digest('hex'),createdAt:Date.now(),text:job.request.text,settings:job.request};};
+ const poll=async(job,key)=>{const started=Date.now();while(Date.now()-started<45*60000){if(job.status==='cancelled')return;const state=await call('/openapi/v2/query',key,{taskId:job.remoteTaskId});if(job.status==='cancelled')return;job.progress=state.status==='QUEUED'?'RunningHub 排队中':'RunningHub 正在生成';if(state.status==='FAILED'){job.status='failed';job.error=clean([state.errorMessage||state.errorCode||'工作流执行失败',state.failedReason?.node_name?'节点 '+state.failedReason.node_name:'',state.failedReason?.exception_message||''].filter(Boolean).join(' · '),key);await save();return;}if(state.status==='SUCCESS'){const results=(state.results||[]).filter(x=>x?.url&&(!x.outputType||/audio/i.test(x.outputType)||/[.](mp3|wav)(?:[?]|$)/i.test(x.url)));if(!results.length)throw Error('工作流完成但没有音频结果');job.results=[];for(const [i,item]of results.entries())job.results.push(await download(item,job,i));if(job.cancelRequested||job.status==='cancelled')return;for(const v of job.results){const previous=[...jobs.values()].filter(old=>old.id!==job.id).flatMap(old=>old.results||[]).find(old=>old.sha256===v.sha256);if(previous)v.identicalTo=previous.id;}job.status='succeeded';job.error='';job.progress='生成完成，历史结果已保留';job.updatedAt=Date.now();await save();return;}await new Promise(r=>setTimeout(r,pollMs));}throw Error('等待超时，可检查原任务，不会自动重发');};
+ const execute=async(job,key,resume=false)=>{if(active.has(job.id)||job.status==='cancelled')return;active.add(job.id);try{
+  if(!resume){job.status='uploading';job.progress='上传音色与情感参考';await save();const v=await upload(job.request.voiceReference,key),e=job.request.emotionReference.src===job.request.voiceReference.src?v:await upload(job.request.emotionReference,key);if(job.cancelRequested){job.status='cancelled';await save();return;}
+   job.status='submitting';job.progress='提交 RunningHub 工作流';await save();let r;try{r=await call('/openapi/v2/run/workflow/'+voiceWorkflowId,key,{addMetadata:true,nodeInfoList:workflowNodeInfo(job.request,v,e),usePersonalQueue:false,instanceType:'plus'});}catch(err){job.status='unknown';throw err;}
+   if(!r.taskId){job.status='unknown';throw Error('提交响应缺少任务编号，请到 RunningHub 核对；未自动重发');}job.remoteTaskId=String(r.taskId);job.status='running';await save();
+  }else{job.status='running';job.error='';await save();}
+  await poll(job,key);
+ }catch(e){if(job.status!=='cancelled'){job.status=job.remoteTaskId?'waiting':job.status==='unknown'?'unknown':'failed';job.error=clean(e,key);await save();}}finally{active.delete(job.id);}};
+ return async(req,res,url)=>{try{
+  if(['GET','HEAD'].includes(req.method)&&new RegExp('^/api/speech/files/sp-[a-f0-9-]{36}-(?:[0-9]+|complete)[.](?:mp3|wav)$','i').test(url.pathname))return await serveAudioFile(req,res,path.join(outputDir,'speech','files',path.basename(url.pathname)));
+  if(url.pathname.startsWith('/api/speech/'))return sendJson(res,410,{error:'火山语音生成功能已移除，请使用声音克隆 · IndexTTS2；已有音频仍可播放'});
+  if(req.method==='GET'&&url.pathname==='/api/voice-clone/status')return sendJson(res,200,{protocol:speechProtocol,ready:Boolean(await resolveKey(req)),mediaReady:Boolean(ffprobe||probeAudio),workflowId:voiceWorkflowId});
+  if(['GET','HEAD'].includes(req.method)&&new RegExp('^/api/voice-clone/files/vc-[a-f0-9-]{36}-[0-9]+[.](?:mp3|wav)$','i').test(url.pathname))return await serveAudioFile(req,res,path.join(files,path.basename(url.pathname)));
+  if(req.method==='POST'&&url.pathname==='/api/voice-clone/jobs'){
+   const body=validateCloneRequest(await readJson(req,128*1024)),id='vc-'+body.requestId,hash=createHash('sha256').update(JSON.stringify(body)).digest('hex');
+   const existing=jobs.get(id);if(existing){await saving;return sendJson(res,existing.hash===hash?200:409,existing.hash===hash?safe(existing):{error:'相同请求编号不能提交不同内容'});}
+   const key=await resolveKey(req);if(!key)return sendJson(res,401,{error:'请在设置中配置 RunningHub API Key'});await validateFile(body.voiceReference);await validateFile(body.emotionReference);
+   const raced=jobs.get(id);if(raced){await saving;return sendJson(res,raced.hash===hash?200:409,raced.hash===hash?safe(raced):{error:'相同请求编号内容不同'});}
+   if([...jobs.values()].filter(j=>['queued','running','uploading','submitting'].includes(j.status)).length>=8)return sendJson(res,429,{error:'声音克隆队列已满，请等待'});
+   const job={id,hash,request:body,status:'queued',results:[],createdAt:Date.now()};jobs.set(id,job);try{await save();}catch(e){jobs.delete(id);throw e;}queue=queue.catch(()=>{}).then(()=>execute(job,key)).catch(()=>{});return sendJson(res,202,safe(job));
+  }
+  const match=new RegExp('^/api/voice-clone/jobs/(vc-[a-f0-9-]{36})(?:/(resume|cancel))?$','i').exec(url.pathname);
+  if(match){const job=jobs.get(match[1]);if(!job)return sendJson(res,404,{error:'未找到原任务，没有自动重发'});
+   if(req.method==='GET'&&!match[2])return sendJson(res,200,safe(job));
+   if(req.method==='POST'&&match[2]==='resume'){if(!job.remoteTaskId||terminal.has(job.status))return sendJson(res,409,{error:'此任务不能继续查询，请核对 RunningHub 记录'});const key=await resolveKey(req);if(!key)return sendJson(res,401,{error:'请配置 RunningHub 密钥'});void execute(job,key,true).catch(()=>{});return sendJson(res,202,safe(job));}
+   if(req.method==='POST'&&match[2]==='cancel'){if(terminal.has(job.status))return sendJson(res,200,safe(job));if(job.status==='submitting'||job.status==='unknown')return sendJson(res,409,{error:'提交结果尚不明确，请先在 RunningHub 核对任务'});if(job.remoteTaskId){const key=await resolveKey(req);if(!key)return sendJson(res,401,{error:'请配置 RunningHub 密钥'});await call('/task/openapi/cancel',key,{apiKey:key,taskId:job.remoteTaskId});}job.cancelRequested=true;job.status='cancelled';await save();return sendJson(res,200,safe(job));}
+  }
+  return sendJson(res,404,{error:'声音克隆接口不存在'});
+ }catch(e){return sendJson(res,e.code==='ENOENT'?404:400,{error:String(e.message||e).slice(0,700)});}};
 }

@@ -14,19 +14,15 @@
 
 ## 产品边界
 
-### 画布语音合成（2026-11-18）
+### 画布声音克隆 · RunningHub IndexTTS2（2026-11-19）
 
-- 新节点 speech（语音生成）、audio（音频结果）。入口复用模块库、空白右键和拖线菜单；不新增侧边工作台，不关联 H3。speech 的 text / direction 是两个 prompt 输入，audio 是音频输出；audio 节点的 result 是音频输入。原节点类型、模型及媒体路径不变。
-- public/speech-document.js 负责默认值、官方示例音色、请求校验、持久化归一化和字幕；public/speech.js 负责两种节点、详细编辑及试听；public/speech.css 样式限定于语音节点和弹窗。public/app.js 只挂接创建、端口、渲染、事件、恢复及弹窗快捷键隔离。
-- speech-service.mjs 通过独立 /api/speech/ 路由懒加载，复用已有 ark-plan 密钥读取，不改变密钥配置。固定套餐 HTTP 地址 https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional，X-Api-Key、X-Api-Resource-Id: seed-tts-2.0。禁止自动回退普通计费接口或重试生成。
-- 本地串行队列最多 8 个活跃任务。先持久化请求，再提交模型；同一 UUID 与请求内容幂等，网络状态未知只 GET 查询原任务。刷新、撤销恢复、重开项目不重复 POST；进程重启把未完成任务标记 interrupted，保留完成段落供手动复用。项目保存失败保留请求编号和已存结果，不自动重发。
-- 正文与表达要求分开。直接配音每次点击生成新的声音；详细编辑使用 draft；节点可选择当前段落并直接编辑同一内容。各段的 inputSources.text/direction 选择 auto（有连线用上游）或 local（本地编辑）；旧稿按 local 恢复，避免被连线覆盖；多段重排主动同步。支持 1–40 段、每段 1–2000 字、全篇不超过 12000 字，这是本工具限制，并非模型官方上限。段间停顿、角色预设、段落历史及一致内容复用；重新生成某段才重新提交该段。
-- output/speech/jobs.json 保存请求正文、设置、状态、段落及用量，不含密钥。output/speech/files 保存 PCM 封装的 24kHz 单声道 WAV 和可选 MP3；MP3 使用已有 FFmpeg，不安装二进制或新增依赖。当前媒体目录为 E:/codex/image2-canvas/output。
-- audio.versions / currentVersionId / previewVersionId 分别保存所有候选、已应用版本和试听版本；首次生成成为当前，以后仅增加候选。所有连接的结果节点接收同一作品，不增加模型请求。草稿、音频版本和任务编号随项目保存、复制、导入导出；JSON 只引用本地音频，迁移须同时复制 output/speech。
-- 内置 12 个官方示例音色，允许已开通的自定义 ID；仅对 4 个已确认音色开放受支持方言校验。具体音色/语言/语气效果仍受模型及账户权限约束。界面提前提示并限制不兼容方言/语言，渲染不调用会抛异常的请求校验；非法旧配置保留供修复。指令包装与缓存版本见 SPEECH-EDITING-FIX.md。首次音色试读是明确的独立付费请求，同一试读正文与音色再次播放复用缓存。
-- 结果支持播放器、波形定位、A/B、试听变速、区间循环、单段试听、独立结果副本、WAV/MP3/文本/SRT。SRT 只采用模型返回时间戳，不猜测；MP3 须在生成时选择，WAV 始终保留。当前不实现 ASR、实时对话、声音克隆或剪辑时间轴。
-- 首页图片清理仍只处理 generated/assets 的图片，排除 output/speech；不借本任务扩展删除范围。用户素材和原项目未改写。验证见 SPEECH-VERIFICATION.md，回归脚本 tests/speech.test.mjs、tests/speech.browser.js。
-
+- 工作流：https://www.runninghub.cn/workflow/2123214466497204226。远端 API 工作流已核对。新建 speech 节点只提供「声音克隆 · IndexTTS2」，音色参考、情感参考、正文和历史结果集中在同一节点。正文可接提示词节点或直接编辑，来源切换保留连线。
+- 远端节点 13/15 为两路 LoadAudio，37/38 为 AudioCrop，14 为正文，12 为 IndexTTS2Run，39 为 MP3 输出。AudioCrop 只接受整数秒，画布校验最长 12 秒选区。情感参考可独立上传，也可使用音色参考本身；情感强度在独立情感参考时生效。
+- 使用现有 RunningHub 密钥。speech-service.mjs 负责 /api/voice-clone/ 路由、上传、提交、轮询和音频存储。任务写入 output/voice-clone/jobs.json，结果写入 output/voice-clone/files，参考音频写入 output/audio-assets。每次点击生成保存独立任务，追加历史结果，不覆盖当前输出；不自动重试不明状态的付费请求。
+- 历史结果可试听、下载、命名、查看设置、选为输出和删除；节点记录删除后可恢复最近结果，磁盘音频仍保留用于撤销、其他节点与项目引用。可把当前结果复制成独立 audio 节点。结果列表可上下拉伸。
+- 原火山语音生成已下线：/api/speech/ 只允许旧文件 GET/HEAD 播放，其他请求返回 410。旧 speech 节点只读归档；用户主动点击「转换」后才变成新声音克隆节点，其旧正文与完整旧节点备份保留。旧 audio 节点和 output/speech 音频均不删除。旧项目导入、刷新、撤销保持兼容。
+- 首页图片清理不处理 output/speech、output/voice-clone 和 output/audio-assets。项目 JSON 仅保存本机音频路径，迁移需携带素材。普通生图、模型回答、H3 视频、分层、局部修改和图片清理逻辑保持不变。
+- 验证：npm run test:speech、tests/voice-clone.browser.js、docs/VOICE-CLONE-VERIFICATION.md。
 ### 未使用图片清理（2026-11-14）
 
 - 首页按钮统一清理 output/generated 与 output/assets 中受管 PNG/JPG/WebP；视频、音频、未知文件、子目录和符号链接不处理。删除需要先预览数量/空间，再确认，不自动清理。

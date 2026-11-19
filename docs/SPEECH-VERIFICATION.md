@@ -1,5 +1,7 @@
 # 画布语音节点交付与验证
 
+> 历史存档：此文记录已下线的火山语音功能。当前实现请参阅 docs/VOICE-CLONE-VERIFICATION.md。
+
 日期：2026-11-18。工作目录 E:/codex/image2-canvas-work/mainline-merge，分支 master，开发基线 f57b41b。媒体目录 output 是指向 E:/codex/image2-canvas/output 的既有连接。
 
 后续编辑问题修复、协议 v2 和来源选择以 SPEECH-EDITING-FIX.md 为准。
