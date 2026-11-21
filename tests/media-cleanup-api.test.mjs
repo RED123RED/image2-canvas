@@ -12,7 +12,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 test('HTTP cleanup requires current protocol and preview; protects pending completed jobs and deletes both stores',async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'canvas-cleanup-api-'));
   await fs.mkdir(path.join(dir,'public'));
-  for(const file of ['server.mjs','media-cleanup.mjs','public/media-references.js','public/local-edit-document.js','public/layer-document.js','public/seedream-ark.js'])await fs.copyFile(path.join(root,file),path.join(dir,file));
+  for(const file of ['server.mjs','media-cleanup.mjs','public/media-references.js','public/local-edit-document.js','public/layer-document.js','public/seedream-ark.js','public/runninghub-moss.js'])await fs.copyFile(path.join(root,file),path.join(dir,file));
   await fs.writeFile(path.join(dir,'package.json'),JSON.stringify({type:'module'}));
   await fs.writeFile(path.join(dir,'offline.mjs'),"globalThis.fetch=async()=>{throw Error('External requests disabled in cleanup test');};");
   for(const folder of ['generated','assets'])await fs.mkdir(path.join(dir,'output',folder),{recursive:true});

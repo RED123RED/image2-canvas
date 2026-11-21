@@ -10,6 +10,7 @@ import {localEditProtocol,buildLocalEditPayload} from './public/local-edit-docum
 import { layerProtocol, buildLayerPayload, createLayerDocument } from './public/layer-document.js';
 import { fileURLToPath } from "node:url";
 import { arkProtocol, arkBaseUrl, arkModels, arkPlanProtocol, arkPlanBaseUrl, arkPlanModels, isArkProvider, arkModelsForProvider, buildArkPayload } from './public/seedream-ark.js';
+import { mossWorkflow, mossAspects, mossUpscaledResult } from './public/runninghub-moss.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -111,6 +112,7 @@ const runningHubKrea2Workflow = Object.freeze({
 });
 const runningHubWorkflowId = runningHubVideoWorkflows.reference.id;
 const runningHubInstanceType = "plus";
+const runningHubMossWorkflow = mossWorkflow;
 const seedreamImageModels = Object.freeze([
   "doubao-seedream-5-0-pro-260628"
 ]);
@@ -1230,13 +1232,53 @@ async function requestRunningHubKrea2Generation(job) {
   throw gatewayError(504, `RunningHub Krea2 任务等待超时 (${lastStatus?.taskId || submitted.taskId})`);
 }
 
+async function requestRunningHubMossGeneration(job) {
+  const { apiKey, prompt, aspect } = job.request;
+  const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
+  const nodeInfoList = [
+    runningHubNodeInfo(runningHubMossWorkflow.promptNode, "value", prompt),
+    runningHubNodeInfo(runningHubMossWorkflow.ratioNode, "比例", aspect)
+  ];
+  const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${runningHubMossWorkflow.id}`, {
+    method: "POST", headers,
+    body: JSON.stringify({ addMetadata: true, nodeInfoList, instanceType: runningHubInstanceType, usePersonalQueue: false }),
+    signal: AbortSignal.timeout(60_000)
+  });
+  const submitRaw = await submitResponse.text();
+  let submitted;
+  try { submitted = JSON.parse(submitRaw); } catch { submitted = {}; }
+  updateRunningHubDiagnostic(job, runningHubDiagnostic("提交 MOSS 工作流", submitResponse.status, submitted, submitRaw));
+  if (!submitResponse.ok || !submitted?.taskId) throw runningHubRequestError("提交 MOSS 工作流", submitResponse.status, submitted, submitRaw, "RunningHub MOSS 工作流提交失败");
+  job.remoteTaskId = String(submitted.taskId);
+  await persistJobs();
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 45 * 60_000) {
+    if (job.cancelRequested) throw Object.assign(new Error("MOSS 任务已停止"), { code: "CANCELED" });
+    const response = await fetch(`${runningHubBaseUrl}/openapi/v2/query`, { method: "POST", headers, body: JSON.stringify({ taskId: submitted.taskId }), signal: AbortSignal.timeout(60_000) });
+    const raw = await response.text();
+    let status;
+    try { status = JSON.parse(raw); } catch { status = {}; }
+    updateRunningHubDiagnostic(job, runningHubDiagnostic("查询 MOSS 任务", response.status, status, raw));
+    if (!response.ok) throw runningHubRequestError("查询 MOSS 任务", response.status, status, raw, "RunningHub MOSS 任务查询失败");
+    if (job.cancelRequested) throw Object.assign(new Error("MOSS 任务已停止"), { code: "CANCELED" });
+    if (status.status === "SUCCESS") {
+      let image;
+      try { image = mossUpscaledResult(status.results); } catch (error) { throw gatewayError(502, error.message); }
+      return { items: [image], mode: "workflow", referencesUsed: 0, taskId: submitted.taskId };
+    }
+    if (status.status === "FAILED") throw runningHubRequestError("执行 MOSS 工作流", 502, status, raw, `RunningHub MOSS 任务失败 (${status.errorCode || "UNKNOWN"})`);
+    await new Promise(resolve => setTimeout(resolve, 5_000));
+  }
+  throw gatewayError(504, `RunningHub MOSS 任务等待超时 (${submitted.taskId})`);
+}
+
 async function executeJob(job) {
   job.status = "running";
   job.startedAt = Date.now();
   await persistJobs();
   await writeJobLog(job, "started");
   try {
-    const result = isArkProvider(job.provider) ? await requestArkGeneration(job) : job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "runninghub-krea2" ? await requestRunningHubKrea2Generation(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : job.provider === "moyu" ? await requestSeedreamGeneration(job) : await requestImage2Generation(job);
+    const result = isArkProvider(job.provider) ? await requestArkGeneration(job) : job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "runninghub-krea2" ? await requestRunningHubKrea2Generation(job) : job.provider === "runninghub-moss" ? await requestRunningHubMossGeneration(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : job.provider === "moyu" ? await requestSeedreamGeneration(job) : await requestImage2Generation(job);
     if (result.mediaType === "video") job.media = await Promise.all(result.items.map((item, index) => persistGeneratedMedia(job, item, index)));
     else job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
     if (job.kind === 'layer-decomposition') {
@@ -1253,7 +1295,7 @@ async function executeJob(job) {
     const failure = classifyError(error);
     job.status = failure.code === "CANCELED" || job.cancelRequested ? "canceled" : "failed";
     job.errorCode = job.status === "canceled" ? "CANCELED" : failure.code;
-    job.error = job.status === "canceled" ? (job.provider === "runninghub-krea2" ? "K2 白玉任务已停止" : "视频任务已停止") : failure.message;
+    job.error = job.status === "canceled" ? (job.provider === "runninghub-krea2" ? "K2 白玉任务已停止" : job.provider === "runninghub-moss" ? "MOSS 任务已停止" : "视频任务已停止") : failure.message;
     job.finishedAt = Date.now();
   } finally {
     delete job.request;
@@ -1264,8 +1306,8 @@ async function executeJob(job) {
 
 async function cancelJob(req, res, jobId) {
   const job = jobs.get(jobId);
-  const cancelable = job?.provider === "runninghub-h3" || job?.provider === "runninghub-krea2";
-  const taskLabel = job?.provider === "runninghub-krea2" ? "K2 白玉" : "视频";
+  const cancelable = ["runninghub-h3", "runninghub-krea2", "runninghub-moss"].includes(job?.provider);
+  const taskLabel = job?.provider === "runninghub-krea2" ? "K2 白玉" : job?.provider === "runninghub-moss" ? "MOSS" : "视频";
   if (!job || !cancelable) return sendJson(res, 404, { error: `${taskLabel}任务不存在` });
   if (["succeeded", "failed", "canceled"].includes(job.status)) return sendJson(res, 200, { job: jobView(job), canceled: job.status === "canceled" });
   job.cancelRequested = true;
@@ -1304,9 +1346,10 @@ async function createJob(req, res) {
     const body = await readJson(req);
     if (isArkProvider(body.provider)) return createArkJob(req, res, body);
     if (body.provider === "gemini") return sendJson(res, 400, { error: "Gemini 已移除，请选择 Image2 或 Seedream" });
-    const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "runninghub-krea2" ? "runninghub-krea2" : body.provider === "moyu" ? "moyu" : body.provider === "midjourney" ? "midjourney" : "image2";
+    const provider = body.provider === "runninghub-h3" ? "runninghub-h3" : body.provider === "runninghub-krea2" ? "runninghub-krea2" : body.provider === "runninghub-moss" ? "runninghub-moss" : body.provider === "moyu" ? "moyu" : body.provider === "midjourney" ? "midjourney" : "image2";
     if (provider === "runninghub-h3") return createRunningHubJob(req, res, body);
     if (provider === "runninghub-krea2") return createRunningHubKrea2Job(req, res, body);
+    if (provider === "runninghub-moss") return createRunningHubMossJob(req, res, body);
     const usesSeedream = provider === "moyu";
     if (usesSeedream && body.model && !seedreamImageModels.includes(String(body.model))) return sendJson(res, 400, { error: "不支持的 Seedream 图像模型" });
     const isMj = provider === "midjourney";
@@ -1400,6 +1443,21 @@ async function createRunningHubKrea2Job(req, res, body) {
     const height = Math.min(4096, Math.max(32, Number(body.height) || workflow.defaultHeight));
     const n = Math.min(workflow.maxBatch, Math.max(1, Math.round(Number(body.n) || 1)));
     const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-krea2", model: `Krea2 workflow ${workflow.id}`, imageCount: n, request: { apiKey, prompt, width, height, n, workflow } };
+    jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
+  } catch (error) {
+    const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
+  }
+}
+
+async function createRunningHubMossJob(req, res, body) {
+  try {
+    const apiKey = await resolveRunningHubApiKey(req);
+    if (!apiKey) return sendJson(res, 401, { error: "未配置 RunningHub API Key，请在设置中保存密钥" });
+    const prompt = String(body.prompt || "").trim();
+    if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
+    if (!mossAspects.includes(body.aspect)) return sendJson(res, 400, { error: "MOSS 不支持所选图像比例" });
+    if (Array.isArray(body.references) && body.references.length) return sendJson(res, 400, { error: "MOSS 工作流仅支持文字生图" });
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-moss", model: mossWorkflow.model, imageCount: 1, request: { apiKey, prompt, aspect: body.aspect } };
     jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
   } catch (error) {
     const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
@@ -2007,7 +2065,7 @@ const server = http.createServer(async (req, res) => {
     const claudeKey = await resolveClaudeApiKey(req);
     const moyuKimiKey = await resolveKimiApiKey(req, "kimi-k3-moyu");
     const moonshotKimiKey = await resolveKimiApiKey(req, "kimi-k3-moonshot");
-    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, arkPlanAnswer: { ready: Boolean(arkPlanKey), protocol: "kimi-ark-plan-v1", model: kimiPlanModel, vision: true, referenceLimit: 8 }, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, arkPlanAnswer: { ready: Boolean(arkPlanKey), protocol: "kimi-ark-plan-v1", model: kimiPlanModel, vision: true, referenceLimit: 8 }, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, mossWorkflowId: mossWorkflow.id, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);

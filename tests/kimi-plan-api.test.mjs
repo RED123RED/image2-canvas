@@ -10,7 +10,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 
 test('Ark Plan Kimi: dedicated key and endpoint, image limits, skills, failure isolation and existing models',async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'canvas-kimi-plan-test-'));await fs.mkdir(path.join(dir,'public'));
-  for(const file of ['server.mjs','media-cleanup.mjs','public/media-references.js','public/local-edit-document.js','public/layer-document.js','public/seedream-ark.js'])await fs.copyFile(path.join(root,file),path.join(dir,file));
+  for(const file of ['server.mjs','media-cleanup.mjs','public/media-references.js','public/local-edit-document.js','public/layer-document.js','public/seedream-ark.js','public/runninghub-moss.js'])await fs.copyFile(path.join(root,file),path.join(dir,file));
   await fs.writeFile(path.join(dir,'package.json'),JSON.stringify({type:'module'}));
   const config=path.join(dir,'config','image2-canvas');await fs.mkdir(config,{recursive:true});
   await fs.writeFile(path.join(config,'providers.json'),JSON.stringify({ark:{apiKey:'ordinary-test'},kimi:{moyuApiKey:'moyu-test',moonshotApiKey:'moonshot-test'},claude:{apiKey:'claude-test'},deepseek:{apiKey:'deepseek-test'}}));
