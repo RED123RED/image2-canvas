@@ -84,6 +84,11 @@ const mjBaseUrl = (process.env.MJ_API_BASE_URL || "https://key.34ku.com").replac
 const mjFastModel = "mj_fast_imagine";
 const runningHubBaseUrl = (process.env.RUNNINGHUB_BASE_URL || "https://www.runninghub.cn").replace(/\/$/, "");
 const runningHubVideoWorkflows = Object.freeze({
+  wenwu: Object.freeze({
+    id: "2124680836212682754", imageNodes: ["51", "49", "50", "43", "19", "23", "199", "200", "201"],
+    videoNode: "27", audioNode: "48", secondAudioNode: "14", outputNode: "364",
+    minSeconds: 5, maxSeconds: 15, defaultAspect: "16:9", defaultMegapixels: 1.5
+  }),
   reference: Object.freeze({
     id: "2093564802919649281",
     promptNode: "138",
@@ -1118,7 +1123,14 @@ async function uploadRunningHubResource(apiKey, sourceValue, index, kind) {
 
 async function requestRunningHubGeneration(job) {
   const { apiKey, prompt, seconds, workflowId, imageNodes, videoNode, audioNode, aspect, megapixels, references = [], videoReference = "", audioReference = "" } = job.request;
-  const nodeInfoList = [
+  const wenwu = workflowId === runningHubVideoWorkflows.wenwu.id;
+  const nodeInfoList = wenwu ? [
+    runningHubNodeInfo("263", "text", prompt),
+    runningHubNodeInfo("259", "value", seconds),
+    runningHubNodeInfo("252", "aspect_ratio", job.request.aspectLabel),
+    runningHubNodeInfo("252", "megapixels", megapixels),
+    runningHubNodeInfo("252", "multiple", job.request.multiple)
+  ] : [
     runningHubNodeInfo("138", "value", prompt),
     runningHubNodeInfo("131", "expression", runningHubLengthExpression(seconds)),
     runningHubNodeInfo("115", "aspect_ratio", runningHubAspectLabel(aspect)),
@@ -1138,6 +1150,10 @@ async function requestRunningHubGeneration(job) {
   if (job.cancelRequested) throw Object.assign(new Error("视频任务已停止"), { code: "CANCELED" });
   if (videoReference) nodeInfoList.push(runningHubNodeInfo(videoNode, "video", await uploadRunningHubResource(apiKey, videoReference, 0, "video")));
   if (audioReference) nodeInfoList.push(runningHubNodeInfo(audioNode, "audio", await uploadRunningHubResource(apiKey, audioReference, 0, "audio")));
+  if (wenwu && job.request.secondAudioReference) {
+    const uploaded = await uploadRunningHubResource(apiKey, job.request.secondAudioReference, 1, "audio");
+    nodeInfoList.push(runningHubNodeInfo(runningHubVideoWorkflows.wenwu.secondAudioNode, "audio", uploaded));
+  }
   const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
   const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${workflowId}`, {
     method: "POST",
@@ -1168,7 +1184,12 @@ async function requestRunningHubGeneration(job) {
     const previewUrl = Array.isArray(status.results) ? status.results.find(item => item?.url)?.url : status.previewUrl || status.preview_url;
     if (previewUrl && typeof previewUrl === "string") { job.previewRemoteUrl = previewUrl; await persistJobs(); }
     if (status.status === "SUCCESS") {
-      const results = Array.isArray(status.results) ? status.results.filter(item => item?.url) : [];
+      let results = Array.isArray(status.results) ? status.results.filter(item => item?.url) : [];
+      if (wenwu) {
+        const videos = results.filter(item => /mp4/i.test(item.outputType || "") || /\.mp4(?:[?#]|$)/i.test(item.url));
+        const finalVideo = videos.find(item => String(item.nodeId) === runningHubVideoWorkflows.wenwu.outputNode) || (videos.length === 1 && !videos[0].nodeId ? videos[0] : null);
+        results = finalVideo ? [finalVideo] : [];
+      }
       if (!results.length) throw gatewayError(502, "RunningHub 任务成功但没有可下载结果");
       return { items: results, mode: "workflow", mediaType: "video", taskId: submitted.taskId, referencesUsed: uploadedReferences.length };
     }
@@ -1498,18 +1519,28 @@ async function createRunningHubJob(req, res, body) {
     if (!apiKey) return sendJson(res, 401, { error: "未配置 RunningHub API Key，请在设置中保存密钥" });
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "提示词不能为空" });
-    const videoMode = "reference";
+    const videoMode = body.videoMode === "wenwu" ? "wenwu" : "reference";
+    const wenwu = videoMode === "wenwu";
     const workflow = runningHubVideoWorkflowForMode(videoMode);
     if (!workflow) return sendJson(res, 500, { error: "RunningHub 多图参考工作流未配置" });
     const maxReferences = workflow.imageNodes.length;
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, maxReferences);
-    if (!references.length) return sendJson(res, 400, { error: "多图参考生视频至少需要 1 张参考图" });
-    const aspect = /^(?:1:1|3:2|4:3|16:9|2:1|9:16|3:4|2:3)$/.test(String(body.aspect || "")) ? String(body.aspect) : workflow.defaultAspect;
-    const megapixels = Math.min(2, Math.max(0.2, Number(body.megapixels) || workflow.defaultMegapixels));
-    const seconds = Math.min(workflow.maxSeconds, Math.max(workflow.minSeconds, Math.round(Number(body.seconds) || 6)));
+    if (!wenwu && !references.length) return sendJson(res, 400, { error: "多图参考生视频至少需要 1 张参考图" });
+    const aspect = wenwu ? (body.aspect ?? workflow.defaultAspect) : /^(?:1:1|3:2|4:3|16:9|2:1|9:16|3:4|2:3)$/.test(String(body.aspect || "")) ? String(body.aspect) : workflow.defaultAspect;
+    const megapixels = wenwu ? Number(body.megapixels ?? workflow.defaultMegapixels) : Math.min(2, Math.max(0.2, Number(body.megapixels) || workflow.defaultMegapixels));
+    const multiple = Number(body.multiple ?? 32);
+    let aspectLabel;
+    if (wenwu) {
+      const { wenwuAspects, validMegapixels, validMultiple } = await import('./public/h3-wenwu.js');
+      if (!Object.hasOwn(wenwuAspects, aspect) || !validMegapixels(megapixels) || !validMultiple(multiple)) return sendJson(res, 400, { error: "请检查文武双全的比例、百万像素与对齐倍数" });
+      aspectLabel = wenwuAspects[aspect];
+    }
+    const seconds = Math.min(workflow.maxSeconds, Math.max(workflow.minSeconds, Math.round(Number(body.seconds) || (wenwu ? 12 : 6))));
     const videoReference = /^\/(?:api\/(?:video-assets|generated|video-edited))\/[A-Za-z0-9._%()\-]+$/.test(String(body.videoReference || "")) ? String(body.videoReference) : "";
     const audioReference = /^\/api\/audio-assets\/[A-Za-z0-9._%()\-]+$/.test(String(body.audioReference || "")) ? String(body.audioReference) : "";
-    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, videoAspect: aspect, videoMegapixels: megapixels, videoSeconds: seconds, request: { apiKey, prompt, seconds, workflowId: workflow.id, imageNodes: workflow.imageNodes, videoNode: workflow.videoNode, audioNode: workflow.audioNode, aspect, megapixels, references, videoReference, audioReference } };
+    const secondAudioReference = wenwu && /^\/api\/audio-assets\/[A-Za-z0-9._%()\-]+$/.test(String(body.secondAudioReference || "")) ? String(body.secondAudioReference) : "";
+    if (wenwu && body.videoReference && !videoReference) return sendJson(res, 400, { error: "参考视频地址无效，请重新选择视频" });
+    const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, videoAspect: aspect, videoMegapixels: megapixels, videoSeconds: seconds, request: { apiKey, prompt, seconds, workflowId: workflow.id, imageNodes: workflow.imageNodes, videoNode: workflow.videoNode, audioNode: workflow.audioNode, aspect, aspectLabel, megapixels, multiple, references, videoReference, audioReference, secondAudioReference } };
     jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
   } catch (error) {
     const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
@@ -2065,7 +2096,7 @@ const server = http.createServer(async (req, res) => {
     const claudeKey = await resolveClaudeApiKey(req);
     const moyuKimiKey = await resolveKimiApiKey(req, "kimi-k3-moyu");
     const moonshotKimiKey = await resolveKimiApiKey(req, "kimi-k3-moonshot");
-    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, arkPlanAnswer: { ready: Boolean(arkPlanKey), protocol: "kimi-ark-plan-v1", model: kimiPlanModel, vision: true, referenceLimit: 8 }, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, mossWorkflowId: mossWorkflow.id, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, arkPlanAnswer: { ready: Boolean(arkPlanKey), protocol: "kimi-ark-plan-v1", model: kimiPlanModel, vision: true, referenceLimit: 8 }, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, mossWorkflowId: mossWorkflow.id, wenwuWorkflowId: runningHubVideoWorkflows.wenwu.id, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);

@@ -5,6 +5,7 @@ import {allLayerSources,leafLayers} from './layer-tree.js';
 import {localEditSources} from './local-edit-document.js';
 import {applyLocalEditToLayers} from './local-edit-apply.js';
 import {collectMediaReferences,mediaCleanupProtocol} from './media-references.js';
+import { wenwuId, wenwuAspects, wenwuDefaults, isWenwu, validMegapixels, validMultiple, wenwuDimensions } from './h3-wenwu.js';
 import { mossWorkflow, mossAspects, mossAspect } from './runninghub-moss.js';
 let localEditorModule;
 const getLocalEditor=()=>localEditorModule ||= import('./local-edit.js');
@@ -168,8 +169,10 @@ function normalizedH3AnswerMode(value) { return h3AnswerModeOptions.some(item =>
 function normalizedH3Duration(value) { return Math.min(30, Math.max(3, Math.round(Number(value) || 6))); }
 function normalizedProductAdDuration(value, fallback) { const duration = Math.round(Number(value)); return productAdDurationOptions.includes(duration) ? duration : fallback; }
 function normalizedBrandPromoDuration(value, fallback) { const duration = Math.round(Number(value)); return brandPromoDurationOptions.includes(duration) ? duration : fallback; }
-const runningHubVideoMode = () => ({ value: "reference", label: "多图参考生视频", inputs: ["参考图 1", "参考图 2", "参考图 3", "参考图 4", "参考图 5", "参考图 6"] });
+const wenwuMode = { value: "wenwu", label: "文武双全", inputs: Array.from({ length: 9 }, (_, index) => "参考图 " + (index + 1)) };
+const runningHubVideoMode = node => isWenwu(node) ? wenwuMode : ({ value: "reference", label: "多图参考生视频", inputs: ["参考图 1", "参考图 2", "参考图 3", "参考图 4", "参考图 5", "参考图 6"] });
 function runningHubVideoDimensions(node) {
+  if (isWenwu(node)) return wenwuDimensions(node);
   const aspect = runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9";
   const [ratioWidth, ratioHeight] = aspect.split(":").map(Number);
   const megapixels = runningHubVideoMegapixelOptions.some(option => option.value === Number(node?.videoMegapixels)) ? Number(node.videoMegapixels) : 0.9;
@@ -180,9 +183,17 @@ function runningHubVideoDimensions(node) {
   return { width: round32(Math.sqrt(area * ratio)), height: round32(Math.sqrt(area / ratio)) };
 }
 function normalizeRunningHubVideo(node, connectedImageSlots = 0) {
-  const inputSlots = 6;
+  const mode = runningHubVideoMode(node);
+  const inputSlots = mode.inputs.length;
   const promptSlots = Math.min(6, Math.max(1, Number(node?.promptSlots) || 1));
   const next = { ...node, mediaType: "video", provider: "runninghub-h3", x: Number.isFinite(Number(node?.x)) ? Number(node.x) : 0, y: Number.isFinite(Number(node?.y)) ? Number(node.y) : 0, videoMode: "reference", videoAspect: runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9", videoMegapixels: runningHubVideoMegapixelOptions.some(option => option.value === Number(node?.videoMegapixels)) ? Number(node.videoMegapixels) : 0.9, videoSeconds: Math.min(15, Math.max(5, Math.round(Number(node?.videoSeconds) || 6))), promptSlots, inputSlots, videoInputSlotsInitialized: true, localVideoReference: String(node?.localVideoReference || ""), localAudioReference: String(node?.localAudioReference || ""), width: Math.max(380, Number(node?.width) || 420) };
+  if (isWenwu(node)) {
+    next.videoMode = mode.value;
+    next.videoAspect = Object.hasOwn(wenwuAspects, node.videoAspect) ? node.videoAspect : wenwuDefaults.videoAspect;
+    next.videoMegapixels = validMegapixels(Number(node.videoMegapixels)) ? Number(node.videoMegapixels) : wenwuDefaults.videoMegapixels;
+    next.videoMultiple = validMultiple(Number(node.videoMultiple)) ? Number(node.videoMultiple) : wenwuDefaults.videoMultiple;
+    next.videoSeconds = Math.max(5, Math.min(15, Math.round(Number(node.videoSeconds) || wenwuDefaults.videoSeconds)));
+  }
   delete next.previewSrc;
   delete next.previewRemoteSrc;
   next.height = Math.max(Number(node?.height) || 0, nodeHeight("video-generator", inputSlots, promptSlots));
@@ -366,6 +377,7 @@ let pendingVideoImportNodeId = null;
 let pendingVideoReferenceNodeId = null;
 let pendingVideoPreviewUploadNodeId = null;
 let pendingAudioReferenceNodeId = null;
+let pendingAudioReferenceSlot = 1;
 let cropSession = null;
 let compositionDragSession = null;
 let promptLayoutResizeSession = null;
@@ -536,7 +548,7 @@ function nodeHeight(type, slots = 4, promptSlots = 1) {
   if (type === "prompt") return 270;
   if (type === "composition") return 590;
   if (type === "image" || type === "loading") return 322;
-  if (type === "video-generator") return 635 + Math.max(0, Number(promptSlots) - 1) * 30;
+  if (type === "video-generator") return 650 + (slots > 6 ? 132 : 0) + Math.max(0, Number(promptSlots) - 1) * 30;
   if (type === "video-editor") return 390;
   if (type === "video-preview") return 322;
   if (type === "generator") return 316 + slots * 30 + Math.max(0, promptSlots - 1) * 30;
@@ -2995,7 +3007,7 @@ function generatorPromptPortTop(index) { return generatorInputPortTop(index); }
 function generatorImagePortTop(node, index) { return generatorInputPortTop(node.promptSlots + index); }
 function videoGeneratorPromptPortTop(index) { return 324 + index * 30; }
 function videoGeneratorImagePortTop(node, index) { return 354 + Math.max(0, node.promptSlots - 1) * 30 + index * 30; }
-function videoGeneratorVideoPortTop(node) { return 534 + Math.max(0, node.promptSlots - 1) * 30; }
+function videoGeneratorVideoPortTop(node) { return 354 + 30 * node.inputSlots + Math.max(0, node.promptSlots - 1) * 30; }
 function syncVideoGeneratorPortPositions() {
   $$(".video-generator-node").forEach(element => {
     const node = findNode(element.dataset.nodeId); if (!node) return;
@@ -3090,17 +3102,19 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
   const imageSlots = Array.from({ length: node.inputSlots }, (_, index) => { const edge = incomingEdge(node.id, `image-${index}`); const imageNode = findNode(edge?.source); const inputLabel = mode.inputs[index] || `参考图 ${index + 1}`; return inputSlot(`image-${index}`, "image", inputLabel, edge ? sourceLabelForEdge(edge) : "未连接", Boolean(edge), imageNode?.disabled); }).join("");
   const videoEdge = incomingEdge(node.id, "video-reference");
   const videoLabel = videoEdge ? sourceLabelForEdge(videoEdge) : node.localVideoReference ? shortName(node.localVideoReference) : "未连接";
+  const wenwu = isWenwu(node);
+  const aspects = wenwu ? Object.keys(wenwuAspects) : runningHubVideoAspects;
   const audioLabel = node.localAudioReference ? shortName(node.localAudioReference) : "未上传";
   const statusLabel = node.status === "running" ? "生成中" : node.lastError ? "上次生成失败" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个视频` : "待运行";
   return `<article class="canvas-node generator-node video-generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", "", true, true)}<div class="node-body generator-body">
-    <div class="video-provider-badge"><span>${escapeHtml(runningHubVideoProvider.label)}</span><small>工作流 ${runningHubReferenceWorkflowId} · plus</small></div>
-    <div class="node-static-field">多图参考生视频 · 最多 6 张图</div>
-    <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-video-field="aspect" data-node-id="${node.id}" aria-label="视频比例">${runningHubVideoAspects.map(value => `<option value="${value}"${node.videoAspect === value ? " selected" : ""}>${value}</option>`).join("")}</select></div><div class="node-field"><label>像素</label><select class="node-select node-interactive" data-video-field="megapixels" data-node-id="${node.id}" aria-label="视频像素">${runningHubVideoMegapixelOptions.map(option => `<option value="${option.value}"${megapixels === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select></div></div>
-    <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: 11 }, (_, index) => index + 5).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field"><label>实例</label><div class="node-static-field">API plus · 48G</div></div></div>
-    <div class="video-resolution-summary"><span>${megapixels.toFixed(1)} MP · 32 对齐</span><strong>${dimensions.width} × ${dimensions.height}</strong></div>
-    <div class="generator-inputs">${promptSlots}${imageSlots}${inputSlot("video-reference", "video", "参考视频", videoLabel, Boolean(videoEdge || node.localVideoReference))}<div class="input-slot${node.localAudioReference ? " is-connected" : ""}"><span>参考音频</span><span>${escapeHtml(audioLabel)}</span></div></div>
-    <div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-upload-video-reference="${node.id}">${icon("video")} 上传参考视频</button><button class="add-input-button node-interactive" type="button" data-upload-audio-reference="${node.id}">${icon("audio-lines")} 上传参考音频</button></div>
-    <div class="video-reference-note">六张图像参考和可选视频/音频素材会上传至 RunningHub；运行中可停止远程任务。</div>
+    <div class="video-provider-badge"><span>${escapeHtml(runningHubVideoProvider.label)}</span><small>工作流 ${wenwu ? wenwuId : runningHubReferenceWorkflowId} · plus</small></div>
+    <select class="node-select node-interactive" data-video-field="mode" data-node-id="${node.id}" aria-label="视频工作流"${node.status === "running" ? " disabled" : ""}><option value="reference"${wenwu ? "" : " selected"}>多图参考生视频 · 6 张参考图</option><option value="wenwu"${wenwu ? " selected" : ""}>文武双全 · 9 张参考图</option></select>
+    <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-video-field="aspect" data-node-id="${node.id}" aria-label="视频比例">${aspects.map(value => `<option value="${value}"${node.videoAspect === value ? " selected" : ""}>${value}</option>`).join("")}</select></div><div class="node-field"><label>${wenwu ? "百万像素 (MP)" : "像素"}</label>${wenwu ? `<input class="node-select node-interactive" type="number" min="0.1" max="16" step="any" data-video-field="megapixels" data-node-id="${node.id}" aria-label="视频百万像素" value="${megapixels}">` : `<select class="node-select node-interactive" data-video-field="megapixels" data-node-id="${node.id}" aria-label="视频像素">${runningHubVideoMegapixelOptions.map(option => `<option value="${option.value}"${megapixels === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`}</div></div>
+    <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: 11 }, (_, index) => index + 5).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field">${wenwu ? `<label>对齐倍数</label><input class="node-select node-interactive" type="number" min="8" max="128" step="4" value="${node.videoMultiple}" data-video-field="multiple" data-node-id="${node.id}" aria-label="视频对齐倍数">` : `<label>实例</label><div class="node-static-field">API plus · 48G</div>`}</div></div>
+    <div class="video-resolution-summary"><span>${wenwu ? megapixels : megapixels.toFixed(1)} MP · ${wenwu ? node.videoMultiple : 32} 对齐</span><strong>${dimensions.width} × ${dimensions.height}</strong></div>
+    <div class="generator-inputs">${promptSlots}${imageSlots}${inputSlot("video-reference", "video", "参考视频", videoLabel, Boolean(videoEdge || node.localVideoReference))}<div class="input-slot${node.localAudioReference ? " is-connected" : ""}"><span>参考音频${wenwu ? " 1" : ""}</span><span>${escapeHtml(audioLabel)}</span></div>${wenwu ? `<div class="input-slot${node.secondAudioReference ? " is-connected" : ""}"><span>参考音频 2</span><span>${escapeHtml(node.secondAudioReference ? shortName(node.secondAudioReference) : "未上传")}</span></div>` : ""}</div>
+    <div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-upload-video-reference="${node.id}">${icon("video")} 上传参考视频</button><button class="add-input-button node-interactive" type="button" data-upload-audio-reference="${node.id}">${icon("audio-lines")} 上传参考音频${wenwu ? " 1" : ""}</button>${wenwu ? `<button class="add-input-button node-interactive" type="button" data-audio-slot="2" data-upload-audio-reference="${node.id}">${icon("audio-lines")} 上传参考音频 2</button>` : ""}</div>
+    <div class="video-reference-note">${wenwu ? "可连接最多 9 张图，上传或连接 1 段视频，上传 2 段参考音频。" : "六张图像参考和可选视频/音频素材会上传至 RunningHub；运行中可停止远程任务。"}</div>
     <button class="run-node-button node-interactive${node.status === "running" ? " is-cancel" : ""}" type="button" data-run-node="${node.id}">${icon(node.status === "running" ? "square" : "play")} ${node.status === "running" ? "停止海螺 H3" : "运行海螺 H3"}</button>
     <div class="node-run-state"><span>${escapeHtml(runningHubVideoProvider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}"${node.lastError ? ` title="${escapeHtml(node.lastError)}"` : ""}>${statusLabel}</span></div>
     </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", 0)).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", mode.inputs[index] || `参考图 ${index + 1}`, 0)).join("")}${portHtml(node, "video-reference", "video", "input", "参考视频", 0)}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
@@ -3160,7 +3174,7 @@ function bindNodeEvents() {
   $$('[data-import-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoImportNodeId = button.dataset.importVideo; pendingVideoReferenceNodeId = null; pendingVideoPreviewUploadNodeId = null; videoFileInput.value = ""; videoFileInput.click(); }));
   $$('[data-upload-preview-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoPreviewUploadNodeId = button.dataset.uploadPreviewVideo; pendingVideoImportNodeId = null; pendingVideoReferenceNodeId = null; videoFileInput.value = ""; videoFileInput.click(); }));
   $$('[data-upload-video-reference]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingVideoReferenceNodeId = button.dataset.uploadVideoReference; pendingVideoImportNodeId = null; pendingVideoPreviewUploadNodeId = null; videoFileInput.value = ""; videoFileInput.click(); }));
-  $$('[data-upload-audio-reference]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingAudioReferenceNodeId = button.dataset.uploadAudioReference; audioFileInput.value = ""; audioFileInput.click(); }));
+  $$('[data-upload-audio-reference]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); pendingAudioReferenceNodeId = button.dataset.uploadAudioReference; pendingAudioReferenceSlot = Number(button.dataset.audioSlot) || 1; audioFileInput.value = ""; audioFileInput.click(); }));
   $$('[data-compose-video]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); composeVideoEditor(button.dataset.composeVideo); }));
   $$('[data-clip-field]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("change", event => updateVideoClip(input.dataset.editorNode, input.dataset.clipId, input.dataset.clipField, event.target.value)); });
   $$('[data-video-play]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); toggleVideoEditorPlayback(button.dataset.videoPlay); }));
@@ -3237,9 +3251,29 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
   $$('[data-preview-video]').forEach(video => video.addEventListener("dblclick", event => { event.stopPropagation(); const node = findNode(video.dataset.previewVideo); if (node) openVideoPreview(node); }));
   $$('[data-video-field]').forEach(control => control.addEventListener("change", event => {
     const node = findNode(control.dataset.nodeId); if (!node || node.mediaType !== "video") return;
-    recordHistory(); const field = control.dataset.videoField;
+    const field = control.dataset.videoField;
+    if (node.status === "running") { renderCanvas(); return toast("请等待本次视频生成结束再调整参数", true); }
+    if (field === "mode" && control.value === "reference" && state.edges.some(edge => edge.target === node.id && /^image-[678]$/.test(edge.targetPort))) {
+      renderCanvas(); return toast("请先断开参考图 7 至 9 的连线，再切换到六图工作流", true);
+    }
+    if (isWenwu(node) && ((field === "megapixels" && !validMegapixels(control.valueAsNumber)) || (field === "multiple" && !validMultiple(control.valueAsNumber)))) {
+      renderCanvas(); return toast("百万像素可填 0.1 至 16，对齐倍数可填 8 至 128 的 4 的倍数", true);
+    }
+    recordHistory();
     if (field === "seconds") node.videoSeconds = Math.min(15, Math.max(5, Number(event.target.value) || 6));
-    else if (field === "mode") node.videoMode = "reference";
+    else if (field === "mode") {
+      const mode = control.value === "wenwu" ? "wenwu" : "reference";
+      node.videoSettingsByMode ||= {};
+      node.videoSettingsByMode[node.videoMode] = { videoAspect: node.videoAspect, videoMegapixels: node.videoMegapixels, videoSeconds: node.videoSeconds, videoMultiple: node.videoMultiple };
+      const previous = node.videoSettingsByMode[mode];
+      Object.assign(node, previous || (mode === "wenwu" ? wenwuDefaults : { videoAspect: "16:9", videoMegapixels: 0.9, videoSeconds: 6 }));
+      node.videoMode = mode;
+      node.inputSlots = runningHubVideoMode(node).inputs.length;
+      node.height = Math.max(node.height, nodeHeight("video-generator", node.inputSlots, node.promptSlots));
+    }
+    else if (isWenwu(node) && field === "aspect") node.videoAspect = control.value;
+    else if (isWenwu(node) && field === "megapixels") node.videoMegapixels = control.valueAsNumber;
+    else if (isWenwu(node) && field === "multiple") node.videoMultiple = control.valueAsNumber;
     else if (field === "aspect") node.videoAspect = runningHubVideoAspects.includes(event.target.value) ? event.target.value : "16:9";
     else if (field === "megapixels") node.videoMegapixels = runningHubVideoMegapixelOptions.some(item => item.value === Number(event.target.value)) ? Number(event.target.value) : .9;
     renderCanvas(); renderInspector(); scheduleSave();
@@ -3946,10 +3980,12 @@ async function uploadVideoIntoPreview(nodeId, file) {
   node.localVideoSrc = result.url; node.localVideoName = result.name || file.name || "本地视频"; node.outputType = String(result.filename || file.name || "").split(".").pop()?.toLowerCase() || "mp4";
   state.selectedIds = [node.id]; selectedEdgeId = null; renderWorkspace(); scheduleSave(); toast(result.transcoded ? "本地视频已上传并转为 H.264，可连接到 H3 参考视频" : "本地视频已上传，可连接到 H3 参考视频");
 }
-async function uploadAudioReferenceIntoNode(nodeId, file) {
+async function uploadAudioReferenceIntoNode(nodeId, file, slot) {
   const node = findNode(nodeId); if (!node || node.mediaType !== "video" || !file) return;
   const result = await requestJson("/api/audio-assets", { method: "POST", headers: { "Content-Type": file.type || "audio/mpeg", "x-file-name": encodeURIComponent(file.name || "参考音频.mp3") }, body: file }, 10 * 60_000);
-  recordHistory(); node.localAudioReference = result.url; renderWorkspace(); scheduleSave(); toast("参考音频已上传");
+  recordHistory();
+  if (slot === 2) node.secondAudioReference = result.url;
+  else node.localAudioReference = result.url; renderWorkspace(); scheduleSave(); toast("参考音频已上传");
 }
 function updateVideoClip(nodeId, clipId, field, value) {
   const editor = findNode(nodeId); const clip = editor?.clips?.find(item => item.id === clipId); if (!editor || !clip || !["start", "end"].includes(field)) return;
@@ -4616,10 +4652,14 @@ async function runVideoGeneratorNode(generator) {
   if (!prompt) { selectNode(generator.id); return toast("请连接至少一个有内容且已启用的提示词模块", true); }
   const imageEdges = state.edges.filter(edge => edge.target === generator.id && edge.type === "image" && /^image-\d+$/.test(edge.targetPort) && !findNode(edge.source)?.disabled).sort((a, b) => Number(a.targetPort.split("-")[1]) - Number(b.targetPort.split("-")[1]));
   const mode = runningHubVideoMode(generator);
-  const requiredReferences = 1;
+  const requiredReferences = isWenwu(generator) ? 0 : 1;
   if (imageEdges.length < requiredReferences) { selectNode(generator.id); return toast(`${mode.label}至少需要连接 ${requiredReferences} 张参考图`, true); }
-  if (!runningHubApiKey) {
-    try { const status = await requestJson("/api/status", {}, 10_000); if (!status.runninghub?.ready) { openSettings(); return toast("请先在设置中保存 RunningHub API Key", true); } }
+  if (isWenwu(generator) || !runningHubApiKey) {
+    try {
+      const status = await requestJson("/api/status", {}, 10_000);
+      if (isWenwu(generator) && status.runninghub?.wenwuWorkflowId !== wenwuId) return toast("请在项目首页点击恢复生图服务，再运行文武双全", true);
+      if (!runningHubApiKey && !status.runninghub?.ready) { openSettings(); return toast("请先在设置中保存 RunningHub API Key", true); }
+    }
     catch { return toast("本机服务不可用，无法检查 RunningHub 设置", true); }
   }
   isGenerating = true; recordHistory(); generator.status = "running"; generator.activePrompt = prompt; delete generator.lastError; renderWorkspace();
@@ -4630,7 +4670,7 @@ async function runVideoGeneratorNode(generator) {
     const videoEdge = state.edges.find(edge => edge.target === generator.id && edge.targetPort === "video-reference" && edge.type === "video");
     const linkedVideoReference = videoEdge ? videoSourceFromNode(findNode(videoEdge.source)) : "";
     if (videoEdge && !linkedVideoReference) throw new Error("已连接的参考视频节点没有可用视频，请先上传或导出视频");
-    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(runningHubApiKey ? { "x-runninghub-api-key": runningHubApiKey } : {}) }, body: JSON.stringify({ provider: "runninghub-h3", prompt, aspect: generator.videoAspect, megapixels: generator.videoMegapixels, seconds: generator.videoSeconds, videoMode: "reference", references, videoReference: linkedVideoReference || generator.localVideoReference || "", audioReference: generator.localAudioReference || "" }) }, 75_000);
+    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(runningHubApiKey ? { "x-runninghub-api-key": runningHubApiKey } : {}) }, body: JSON.stringify({ provider: "runninghub-h3", prompt, aspect: generator.videoAspect, megapixels: generator.videoMegapixels, seconds: generator.videoSeconds, videoMode: mode.value, multiple: generator.videoMultiple, secondAudioReference: isWenwu(generator) ? generator.secondAudioReference : undefined, references, videoReference: linkedVideoReference || generator.localVideoReference || "", audioReference: generator.localAudioReference || "" }) }, 75_000);
     const job = result.job; if (!job?.id) throw new Error("本机服务未返回视频任务");
     generator.activeJobId = job.id; ensureGenerationPlaceholders(generator, job.id, 1, job.model, job.createdAt); state.selectedIds = []; toast(`${runningHubVideoProvider.label} 已进入任务队列，正在生成视频`); renderWorkspace(); scheduleSave(); pollGenerationJob(generator.id, job.id);
   } catch (error) { generator.status = "idle"; delete generator.activePrompt; toast(error.message || "视频任务创建失败", true); renderWorkspace(); scheduleSave(); }
@@ -4772,7 +4812,7 @@ function bindStaticEvents() {
   audioFileInput.addEventListener("change", async event => {
     const nodeId = pendingAudioReferenceNodeId;
     pendingAudioReferenceNodeId = null;
-    if (nodeId && event.target.files?.[0]) { try { await uploadAudioReferenceIntoNode(nodeId, event.target.files[0]); } catch (error) { toast(error?.message || "参考音频上传失败", true); } }
+    if (nodeId && event.target.files?.[0]) { try { await uploadAudioReferenceIntoNode(nodeId, event.target.files[0], pendingAudioReferenceSlot); } catch (error) { toast(error?.message || "参考音频上传失败", true); } }
     event.target.value = "";
   });
   $$(".library-tabs .tab").forEach(tab => tab.addEventListener("click", () => { state.libraryTab = tab.dataset.libraryTab; renderLibrary(); scheduleSave(); }));
