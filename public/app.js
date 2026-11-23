@@ -169,8 +169,8 @@ function normalizedH3AnswerMode(value) { return h3AnswerModeOptions.some(item =>
 function normalizedH3Duration(value) { return Math.min(30, Math.max(3, Math.round(Number(value) || 6))); }
 function normalizedProductAdDuration(value, fallback) { const duration = Math.round(Number(value)); return productAdDurationOptions.includes(duration) ? duration : fallback; }
 function normalizedBrandPromoDuration(value, fallback) { const duration = Math.round(Number(value)); return brandPromoDurationOptions.includes(duration) ? duration : fallback; }
-const wenwuMode = { value: "wenwu", label: "文武双全", inputs: Array.from({ length: 9 }, (_, index) => "参考图 " + (index + 1)) };
-const runningHubVideoMode = node => isWenwu(node) ? wenwuMode : ({ value: "reference", label: "多图参考生视频", inputs: ["参考图 1", "参考图 2", "参考图 3", "参考图 4", "参考图 5", "参考图 6"] });
+const wenwuMode = { value: "wenwu", label: "文武双全", maxSeconds: 30, inputs: Array.from({ length: 9 }, (_, index) => "参考图 " + (index + 1)) };
+const runningHubVideoMode = node => isWenwu(node) ? wenwuMode : ({ value: "reference", label: "多图参考生视频", maxSeconds: 15, inputs: ["参考图 1", "参考图 2", "参考图 3", "参考图 4", "参考图 5", "参考图 6"] });
 function runningHubVideoDimensions(node) {
   if (isWenwu(node)) return wenwuDimensions(node);
   const aspect = runningHubVideoAspects.includes(node?.videoAspect) ? node.videoAspect : "16:9";
@@ -192,7 +192,7 @@ function normalizeRunningHubVideo(node, connectedImageSlots = 0) {
     next.videoAspect = Object.hasOwn(wenwuAspects, node.videoAspect) ? node.videoAspect : wenwuDefaults.videoAspect;
     next.videoMegapixels = validMegapixels(Number(node.videoMegapixels)) ? Number(node.videoMegapixels) : wenwuDefaults.videoMegapixels;
     next.videoMultiple = validMultiple(Number(node.videoMultiple)) ? Number(node.videoMultiple) : wenwuDefaults.videoMultiple;
-    next.videoSeconds = Math.max(5, Math.min(15, Math.round(Number(node.videoSeconds) || wenwuDefaults.videoSeconds)));
+    next.videoSeconds = Math.max(5, Math.min(mode.maxSeconds, Math.round(Number(node.videoSeconds) || wenwuDefaults.videoSeconds)));
   }
   delete next.previewSrc;
   delete next.previewRemoteSrc;
@@ -3133,7 +3133,7 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
     <div class="video-provider-badge"><span>${escapeHtml(runningHubVideoProvider.label)}</span><small>工作流 ${wenwu ? wenwuId : runningHubReferenceWorkflowId} · plus</small></div>
     <select class="node-select node-interactive" data-video-field="mode" data-node-id="${node.id}" aria-label="视频工作流"${node.status === "running" ? " disabled" : ""}><option value="reference"${wenwu ? "" : " selected"}>多图参考生视频 · 6 张参考图</option><option value="wenwu"${wenwu ? " selected" : ""}>文武双全 · 9 张参考图</option></select>
     <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-video-field="aspect" data-node-id="${node.id}" aria-label="视频比例">${aspects.map(value => `<option value="${value}"${node.videoAspect === value ? " selected" : ""}>${value}</option>`).join("")}</select></div><div class="node-field"><label>${wenwu ? "百万像素 (MP)" : "像素"}</label>${wenwu ? `<input class="node-select node-interactive" type="number" min="0.1" max="16" step="any" data-video-field="megapixels" data-node-id="${node.id}" aria-label="视频百万像素" value="${megapixels}">` : `<select class="node-select node-interactive" data-video-field="megapixels" data-node-id="${node.id}" aria-label="视频像素">${runningHubVideoMegapixelOptions.map(option => `<option value="${option.value}"${megapixels === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`}</div></div>
-    <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: 11 }, (_, index) => index + 5).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field">${wenwu ? `<label>对齐倍数</label><input class="node-select node-interactive" type="number" min="8" max="128" step="4" value="${node.videoMultiple}" data-video-field="multiple" data-node-id="${node.id}" aria-label="视频对齐倍数">` : `<label>实例</label><div class="node-static-field">API plus · 48G</div>`}</div></div>
+    <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: mode.maxSeconds - 5 + 1 }, (_, index) => index + 5).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field">${wenwu ? `<label>对齐倍数</label><input class="node-select node-interactive" type="number" min="8" max="128" step="4" value="${node.videoMultiple}" data-video-field="multiple" data-node-id="${node.id}" aria-label="视频对齐倍数">` : `<label>实例</label><div class="node-static-field">API plus · 48G</div>`}</div></div>
     <div class="video-resolution-summary"><span>${wenwu ? megapixels : megapixels.toFixed(1)} MP · ${wenwu ? node.videoMultiple : 32} 对齐</span><strong>${dimensions.width} × ${dimensions.height}</strong></div>
     <div class="generator-inputs">${promptSlots}${imageSlots}${inputSlot("video-reference", "video", "参考视频", videoLabel, Boolean(videoEdge || node.localVideoReference))}${audioRows}</div>
     <div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-upload-video-reference="${node.id}">${icon("video")} 上传参考视频</button><button class="add-input-button node-interactive" type="button" data-upload-audio-reference="${node.id}">${icon("audio-lines")} 上传参考音频${wenwu ? " 1" : ""}</button>${wenwu ? `<button class="add-input-button node-interactive" type="button" data-audio-slot="2" data-upload-audio-reference="${node.id}">${icon("audio-lines")} 上传参考音频 2</button>` : ""}</div>
@@ -3286,7 +3286,7 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
       renderCanvas(); return toast("百万像素可填 0.1 至 16，对齐倍数可填 8 至 128 的 4 的倍数", true);
     }
     recordHistory();
-    if (field === "seconds") node.videoSeconds = Math.min(15, Math.max(5, Number(event.target.value) || 6));
+    if (field === "seconds") node.videoSeconds = Math.min(runningHubVideoMode(node).maxSeconds, Math.max(5, Number(event.target.value) || 6));
     else if (field === "mode") {
       const mode = control.value === "wenwu" ? "wenwu" : "reference";
       node.videoSettingsByMode ||= {};
@@ -4690,6 +4690,7 @@ async function runVideoGeneratorNode(generator) {
   if (linkedAudio.length || isWenwu(generator) || !runningHubApiKey) {
     try {
       const status = await requestJson("/api/status", {}, 10_000);
+      if (isWenwu(generator) && generator.videoSeconds > (status.runninghub?.wenwuMaxSeconds ?? 15)) return toast("请在项目首页点击恢复生图服务，再提交超过 15 秒的视频", true);
       if (linkedAudio.length && !status.runninghub?.cloneAudioReferences) return toast('请在项目首页恢复生图服务，以启用克隆音频连线', true);
       if (isWenwu(generator) && status.runninghub?.wenwuWorkflowId !== wenwuId) return toast("请在项目首页点击恢复生图服务，再运行文武双全", true);
       if (!runningHubApiKey && !status.runninghub?.ready) { openSettings(); return toast("请先在设置中保存 RunningHub API Key", true); }

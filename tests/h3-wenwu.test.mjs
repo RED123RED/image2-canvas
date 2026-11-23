@@ -67,7 +67,7 @@ test('H3 submits uploaded video to #27 or legacy #170 and returns the final vide
   const cloneName = 'vc-00000000-0000-4000-a000-000000000001-0.mp3';
   const cloneUrl = '/api/voice-clone/files/' + cloneName;
   await fs.writeFile(path.join(cloneDir,cloneName),'selected-clone-result');
-  const request = { provider:'runninghub-h3', videoMode:'wenwu', prompt:'慢镜头', seconds:7, aspect:'21:9', megapixels:0.75, multiple:20, videoReference:uploaded.url, audioReference:audio.url, secondAudioReference:audio.url, references:[] };
+  const request = { provider:'runninghub-h3', videoMode:'wenwu', prompt:'慢镜头', seconds:30, aspect:'21:9', megapixels:0.75, multiple:20, videoReference:uploaded.url, audioReference:audio.url, secondAudioReference:audio.url, references:[] };
   const submit = payload=>fetch(base+'/api/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
   assert.equal((await submit({...request,audioReference:cloneUrl.replace('-0.mp3','-9.mp3')})).status,400);
   assert.equal((await submit({...request,audioReference:'/api/voice-clone/files/../../server.mjs'})).status,400);
@@ -81,13 +81,14 @@ test('H3 submits uploaded video to #27 or legacy #170 and returns the final vide
     assert.equal(job.status,'succeeded',JSON.stringify(job.error));
     assert.equal(job.media.length,1);
     assert.equal(await (await fetch(base+job.media[0].url)).text(),'offline-final-video');
+    assert.equal(job.videoSeconds, mode === 'wenwu' ? 30 : 15);
     const run=runs.at(-1); const fields=Object.fromEntries(run.nodeInfoList.map(item=>[item.nodeId+'.'+item.fieldName,item.fieldValue]));
     assert.ok(uploads[Number(fields[id+'.video'].split('-')[1])-1].includes('offline-video-reference'));
     const cloneField = mode === 'wenwu' ? '14.audio' : '171.audio';
     assert.ok(uploads[Number(fields[cloneField].split('-')[1])-1].includes('selected-clone-result'));
     assert.ok(!run.nodeInfoList.some(n=>n.nodeId==='309'));
     if(mode==='wenwu') {
-      assert.ok(run.path.endsWith(wenwuId)); assert.equal(fields['263.text'],request.prompt); assert.equal(fields['259.value'],7);
+      assert.ok(run.path.endsWith(wenwuId)); assert.equal(fields['263.text'],request.prompt); assert.equal(fields['259.value'],30);
       assert.equal(fields['252.aspect_ratio'],'21:9 (Ultrawide)'); assert.equal(fields['252.megapixels'],0.75); assert.equal(fields['252.multiple'],20);
       assert.ok(fields['48.audio'] && fields['14.audio']); assert.equal(job.media[0].nodeId,'364');
     } else {assert.ok(run.path.endsWith('2093564802919649281'));assert.ok(fields['137.image'] && fields['171.audio']);}
