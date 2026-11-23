@@ -1429,7 +1429,7 @@ function connectionChoicesForDraft(draft) {
   const videoPreviewChoice = { kind: "video-preview", title: "新建成片预览节点", subtitle: "上传、预览并输出本地视频", icon: "monitor-play" };
   const answerChoice = { kind: "answer", title: "新建模型回答节点", subtitle: "自动连接并用于文本回答", icon: "message-square-text" };
   const speechChoice={kind:'speech',title:'新建声音克隆节点',subtitle:'RunningHub · 音色与情感参考',icon:'mic'};
-  if (source.type === 'speech' && draft.direction === 'output' && draft.portId.startsWith('clone-result-')) return [videoChoice];
+  if ((source.type === 'speech' || source.standaloneClone) && draft.direction === 'output' && draft.portId.startsWith('clone-result-')) return [videoChoice];
   if(source.type==='speech'&&draft.direction==='input') return [{kind:'prompt',title:'新建提示词节点',subtitle:draft.portId==='direction'?'旧表达要求':'需要朗读的正文',icon:'text-cursor-input'}];
   const compositionChoice = { kind: "composition", title: "新建参数控制节点", subtitle: "自动写入已连接的提示词", icon: "sliders-horizontal" };
   if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, videoChoice, answerChoice, speechChoice];
@@ -2581,7 +2581,7 @@ function portPoint(node, portId) {
     return { x: node.x + node.width, y: node.y + 72 };
   }
   if(node.type==='speech') return {x:node.x+(portId==='audio'?node.width:0),y:node.y+(portId==='text'?110:portId==='direction'?235:72)};
-  if(node.type==='audio') return {x:node.x,y:node.y+72};
+  if(node.type==='audio') return {x:node.x+(node.standaloneClone && portId.startsWith('clone-result-') ? node.width : 0),y:node.y+72};
   if (node.type === "prompt") return portId === "composition" ? { x: node.x, y: node.y + 104 } : { x: node.x + node.width, y: node.y + 72 };
   if (node.type === "composition") return { x: node.x + node.width, y: node.y + 72 };
   if (node.type === "image" || node.type === "loading" || node.type === "video") return portId === "result" ? { x: node.x, y: node.y + 70 } : { x: node.x + node.width, y: node.y + 70 };
@@ -5014,7 +5014,7 @@ async function init() {
   else { if (savedSession) clearActiveProjectSession(); renderHome(); }
   await checkApiStatus();
 }
-const speechController=createSpeechController({redrawEdges:requestEdgeRender,getState:()=>state,findNode,recordHistory,save:()=>saveProjectNow(true),scheduleSave,render:()=>renderWorkspace(),toast,uid,escapeHtml,header:nodeHeaderHtml,port:portHtml,resize:resizeHandleHtml,openSettings});
+const speechController=createSpeechController({revealExtracted:node=>{selectedEdgeId=null;focusNode(node.id);},redrawEdges:requestEdgeRender,getState:()=>state,findNode,recordHistory,save:()=>saveProjectNow(true),scheduleSave,render:()=>renderWorkspace(),toast,uid,escapeHtml,header:nodeHeaderHtml,port:portHtml,resize:resizeHandleHtml,openSettings});
 init();
 
 

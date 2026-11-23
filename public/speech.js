@@ -1,4 +1,4 @@
-import {speechProtocol,voiceEngine,createSpeechNode,validateCloneRequest} from './speech-document.js';
+import {speechProtocol,voiceEngine,createSpeechNode,extractCloneResult,validateCloneRequest} from './speech-document.js';
 export function createSpeechController(host){
  const {getState,findNode,recordHistory,save,scheduleSave,render,toast,escapeHtml:esc,header,port,resize}=host;
  const polls=new Set(),submitting=new Set(),buffers=new Map();let context;
@@ -14,6 +14,7 @@ export function createSpeechController(host){
  function resultActions(n,v) {
   let html = usesLegacyOutput(n) ? button(n,'apply','设为输出','data-version="'+esc(v.id)+'"') : '';
   if(n.type === 'speech' && n.engine === voiceEngine && v.src?.startsWith('/api/voice-clone/files/')) {
+   html += button(n,'extract','提取为节点','data-version="'+esc(v.id)+'"');
    html += '<span class="node-port-wrap clone-reference-output"><button class="node-port audio" type="button" data-node-id="'+esc(n.id)+'" data-port-id="'+esc('clone-result-'+v.id)+'" data-data-type="audio" data-direction="output" aria-label="拖到视频参考音频">音频输出 ●</button></span>';
   }
   return html;
@@ -24,6 +25,14 @@ export function createSpeechController(host){
   if(n.type==='speech'&&n.engine!==voiceEngine){body='<p>火山语音生成已下线。旧正文、设置和已生成音频保留。</p><textarea class="node-interactive" readonly>'+esc(n.draft?.segments?.map(s=>s.text).join(String.fromCharCode(10))||n.text||'')+'</textarea>'+button(n,'convert','转换为 RunningHub 声音克隆')+history(n);ports=port(n,'text','prompt','input','旧正文',110)+port(n,'direction','prompt','input','旧表达要求（停用）',235)+port(n,'audio','audio','output','历史音频',72);}
   else if(n.type==='speech'){const linked=source(n),isLinked=linked&&n.inputSources?.text!=='local';
    body='<div class="speech-badge">RunningHub · IndexTTS2 · MP3</div>'+refHtml(n,'voiceReference','① 音色参考 · 声音像谁')+refHtml(n,'emotionReference','② 情感参考 · 怎样说')+'<label class="speech-field">情感来源<select class="node-interactive" data-clone-field="emotionSource" data-clone-node="'+n.id+'">'+opt('voice','使用音色参考本身的情绪',n.emotionSource)+opt('reference','使用独立情感参考',n.emotionSource)+'</select></label><label class="speech-field">③ 配音正文'+(linked?'<select class="node-interactive" data-clone-field="textSource" data-clone-node="'+n.id+'">'+opt('auto','使用连接：'+linked.name,isLinked?'auto':'local')+opt('local','在此编写（保留连线）',isLinked?'auto':'local')+'</select>':'<small>可以直接填写，也可以连接提示词节点</small>')+'<textarea class="node-interactive" maxlength="2000" data-clone-field="text" data-clone-node="'+n.id+'"'+(isLinked?' readonly':'')+'>'+esc(text(n))+'</textarea></label><label>情感强度（独立情感参考生效）<input class="node-interactive" data-clone-field="emotionStrength" data-clone-node="'+n.id+'" type="range" min="0" max="1" step="0.05" value="'+n.emotionStrength+'"'+(n.emotionSource==='voice'?' disabled':'')+'></label><div class="speech-actions">'+(n.requestId?button(n,'check','检查原任务')+button(n,'cancel','取消任务')+button(n,'detach','核对后结束等待'):button(n,'generate','生成新结果'))+'</div><small class="speech-state">'+esc(n.error||n.progress||'输入可随时修改；每次点击生成提交一份独立快照。')+'</small>'+history(n);ports=port(n,'text','prompt','input','配音正文',110)+(getState()?.edges.some(e=>e.source===n.id&&e.sourcePort==='audio')?port(n,'audio','audio','output','现有音频连线',72):'');}
+  else if(n.type==='audio' && n.standaloneClone){
+   const v=version(n);
+   if(v){
+    const attr='data-version="'+esc(v.id)+'"';
+    body='<audio class="node-interactive" controls preload="metadata" src="'+esc(v.src)+'"></audio><div class="speech-actions">'+button(n,'download','下载',attr)+button(n,'settings','查看设置',attr)+'</div>';
+    ports=port(n,esc('clone-result-'+v.id),'audio','output','音频输出 · 拖到视频参考音频',72);
+   }else body='<p>录音记录缺失</p>';
+  }
   else{const v=version(n);body=(v?'<audio class="node-interactive" controls preload="metadata" src="'+esc(v.src)+'"></audio><small>当前试听：'+esc(v.name||new Date(v.createdAt).toLocaleString())+'</small>':'<p>连接声音克隆节点，或从生成记录保留独立结果。</p>')+history(n);ports=port(n,'result','audio','input','音频结果',72);}
   return '<article class="canvas-node '+(n.type==='speech'?'speech-node':'audio-node')+selected+'" data-node-id="'+n.id+'" style="'+style+'"><div class="node-card">'+header(n,n.type==='speech'?'mic':'audio-lines','',true,true)+'<div class="node-body speech-body">'+body+'</div></div>'+resize(n)+ports+'</article>';
  }
@@ -57,6 +66,13 @@ export function createSpeechController(host){
   if(kind==='restore'){recordHistory();const old=n.deletedVersions.pop();if(old&&!n.versions.some(v=>v.id===old.id))n.versions.push(old);if(!n.currentVersionId){n.currentVersionId=old?.id||'';n.src=old?.src||'';}scheduleSave();render();return;}
   if(!v)throw Error('请先生成并选择音频结果');
   if(kind==='apply'){recordHistory();n.currentVersionId=v.id;n.previewVersionId=v.id;n.src=v.src;syncOutputs(n);scheduleSave();render();return;}
+  if(kind==='extract' && n.type==='speech' && n.engine===voiceEngine){
+   const recording=n.versions.find(item=>item.id===vid);
+   if(!recording)return;
+   const project=getState();
+   const card=extractCloneResult(host.uid('audio'),n,recording,project.nodes);
+   recordHistory();project.nodes.push(card);project.selectedIds=[card.id];render();host.revealExtracted(card);scheduleSave();return;
+  }
   if(kind==='download'){const r=await fetch(v.src);if(!r.ok)throw Error('音频文件不可用');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=(v.name||'声音克隆-'+v.id)+'.'+v.format;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);return;}
   if(kind==='rename'){const name=prompt('结果名称',v.name||'');if(name===null)return;recordHistory();v.name=name.slice(0,80);scheduleSave();render();return;}
   if(kind==='delete'){const linked=getState().edges.filter(e=>e.source===n.id && e.sourcePort==='clone-result-'+v.id);const used=getState().nodes.filter(other=>other.id!==n.id&&(other.src===v.src||other.versions?.some(x=>x.src===v.src)));if(!confirm('删除这条结果记录？'+(linked.length?'将同时断开这条录音的 '+linked.length+' 条视频参考连线。':'')+(used.length?'其他节点仍引用此音频，会继续保留。':'')+'可恢复最近删除，磁盘音频保留以支持撤销。'))return;recordHistory();if(linked.length)getState().edges=getState().edges.filter(e=>!linked.includes(e));n.deletedVersions=[...(n.deletedVersions||[]),v];n.versions=n.versions.filter(x=>x.id!==v.id);if(n.currentVersionId===v.id){n.currentVersionId='';n.src='';}if(n.previewVersionId===v.id)n.previewVersionId='';scheduleSave();render();return;}

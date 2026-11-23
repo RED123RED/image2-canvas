@@ -4,11 +4,24 @@ export const voiceEngine='runninghub-indextts2';
 export const referenceMaxSeconds=12; // App limit matching the supplied workflow.
 export function createSpeechNode(id,x,y){return {id,type:'speech',engine:voiceEngine,name:'声音克隆 · IndexTTS2',x,y,width:470,height:900,text:'',inputSources:{text:'auto'},voiceReference:null,emotionReference:null,emotionSource:'voice',emotionStrength:1,versions:[],currentVersionId:'',previewVersionId:'',src:'',requestId:'',status:'idle',historyHeight:270,createdAt:Date.now()};}
 export function createAudioNode(id,x,y){return {id,type:'audio',name:'音频结果',x,y,width:440,height:350,versions:[],currentVersionId:'',previewVersionId:'',src:'',createdAt:Date.now()};}
+export function extractCloneResult(id, source, recording, nodes) {
+ const card = createAudioNode(id, source.x + source.width + 64, source.y);
+ const saved = structuredClone(recording);
+ saved.name ||= '结果 ' + (source.versions.findIndex(v => v.id === recording.id) + 1);
+ Object.assign(card, {standaloneClone:true, name:saved.name, height:185, versions:[saved], currentVersionId:saved.id, previewVersionId:saved.id, src:saved.src});
+ // Pick the next free space in the column to the right of the source.
+ const column = nodes.filter(n => n.type !== 'frame' && n.x < card.x + card.width + 16 && n.x + n.width + 16 > card.x).sort((a,b) => a.y - b.y);
+ for (const n of column) {
+  if (card.y + card.height + 16 <= n.y) break;
+  card.y = Math.max(card.y, n.y + n.height + 16);
+ }
+ return card;
+}
 export function isAudioSource(src){return typeof src==='string'&&new RegExp('^/api/(?:speech/files|voice-clone/files)/[A-Za-z0-9._-]+[.](?:wav|mp3)$').test(src);}
 export function normalizeSpeechNode(node){
  const next={...(node.type==='audio'?createAudioNode(node.id,0,0):createSpeechNode(node.id,0,0)),...node};
  if(node.type==='speech'&&node.engine!==voiceEngine){next.engine='retired-volcengine';next.requestId='';next.retiredSpeechRequestId=node.speechRequestId||node.retiredSpeechRequestId||'';next.speechRequestId='';}
- next.width=Math.max(380,Number(next.width)||470);next.height=Math.max(node.type==='audio'?300:560,Number(next.height)||900);
+ next.width=Math.max(380,Number(next.width)||470);next.height=Math.max(node.type==='audio'?(next.standaloneClone?165:300):560,Number(next.height)||900);
  next.versions=(Array.isArray(node.versions)?node.versions:[]).filter(v=>v&&isAudioSource(v.src));
  next.currentVersionId=next.versions.some(v=>v.id===next.currentVersionId)?next.currentVersionId:(node.currentVersionId===undefined?next.versions[0]?.id||'':'');
  next.previewVersionId=next.versions.some(v=>v.id===next.previewVersionId)?next.previewVersionId:next.currentVersionId;next.src=next.versions.find(v=>v.id===next.currentVersionId)?.src||'';
