@@ -16,6 +16,8 @@
 
 ### 画布声音克隆 · RunningHub IndexTTS2（2026-11-19）
 
+每条克隆记录的「音频输出」可以直接拖到 H3 的参考音频端口。连线绑定记录编号，新增结果或改名后仍引用同一录音。原 H3 支持一路，文武双全支持两路。服务端直接读取已有克隆文件；已有旧独立音频结果连线继续使用「设为输出」同步。
+
 - 工作流：https://www.runninghub.cn/workflow/2123214466497204226。远端 API 工作流已核对。新建 speech 节点只提供「声音克隆 · IndexTTS2」，音色参考、情感参考、正文和历史结果集中在同一节点。正文可接提示词节点或直接编辑，来源切换保留连线。
 - 远端节点 13/15 为两路 LoadAudio，37/38 为 AudioCrop，14 为正文，12 为 IndexTTS2Run，39 为 MP3 输出。AudioCrop 只接受整数秒，画布校验最长 12 秒选区。情感参考可独立上传，也可使用音色参考本身；情感强度在独立情感参考时生效，数值直接映射到 IndexTTS2Run 的 emo_alpha，未实测验证不同数值的听感差异。
 - 使用现有 RunningHub 密钥。speech-service.mjs 负责 /api/voice-clone/ 路由、上传、提交、轮询和音频存储。任务写入 output/voice-clone/jobs.json，结果写入 output/voice-clone/files，参考音频写入 output/audio-assets。每次点击生成保存独立任务，追加历史结果，不覆盖当前输出；不自动重试不明状态的付费请求。

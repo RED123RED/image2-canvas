@@ -1429,6 +1429,7 @@ function connectionChoicesForDraft(draft) {
   const videoPreviewChoice = { kind: "video-preview", title: "新建成片预览节点", subtitle: "上传、预览并输出本地视频", icon: "monitor-play" };
   const answerChoice = { kind: "answer", title: "新建模型回答节点", subtitle: "自动连接并用于文本回答", icon: "message-square-text" };
   const speechChoice={kind:'speech',title:'新建声音克隆节点',subtitle:'RunningHub · 音色与情感参考',icon:'mic'};
+  if (source.type === 'speech' && draft.direction === 'output' && draft.portId.startsWith('clone-result-')) return [videoChoice];
   if(source.type==='speech'&&draft.direction==='input') return [{kind:'prompt',title:'新建提示词节点',subtitle:draft.portId==='direction'?'旧表达要求':'需要朗读的正文',icon:'text-cursor-input'}];
   const compositionChoice = { kind: "composition", title: "新建参数控制节点", subtitle: "自动写入已连接的提示词", icon: "sliders-horizontal" };
   if (source.type === "prompt" && draft.direction === "output" && draft.dataType === "prompt") return [generatorChoice, videoChoice, answerChoice, speechChoice];
@@ -1473,7 +1474,7 @@ function createNodeForDraft(draft, kind, clientX, clientY) {
   if (!node) return;
   state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null;
   if (draft.direction === "output") {
-    const targetPort = kind==='speech'?'text':kind === "video" ? (draft.dataType === "video" ? "video-reference" : draft.dataType === "prompt" ? "prompt" : "image-0") : (kind === "generator" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "video-preview" && draft.dataType === "video" ? "video" : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
+    const targetPort = kind==='speech'?'text':kind === "video" ? (draft.dataType === "audio" ? "audio-reference-1" : draft.dataType === "video" ? "video-reference" : draft.dataType === "prompt" ? "prompt" : "image-0") : (kind === "generator" || kind === "answer") ? (draft.dataType === "prompt" ? "prompt" : "image-0") : kind === "video-preview" && draft.dataType === "video" ? "video" : kind === "prompt" && draft.dataType === "composition" ? "composition" : null;
     if (targetPort) connectPorts(draft, { nodeId: node.id, portId: targetPort, dataType: draft.dataType, direction: "input" }, false);
   } else {
     const outputPort = kind === "speech" ? "audio" : kind === "prompt" ? "prompt" : kind === "composition" ? "composition" : kind === "video-preview" ? "video-output" : kind === "video" ? "video" : "image";
@@ -2570,6 +2571,15 @@ function videoPreviewSource(node, seen = new Set()) {
 }
 function portPoint(node, portId) {
   if (!node) return { x: 0, y: 0 };
+  if (node.type === 'speech' && portId.startsWith('clone-result-')) {
+    const button = nodeLayer.querySelector('.clone-reference-output [data-node-id="'+CSS.escape(node.id)+'"][data-port-id="'+CSS.escape(portId)+'"]');
+    if (button) {
+      const rect = button.getBoundingClientRect(), history = button.closest('.clone-history').getBoundingClientRect(), body = button.closest('.speech-body').getBoundingClientRect();
+      const y = Math.min(body.bottom, Math.max(body.top, Math.min(history.bottom, Math.max(history.top, rect.top + rect.height / 2))));
+      return screenToScene(rect.right - 10 * state.viewport.scale, y);
+    }
+    return { x: node.x + node.width, y: node.y + 72 };
+  }
   if(node.type==='speech') return {x:node.x+(portId==='audio'?node.width:0),y:node.y+(portId==='text'?110:portId==='direction'?235:72)};
   if(node.type==='audio') return {x:node.x,y:node.y+72};
   if (node.type === "prompt") return portId === "composition" ? { x: node.x, y: node.y + 104 } : { x: node.x + node.width, y: node.y + 72 };
@@ -3092,6 +3102,15 @@ function renderVideoPreviewNodeHtml(node, selected, style) {
   const sourceLabel = connected ? frame ? "跟随时间轴" : source ? "已连接 · 可输出" : "等待视频" : source ? (node.localVideoName || "本地视频") : "未上传";
   return `<article class="canvas-node video-preview-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "monitor-play", actions)}<div class="node-body">${preview}<div class="image-node-meta"><strong>${connected ? "成片预览" : "本地视频"}</strong><span>${escapeHtml(sourceLabel)}</span></div></div></div>${resizeHandleHtml(node)}${portHtml(node, "video", "video", "input", "成片视频", 70)}${portHtml(node, "video-output", "video", "output", "参考视频输出", 70)}</article>`;
 }
+function videoReferenceAudio(node, slot) {
+  const port = 'audio-reference-' + slot;
+  const edge = incomingEdge(node.id, port);
+  if (!edge) return { src: (slot === 2 ? node.secondAudioReference : node.localAudioReference) || '', linked: false };
+  const source = findNode(edge.source);
+  const index = source?.versions?.findIndex(v => 'clone-result-' + v.id === edge.sourcePort) ?? -1;
+  const version = source?.versions?.[index];
+  return { src: source?.disabled ? '' : version?.src || '', linked: true, name: source?.disabled ? '来源已禁用' : version ? version.name || '结果 ' + (index + 1) : '录音记录缺失' };
+}
 function renderVideoGeneratorNodeHtml(node, selected, style) {
   const dimensions = runningHubVideoDimensions(node);
   const mode = runningHubVideoMode(node);
@@ -3104,7 +3123,11 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
   const videoLabel = videoEdge ? sourceLabelForEdge(videoEdge) : node.localVideoReference ? shortName(node.localVideoReference) : "未连接";
   const wenwu = isWenwu(node);
   const aspects = wenwu ? Object.keys(wenwuAspects) : runningHubVideoAspects;
-  const audioLabel = node.localAudioReference ? shortName(node.localAudioReference) : "未上传";
+  const audioSlots = wenwu ? [1, 2] : [1];
+  const audioRows = audioSlots.map(slot => {
+    const audio = videoReferenceAudio(node, slot), label = wenwu ? '参考音频 ' + slot : '参考音频';
+    return inputSlot('audio-reference-' + slot, 'audio', label, audio.linked ? audio.name : audio.src ? shortName(audio.src) : '可连线或上传', Boolean(audio.src));
+  }).join('');
   const statusLabel = node.status === "running" ? "生成中" : node.lastError ? "上次生成失败" : node.lastResultIds?.length ? `${node.lastResultIds.length} 个视频` : "待运行";
   return `<article class="canvas-node generator-node video-generator-node${selected}" data-node-id="${node.id}" style="${style}"><div class="node-card">${nodeHeaderHtml(node, "clapperboard", "", true, true)}<div class="node-body generator-body">
     <div class="video-provider-badge"><span>${escapeHtml(runningHubVideoProvider.label)}</span><small>工作流 ${wenwu ? wenwuId : runningHubReferenceWorkflowId} · plus</small></div>
@@ -3112,12 +3135,12 @@ function renderVideoGeneratorNodeHtml(node, selected, style) {
     <div class="node-field-row"><div class="node-field"><label>比例</label><select class="node-select node-interactive" data-video-field="aspect" data-node-id="${node.id}" aria-label="视频比例">${aspects.map(value => `<option value="${value}"${node.videoAspect === value ? " selected" : ""}>${value}</option>`).join("")}</select></div><div class="node-field"><label>${wenwu ? "百万像素 (MP)" : "像素"}</label>${wenwu ? `<input class="node-select node-interactive" type="number" min="0.1" max="16" step="any" data-video-field="megapixels" data-node-id="${node.id}" aria-label="视频百万像素" value="${megapixels}">` : `<select class="node-select node-interactive" data-video-field="megapixels" data-node-id="${node.id}" aria-label="视频像素">${runningHubVideoMegapixelOptions.map(option => `<option value="${option.value}"${megapixels === option.value ? " selected" : ""}>${option.label}</option>`).join("")}</select>`}</div></div>
     <div class="node-field-row"><div class="node-field"><label>秒数</label><select class="node-select node-interactive" data-video-field="seconds" data-node-id="${node.id}" aria-label="视频秒数">${Array.from({ length: 11 }, (_, index) => index + 5).map(value => `<option value="${value}"${Number(node.videoSeconds) === value ? " selected" : ""}>${value} 秒</option>`).join("")}</select></div><div class="node-field">${wenwu ? `<label>对齐倍数</label><input class="node-select node-interactive" type="number" min="8" max="128" step="4" value="${node.videoMultiple}" data-video-field="multiple" data-node-id="${node.id}" aria-label="视频对齐倍数">` : `<label>实例</label><div class="node-static-field">API plus · 48G</div>`}</div></div>
     <div class="video-resolution-summary"><span>${wenwu ? megapixels : megapixels.toFixed(1)} MP · ${wenwu ? node.videoMultiple : 32} 对齐</span><strong>${dimensions.width} × ${dimensions.height}</strong></div>
-    <div class="generator-inputs">${promptSlots}${imageSlots}${inputSlot("video-reference", "video", "参考视频", videoLabel, Boolean(videoEdge || node.localVideoReference))}<div class="input-slot${node.localAudioReference ? " is-connected" : ""}"><span>参考音频${wenwu ? " 1" : ""}</span><span>${escapeHtml(audioLabel)}</span></div>${wenwu ? `<div class="input-slot${node.secondAudioReference ? " is-connected" : ""}"><span>参考音频 2</span><span>${escapeHtml(node.secondAudioReference ? shortName(node.secondAudioReference) : "未上传")}</span></div>` : ""}</div>
+    <div class="generator-inputs">${promptSlots}${imageSlots}${inputSlot("video-reference", "video", "参考视频", videoLabel, Boolean(videoEdge || node.localVideoReference))}${audioRows}</div>
     <div class="generator-add-inputs"><button class="add-input-button node-interactive" type="button" data-add-prompt-input="${node.id}"${node.promptSlots >= 6 ? " disabled" : ""}>${icon("plus")} 添加提示词输入</button><button class="add-input-button node-interactive" type="button" data-upload-video-reference="${node.id}">${icon("video")} 上传参考视频</button><button class="add-input-button node-interactive" type="button" data-upload-audio-reference="${node.id}">${icon("audio-lines")} 上传参考音频${wenwu ? " 1" : ""}</button>${wenwu ? `<button class="add-input-button node-interactive" type="button" data-audio-slot="2" data-upload-audio-reference="${node.id}">${icon("audio-lines")} 上传参考音频 2</button>` : ""}</div>
-    <div class="video-reference-note">${wenwu ? "可连接最多 9 张图，上传或连接 1 段视频，上传 2 段参考音频。" : "六张图像参考和可选视频/音频素材会上传至 RunningHub；运行中可停止远程任务。"}</div>
+    <div class="video-reference-note">${wenwu ? "可连接最多 9 张图，上传或连接 1 段视频，上传或连接 2 段参考音频。" : "六张图像参考和可选视频/音频素材会上传至 RunningHub；运行中可停止远程任务。"}</div>
     <button class="run-node-button node-interactive${node.status === "running" ? " is-cancel" : ""}" type="button" data-run-node="${node.id}">${icon(node.status === "running" ? "square" : "play")} ${node.status === "running" ? "停止海螺 H3" : "运行海螺 H3"}</button>
     <div class="node-run-state"><span>${escapeHtml(runningHubVideoProvider.model)}</span><span class="${node.lastResultIds?.length ? "is-ready" : ""}"${node.lastError ? ` title="${escapeHtml(node.lastError)}"` : ""}>${statusLabel}</span></div>
-    </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", 0)).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", mode.inputs[index] || `参考图 ${index + 1}`, 0)).join("")}${portHtml(node, "video-reference", "video", "input", "参考视频", 0)}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
+    </div></div>${resizeHandleHtml(node)}${Array.from({ length: node.promptSlots }, (_, index) => portHtml(node, generatorPromptPortId(index), "prompt", "input", index ? `Prompt ${index + 1}` : "Prompt", 0)).join("")}${Array.from({ length: node.inputSlots }, (_, index) => portHtml(node, `image-${index}`, "image", "input", mode.inputs[index] || `参考图 ${index + 1}`, 0)).join("")}${portHtml(node, "video-reference", "video", "input", "参考视频", 0)}${audioSlots.map(slot => portHtml(node, "audio-reference-" + slot, "audio", "input", "参考音频 " + slot, 0)).join("")}${portHtml(node, "video", "video", "output", "Video", 76)}</article>`;
 }
 function answerPromptPortId(index) { return index === 0 ? "prompt" : `prompt-${index}`; }
 // Keep model input connectors centered on the rows rendered by .answer-inputs.
@@ -3253,6 +3276,9 @@ $$('[data-confirm-horizon]').forEach(button => button.addEventListener("click", 
     const node = findNode(control.dataset.nodeId); if (!node || node.mediaType !== "video") return;
     const field = control.dataset.videoField;
     if (node.status === "running") { renderCanvas(); return toast("请等待本次视频生成结束再调整参数", true); }
+    if (field === 'mode' && control.value === 'reference' && incomingEdge(node.id, 'audio-reference-2')) {
+      renderCanvas(); return toast('请先断开参考音频 2，再切换到单音频工作流', true);
+    }
     if (field === "mode" && control.value === "reference" && state.edges.some(edge => edge.target === node.id && /^image-[678]$/.test(edge.targetPort))) {
       renderCanvas(); return toast("请先断开参考图 7 至 9 的连线，再切换到六图工作流", true);
     }
@@ -3497,6 +3523,8 @@ function finishConnection(event) {
 function connectPorts(first, second, trackHistory = true) {
   if (first.direction === second.direction || first.dataType !== second.dataType || first.nodeId === second.nodeId) return toast("端口类型不匹配", true);
   const output = first.direction === "output" ? first : second; const input = first.direction === "input" ? first : second;
+  if (output.portId.startsWith('clone-result-') && !['audio-reference-1','audio-reference-2'].includes(input.portId)) return toast('请连接到视频节点的参考音频输入', true);
+  if (input.portId.startsWith('audio-reference-') && !output.portId.startsWith('clone-result-')) return toast('请从具体的声音克隆结果拖线', true);
   if (state.edges.some(edge => edge.source === output.nodeId && edge.sourcePort === output.portId && edge.target === input.nodeId && edge.targetPort === input.portId)) return;
   if (trackHistory) recordHistory(); state.edges = state.edges.filter(edge => !(edge.target === input.nodeId && edge.targetPort === input.portId));
   state.edges.push({ id: uid("edge"), source: output.nodeId, sourcePort: output.portId, target: input.nodeId, targetPort: input.portId, type: output.dataType }); if (output.dataType === "composition") applyCompositionToLinkedPrompts(output.nodeId); syncAllVideoEditorClips(); selectedEdgeId = null; scheduleSave();
@@ -3984,6 +4012,7 @@ async function uploadAudioReferenceIntoNode(nodeId, file, slot) {
   const node = findNode(nodeId); if (!node || node.mediaType !== "video" || !file) return;
   const result = await requestJson("/api/audio-assets", { method: "POST", headers: { "Content-Type": file.type || "audio/mpeg", "x-file-name": encodeURIComponent(file.name || "参考音频.mp3") }, body: file }, 10 * 60_000);
   recordHistory();
+  state.edges = state.edges.filter(edge => !(edge.target === nodeId && edge.targetPort === 'audio-reference-' + slot));
   if (slot === 2) node.secondAudioReference = result.url;
   else node.localAudioReference = result.url; renderWorkspace(); scheduleSave(); toast("参考音频已上传");
 }
@@ -4654,9 +4683,14 @@ async function runVideoGeneratorNode(generator) {
   const mode = runningHubVideoMode(generator);
   const requiredReferences = isWenwu(generator) ? 0 : 1;
   if (imageEdges.length < requiredReferences) { selectNode(generator.id); return toast(`${mode.label}至少需要连接 ${requiredReferences} 张参考图`, true); }
-  if (isWenwu(generator) || !runningHubApiKey) {
+  const audio1 = videoReferenceAudio(generator, 1);
+  const audio2 = isWenwu(generator) ? videoReferenceAudio(generator, 2) : { src: '', linked: false };
+  const linkedAudio = [audio1, audio2].filter(audio => audio.linked);
+  if (linkedAudio.some(audio => !audio.src)) return toast('请检查已连接的声音克隆结果，再生成视频', true);
+  if (linkedAudio.length || isWenwu(generator) || !runningHubApiKey) {
     try {
       const status = await requestJson("/api/status", {}, 10_000);
+      if (linkedAudio.length && !status.runninghub?.cloneAudioReferences) return toast('请在项目首页恢复生图服务，以启用克隆音频连线', true);
       if (isWenwu(generator) && status.runninghub?.wenwuWorkflowId !== wenwuId) return toast("请在项目首页点击恢复生图服务，再运行文武双全", true);
       if (!runningHubApiKey && !status.runninghub?.ready) { openSettings(); return toast("请先在设置中保存 RunningHub API Key", true); }
     }
@@ -4670,7 +4704,7 @@ async function runVideoGeneratorNode(generator) {
     const videoEdge = state.edges.find(edge => edge.target === generator.id && edge.targetPort === "video-reference" && edge.type === "video");
     const linkedVideoReference = videoEdge ? videoSourceFromNode(findNode(videoEdge.source)) : "";
     if (videoEdge && !linkedVideoReference) throw new Error("已连接的参考视频节点没有可用视频，请先上传或导出视频");
-    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(runningHubApiKey ? { "x-runninghub-api-key": runningHubApiKey } : {}) }, body: JSON.stringify({ provider: "runninghub-h3", prompt, aspect: generator.videoAspect, megapixels: generator.videoMegapixels, seconds: generator.videoSeconds, videoMode: mode.value, multiple: generator.videoMultiple, secondAudioReference: isWenwu(generator) ? generator.secondAudioReference : undefined, references, videoReference: linkedVideoReference || generator.localVideoReference || "", audioReference: generator.localAudioReference || "" }) }, 75_000);
+    const result = await requestJson("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", ...(runningHubApiKey ? { "x-runninghub-api-key": runningHubApiKey } : {}) }, body: JSON.stringify({ provider: "runninghub-h3", prompt, aspect: generator.videoAspect, megapixels: generator.videoMegapixels, seconds: generator.videoSeconds, videoMode: mode.value, multiple: generator.videoMultiple, secondAudioReference: audio2.src || undefined, references, videoReference: linkedVideoReference || generator.localVideoReference || "", audioReference: audio1.src }) }, 75_000);
     const job = result.job; if (!job?.id) throw new Error("本机服务未返回视频任务");
     generator.activeJobId = job.id; ensureGenerationPlaceholders(generator, job.id, 1, job.model, job.createdAt); state.selectedIds = []; toast(`${runningHubVideoProvider.label} 已进入任务队列，正在生成视频`); renderWorkspace(); scheduleSave(); pollGenerationJob(generator.id, job.id);
   } catch (error) { generator.status = "idle"; delete generator.activePrompt; toast(error.message || "视频任务创建失败", true); renderWorkspace(); scheduleSave(); }
@@ -4980,7 +5014,7 @@ async function init() {
   else { if (savedSession) clearActiveProjectSession(); renderHome(); }
   await checkApiStatus();
 }
-const speechController=createSpeechController({getState:()=>state,findNode,recordHistory,save:()=>saveProjectNow(true),scheduleSave,render:()=>renderWorkspace(),toast,uid,escapeHtml,header:nodeHeaderHtml,port:portHtml,resize:resizeHandleHtml,openSettings});
+const speechController=createSpeechController({redrawEdges:requestEdgeRender,getState:()=>state,findNode,recordHistory,save:()=>saveProjectNow(true),scheduleSave,render:()=>renderWorkspace(),toast,uid,escapeHtml,header:nodeHeaderHtml,port:portHtml,resize:resizeHandleHtml,openSettings});
 init();
 
 

@@ -442,10 +442,16 @@ async function ensureBrowserCompatibleVideo(source) {
   catch { return sourcePath; }
 }
 
+function isCloneAudioUrl(source) {
+  return typeof source === "string" && /^\/api\/voice-clone\/files\/vc-[a-f0-9-]{36}-[0-9]+\.(mp3|wav)$/i.test(source);
+}
+function isVideoReferenceAudio(source) {
+  return isCloneAudioUrl(source) || (typeof source === "string" && /^\/api\/audio-assets\/[A-Za-z0-9._%()-]+$/.test(source));
+}
 async function localMediaPath(source, kind = "video") {
   const pathname = decodeURIComponent(new URL(String(source || ""), "http://127.0.0.1").pathname);
   const locations = kind === "audio"
-    ? [["/api/audio-assets/", audioAssetsDir]]
+    ? [["/api/audio-assets/", audioAssetsDir], ...(isCloneAudioUrl(source) ? [["/api/voice-clone/files/", path.join(outputDir, "voice-clone", "files")]] : [])]
     : [["/api/generated/", generatedDir], ["/api/video-assets/", videoAssetsDir], ["/api/video-edited/", editedVideoDir]];
   const matched = locations.find(([prefix]) => pathname.startsWith(prefix));
   if (!matched) throw new Error(kind === "audio" ? "只能使用本机画布中的音频" : "只能使用本机画布中的视频");
@@ -1537,8 +1543,13 @@ async function createRunningHubJob(req, res, body) {
     }
     const seconds = Math.min(workflow.maxSeconds, Math.max(workflow.minSeconds, Math.round(Number(body.seconds) || (wenwu ? 12 : 6))));
     const videoReference = /^\/(?:api\/(?:video-assets|generated|video-edited))\/[A-Za-z0-9._%()\-]+$/.test(String(body.videoReference || "")) ? String(body.videoReference) : "";
-    const audioReference = /^\/api\/audio-assets\/[A-Za-z0-9._%()\-]+$/.test(String(body.audioReference || "")) ? String(body.audioReference) : "";
-    const secondAudioReference = wenwu && /^\/api\/audio-assets\/[A-Za-z0-9._%()\-]+$/.test(String(body.secondAudioReference || "")) ? String(body.secondAudioReference) : "";
+    const audioReference = body.audioReference || "";
+    const secondAudioReference = wenwu ? body.secondAudioReference || "" : "";
+    if ([audioReference, secondAudioReference].some(src => src && !isVideoReferenceAudio(src))) return sendJson(res, 400, { error: "参考音频地址无效，请重新连接或上传" });
+    for (const src of [audioReference, secondAudioReference].filter(isCloneAudioUrl)) {
+      try { await localMediaPath(src, "audio"); }
+      catch { return sendJson(res, 400, { error: "找不到已连接的克隆音频文件，请重新选择音频" }); }
+    }
     if (wenwu && body.videoReference && !videoReference) return sendJson(res, 400, { error: "参考视频地址无效，请重新选择视频" });
     const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, videoAspect: aspect, videoMegapixels: megapixels, videoSeconds: seconds, request: { apiKey, prompt, seconds, workflowId: workflow.id, imageNodes: workflow.imageNodes, videoNode: workflow.videoNode, audioNode: workflow.audioNode, aspect, aspectLabel, megapixels, multiple, references, videoReference, audioReference, secondAudioReference } };
     jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
@@ -2096,7 +2107,7 @@ const server = http.createServer(async (req, res) => {
     const claudeKey = await resolveClaudeApiKey(req);
     const moyuKimiKey = await resolveKimiApiKey(req, "kimi-k3-moyu");
     const moonshotKimiKey = await resolveKimiApiKey(req, "kimi-k3-moonshot");
-    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, arkPlanAnswer: { ready: Boolean(arkPlanKey), protocol: "kimi-ark-plan-v1", model: kimiPlanModel, vision: true, referenceLimit: 8 }, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, mossWorkflowId: mossWorkflow.id, wenwuWorkflowId: runningHubVideoWorkflows.wenwu.id, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, arkPlanAnswer: { ready: Boolean(arkPlanKey), protocol: "kimi-ark-plan-v1", model: kimiPlanModel, vision: true, referenceLimit: 8 }, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, mossWorkflowId: mossWorkflow.id, wenwuWorkflowId: runningHubVideoWorkflows.wenwu.id, cloneAudioReferences: true, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);
