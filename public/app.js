@@ -3109,7 +3109,7 @@ function videoReferenceAudio(node, slot) {
   const source = findNode(edge.source);
   const index = source?.versions?.findIndex(v => 'clone-result-' + v.id === edge.sourcePort) ?? -1;
   const version = source?.versions?.[index];
-  return { src: source?.disabled ? '' : version?.src || '', linked: true, name: source?.disabled ? '来源已禁用' : version ? version.name || '结果 ' + (index + 1) : '录音记录缺失' };
+  return { src: source?.disabled ? '' : version?.src || '', linked: true, name: source?.disabled ? '来源已禁用' : version ? (source.standaloneClone && source.name) || version.name || '结果 ' + (index + 1) : '录音记录缺失' };
 }
 function renderVideoGeneratorNodeHtml(node, selected, style) {
   const dimensions = runningHubVideoDimensions(node);
@@ -5015,7 +5015,7 @@ async function init() {
   else { if (savedSession) clearActiveProjectSession(); renderHome(); }
   await checkApiStatus();
 }
-const speechController=createSpeechController({revealExtracted:node=>{selectedEdgeId=null;focusNode(node.id);},redrawEdges:requestEdgeRender,getState:()=>state,findNode,recordHistory,save:()=>saveProjectNow(true),scheduleSave,render:()=>renderWorkspace(),toast,uid,escapeHtml,header:nodeHeaderHtml,port:portHtml,resize:resizeHandleHtml,openSettings});
+const speechController=createSpeechController({renameCard:startNodeTitleEdit,deleteCard:id=>{selectNode(id);deleteSelection();},revealExtracted:node=>{selectedEdgeId=null;focusNode(node.id);},redrawEdges:requestEdgeRender,getState:()=>state,findNode,recordHistory,save:()=>saveProjectNow(true),scheduleSave,render:()=>renderWorkspace(),toast,uid,escapeHtml,header:nodeHeaderHtml,port:portHtml,resize:resizeHandleHtml,openSettings});
 init();
 
 

@@ -29,12 +29,12 @@ export function createSpeechController(host){
    const v=version(n);
    if(v){
     const attr='data-version="'+esc(v.id)+'"';
-    body='<audio class="node-interactive" controls preload="metadata" src="'+esc(v.src)+'"></audio><div class="speech-actions">'+button(n,'download','下载',attr)+button(n,'settings','查看设置',attr)+'</div>';
+    body='<audio class="node-interactive" controls preload="metadata" src="'+esc(v.src)+'"></audio><div class="speech-actions">'+button(n,'download','下载',attr)+button(n,'settings','查看设置',attr)+button(n,'rename-card','命名')+button(n,'delete-card','删除')+'</div>';
     ports=port(n,esc('clone-result-'+v.id),'audio','output','音频输出 · 拖到视频参考音频',72);
    }else body='<p>录音记录缺失</p>';
   }
   else{const v=version(n);body=(v?'<audio class="node-interactive" controls preload="metadata" src="'+esc(v.src)+'"></audio><small>当前试听：'+esc(v.name||new Date(v.createdAt).toLocaleString())+'</small>':'<p>连接声音克隆节点，或从生成记录保留独立结果。</p>')+history(n);ports=port(n,'result','audio','input','音频结果',72);}
-  return '<article class="canvas-node '+(n.type==='speech'?'speech-node':'audio-node')+selected+'" data-node-id="'+n.id+'" style="'+style+'"><div class="node-card">'+header(n,n.type==='speech'?'mic':'audio-lines','',true,true)+'<div class="node-body speech-body">'+body+'</div></div>'+resize(n)+ports+'</article>';
+  return '<article class="canvas-node '+(n.type==='speech'?'speech-node':'audio-node')+selected+'" data-node-id="'+n.id+'" style="'+style+'"><div class="node-card">'+header(n,n.type==='speech'?'mic':'audio-lines','',true,true)+'<div class="node-body speech-body">'+body+'</div></div>'+(n.standaloneClone?'':resize(n))+ports+'</article>';
  }
  function syncOutputs(n){const v=n.versions.find(v=>v.id===n.currentVersionId);if(!v)return;for(const edge of getState().edges.filter(e=>e.source===n.id&&e.sourcePort==='audio')){const out=findNode(edge.target);if(out?.type!=='audio')continue;if(!out.versions.some(x=>x.id===v.id))out.versions.push(structuredClone(v));out.currentVersionId=v.id;out.previewVersionId=v.id;out.src=v.src;}}
  async function upload(n,key,file){if(!file)return;if(file.size>80*1024*1024)throw Error('音频不能超过 80 MB（本工具限制）');const project=getState().id;const r=await request('/api/audio-assets',{method:'POST',headers:{'Content-Type':file.type||'audio/mpeg','x-file-name':encodeURIComponent(file.name)},body:file});const duration=await new Promise((resolve,reject)=>{const a=new Audio(r.url),timer=setTimeout(()=>{a.src='';reject(Error('音频加载超时'));},20000);a.onloadedmetadata=()=>{clearTimeout(timer);Number.isFinite(a.duration)&&a.duration>=1?resolve(a.duration):reject(Error('参考音频至少需要 1 秒'));a.src='';};a.onerror=()=>{clearTimeout(timer);reject(Error('浏览器无法读取此音频，请转换为 MP3 或 WAV'));};});if(getState()?.id!==project||findNode(n.id)!==n)return;recordHistory();n[key]={src:r.url,name:file.name,duration,start:0,end:Math.min(12,Math.floor(duration))};if(key==='emotionReference')n.emotionSource='reference';scheduleSave();render();}
@@ -66,6 +66,10 @@ export function createSpeechController(host){
   if(kind==='restore'){recordHistory();const old=n.deletedVersions.pop();if(old&&!n.versions.some(v=>v.id===old.id))n.versions.push(old);if(!n.currentVersionId){n.currentVersionId=old?.id||'';n.src=old?.src||'';}scheduleSave();render();return;}
   if(!v)throw Error('请先生成并选择音频结果');
   if(kind==='apply'){recordHistory();n.currentVersionId=v.id;n.previewVersionId=v.id;n.src=v.src;syncOutputs(n);scheduleSave();render();return;}
+  if(n.type==='audio' && n.standaloneClone){
+   if(kind==='rename-card')return host.renameCard(n.id);
+   if(kind==='delete-card')return host.deleteCard(n.id);
+  }
   if(kind==='extract' && n.type==='speech' && n.engine===voiceEngine){
    const recording=n.versions.find(item=>item.id===vid);
    if(!recording)return;
@@ -73,7 +77,7 @@ export function createSpeechController(host){
    const card=extractCloneResult(host.uid('audio'),n,recording,project.nodes);
    recordHistory();project.nodes.push(card);project.selectedIds=[card.id];render();host.revealExtracted(card);scheduleSave();return;
   }
-  if(kind==='download'){const r=await fetch(v.src);if(!r.ok)throw Error('音频文件不可用');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=(v.name||'声音克隆-'+v.id)+'.'+v.format;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);return;}
+  if(kind==='download'){const r=await fetch(v.src);if(!r.ok)throw Error('音频文件不可用');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=((n.standaloneClone && n.name)||v.name||'声音克隆-'+v.id)+'.'+v.format;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);return;}
   if(kind==='rename'){const name=prompt('结果名称',v.name||'');if(name===null)return;recordHistory();v.name=name.slice(0,80);scheduleSave();render();return;}
   if(kind==='delete'){const linked=getState().edges.filter(e=>e.source===n.id && e.sourcePort==='clone-result-'+v.id);const used=getState().nodes.filter(other=>other.id!==n.id&&(other.src===v.src||other.versions?.some(x=>x.src===v.src)));if(!confirm('删除这条结果记录？'+(linked.length?'将同时断开这条录音的 '+linked.length+' 条视频参考连线。':'')+(used.length?'其他节点仍引用此音频，会继续保留。':'')+'可恢复最近删除，磁盘音频保留以支持撤销。'))return;recordHistory();if(linked.length)getState().edges=getState().edges.filter(e=>!linked.includes(e));n.deletedVersions=[...(n.deletedVersions||[]),v];n.versions=n.versions.filter(x=>x.id!==v.id);if(n.currentVersionId===v.id){n.currentVersionId='';n.src='';}if(n.previewVersionId===v.id)n.previewVersionId='';scheduleSave();render();return;}
   if(kind==='settings'){const d=dialog('本次生成设置'),body=d.querySelector('.speech-dialog-content');body.innerHTML='<pre>'+esc(JSON.stringify(v.settings||v.segments||{},null,2))+'</pre>'+(n.engine===voiceEngine&&v.settings?'<button data-load-settings>载入设置继续调整</button>':'');body.querySelector('[data-load-settings]')?.addEventListener('click',()=>{recordHistory();Object.assign(n,structuredClone(v.settings),{requestId:n.requestId,inputSources:{text:'local'}});scheduleSave();d.close();render();});}

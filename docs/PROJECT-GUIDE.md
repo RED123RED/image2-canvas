@@ -21,7 +21,7 @@
 - 工作流：https://www.runninghub.cn/workflow/2123214466497204226。远端 API 工作流已核对。新建 speech 节点只提供「声音克隆 · IndexTTS2」，音色参考、情感参考、正文和历史结果集中在同一节点。正文可接提示词节点或直接编辑，来源切换保留连线。
 - 远端节点 13/15 为两路 LoadAudio，37/38 为 AudioCrop，14 为正文，12 为 IndexTTS2Run，39 为 MP3 输出。AudioCrop 只接受整数秒，画布校验最长 12 秒选区。情感参考可独立上传，也可使用音色参考本身；情感强度在独立情感参考时生效，数值直接映射到 IndexTTS2Run 的 emo_alpha，未实测验证不同数值的听感差异。
 - 使用现有 RunningHub 密钥。speech-service.mjs 负责 /api/voice-clone/ 路由、上传、提交、轮询和音频存储。任务写入 output/voice-clone/jobs.json，结果写入 output/voice-clone/files，参考音频写入 output/audio-assets。每次点击生成保存独立任务，追加历史结果，不覆盖当前输出；不自动重试不明状态的付费请求。
-- 历史结果可试听、下载、命名、查看设置、选为输出和删除；节点记录删除后可恢复最近结果，磁盘音频仍保留用于撤销、其他节点与项目引用。结果列表可上下拉伸。生成结果仍留在 speech 节点。按某条记录的「提取为节点」才会新建带 standaloneClone 标记的单录音卡片，复用原文件，可独立移动、播放、下载及连接视频参考音频。
+- 历史结果可试听、下载、命名、查看设置、选为输出和删除；节点记录删除后可恢复最近结果，磁盘音频仍保留用于撤销、其他节点与项目引用。结果列表可上下拉伸。生成结果仍留在 speech 节点。按某条记录的「提取为节点」才会新建带 standaloneClone 标记的单录音卡片，复用原文件，可独立移动、播放、下载及连接视频参考音频。单录音卡片使用固定紧凑高度，可命名或删除；删除卡片和它的连线可撤销，克隆历史及磁盘文件保留。
 - 原火山语音生成已下线：/api/speech/ 只允许旧文件 GET/HEAD 播放，其他请求返回 410。旧 speech 节点只读归档；用户主动点击「转换」后才变成新声音克隆节点，其旧正文与完整旧节点备份保留。旧 audio 节点、既有音频连线和 output/speech 音频均不删除。旧项目导入、刷新、撤销保持兼容。
 - 首页图片清理不处理 output/speech、output/voice-clone 和 output/audio-assets。项目 JSON 仅保存本机音频路径，迁移需携带素材。普通生图、模型回答、H3 视频、分层、局部修改和图片清理逻辑保持不变。
 - 验证：npm run test:speech、tests/voice-clone.browser.js、docs/VOICE-CLONE-VERIFICATION.md。
