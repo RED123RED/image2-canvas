@@ -369,7 +369,6 @@ function workspaceSessionSnapshot() {
   if (!state?.id) return null;
   return {
     projectId: state.id,
-    flowMode: state.flowMode,
     viewport: state.viewport
   };
 }
@@ -389,7 +388,6 @@ function clearActiveProjectSession() {
 }
 function restoreWorkspaceSession(nextState, saved) {
   if (!saved || saved.projectId !== nextState.id) return;
-  if (saved.flowMode) nextState.flowMode = normalizeFlowMode(saved.flowMode);
   const restoreViewport = (target, source, min, max) => {
     if (!target || !source || !Number.isFinite(Number(source.x)) || !Number.isFinite(Number(source.y)) || !Number.isFinite(Number(source.scale))) return;
     target.x = Number(source.x); target.y = Number(source.y); target.scale = Math.min(max, Math.max(min, Number(source.scale)));
@@ -735,7 +733,7 @@ function normalizeProject(project) {
       return node;
     });
     const panelWidths = normalized.panelWidths || {}; normalized.panelWidths = { library: Math.min(480, Math.max(190, Number(panelWidths.library) || 238)), inspector: Math.min(520, Math.max(220, Number(panelWidths.inspector) || 286)) };
-    normalized.flowMode = normalizeFlowMode(project.flowMode);
+    normalized.flowMode = "workflow";
     return normalized;
   }
   const migrated = createStarterProject(project.projectName || "迁移项目", project.theme || globalTheme);
@@ -752,7 +750,6 @@ function normalizeProject(project) {
   legacyImages.slice(0, 8).forEach((imageNode, index) => migrated.edges.push({ id: uid("edge"), source: imageNode.id, sourcePort: "image", target: generator.id, targetPort: `image-${index}`, type: "image" }));
   migrated.viewport = project.viewport || migrated.viewport;
   migrated.recentIds = project.recentIds || [];
-  migrated.flowMode = normalizeFlowMode(project.flowMode);
   if (Object.hasOwn(project, "scriptFlow")) migrated.scriptFlow = project.scriptFlow;
   return migrated;
 }
@@ -910,10 +907,10 @@ async function inspectUnusedGeneratedImages(references, action = "preview", prev
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ protocol: mediaCleanupProtocol, action, ...references, previewToken })
   }, 60_000).catch(error => {
-    if (error.message.includes("404") || error.message.includes("405") || error.message === "不支持的请求方法") throw new Error("清理服务尚未更新，请点击首页的恢复生图服务后刷新页面");
+    if (error.message.includes("404") || error.message.includes("405") || error.message === "不支持的请求方法") throw new Error("清理服务尚未更新，请在设置中点击「重启本机服务」后刷新页面");
     throw error;
   });
-  if (result.protocol !== mediaCleanupProtocol) throw new Error("清理服务版本不匹配，请通过首页恢复生图服务后刷新页面");
+  if (result.protocol !== mediaCleanupProtocol) throw new Error("清理服务版本不匹配，请在设置中点击「重启本机服务」后刷新页面");
   return result;
 }
 function setGeneratedCleanupDialogState({ copy, summary = "", warning = false, canConfirm = false, busy = false }) {
@@ -1222,33 +1219,7 @@ function renderWorkspace() {
   if (!state) return;
   $("#projectName").textContent = state.projectName;
   $$(".library-tabs .tab").forEach(tab => tab.classList.toggle("is-active", tab.dataset.libraryTab === state.libraryTab));
-  renderCanvas(); renderLibrary(); renderInspector(); setActiveTool(state.tool || "select"); updateViewport(); updateHistoryButtons(); renderFlowMode(); refreshIcons();
-}
-function normalizeFlowMode(mode) {
-  return mode === "templates" || mode === "script" ? "templates" : "workflow";
-}
-function renderFlowMode() {
-  const templates = state.flowMode === "templates";
-  $("#workspaceView").classList.toggle("is-template-mode", templates);
-  for (const button of $$("[data-flow-mode]")) {
-    const selected = button.dataset.flowMode === state.flowMode;
-    button.classList.toggle("is-active", selected);
-    button.setAttribute("aria-pressed", String(selected));
-  }
-  applyPanelWidths();
-  if (!templates) {
-    updateViewport();
-    syncVideoGeneratorPortPositions();
-    renderEdges();
-  }
-}
-function setFlowMode(mode) {
-  if (!state || state.flowMode === mode) return;
-  closeConnectionMenu(); closeCanvasContextMenu();
-  recordHistory();
-  state.flowMode = mode;
-  renderWorkspace();
-  scheduleSave();
+  renderCanvas(); renderLibrary(); renderInspector(); setActiveTool(state.tool || "select"); applyPanelWidths(); updateViewport(); syncVideoGeneratorPortPositions(); renderEdges(); updateHistoryButtons(); refreshIcons();
 }
 function findNode(id) { return state?.nodes.find(node => node.id === id); }
 function selectedNode() { return state?.selectedIds?.length === 1 ? findNode(state.selectedIds[0]) : null; }
@@ -1403,7 +1374,7 @@ function createCanvasElementAt(kind, clientX, clientY) {
   recordHistory(); state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null; renderWorkspace(); scheduleSave();
 }
 function showCanvasContextMenu(event) {
-  if (!state || state.flowMode === "templates" || event.target.closest(".flow-switch, .canvas-status, .mobile-panel-button, input, textarea, [contenteditable=true]")) return;
+  if (!state || event.target.closest(".canvas-status, .mobile-panel-button, input, textarea, [contenteditable=true]")) return;
   event.preventDefault(); closeConnectionMenu(); closeCanvasContextMenu();
   const choices = [
     { kind: "prompt", title: "提示词", icon: "text-cursor-input" },
@@ -1490,7 +1461,7 @@ function setSidebarCollapsed(side, collapsed) {
   refreshIcons();
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (!state) return;
-    if (state.flowMode === "workflow") { syncVideoGeneratorPortPositions(); renderEdges(); }
+    syncVideoGeneratorPortPositions(); renderEdges();
   }));
 }
 function toggleSidebar(side) {
@@ -2742,9 +2713,9 @@ function handleWheel(event) {
   const nextScale = Math.min(WORKFLOW_ZOOM_MAX, Math.max(WORKFLOW_ZOOM_MIN, state.viewport.scale * Math.exp(-event.deltaY * 0.0015)));
   state.viewport.x = mouseX - beforeX * nextScale; state.viewport.y = mouseY - beforeY * nextScale; state.viewport.scale = nextScale; updateViewport(); scheduleSave();
 }
-function updateViewport() { if (!state) return; canvasScene.style.transform = `translate(${state.viewport.x}px, ${state.viewport.y}px) scale(${state.viewport.scale})`; canvasScene.getBoundingClientRect(); if (state.flowMode !== "templates") $("#zoomButton").textContent = `${Math.round(state.viewport.scale * 100)}%`; }
+function updateViewport() { if (!state) return; canvasScene.style.transform = `translate(${state.viewport.x}px, ${state.viewport.y}px) scale(${state.viewport.scale})`; canvasScene.getBoundingClientRect(); $("#zoomButton").textContent = `${Math.round(state.viewport.scale * 100)}%`; }
 function syncViewportAfterWorkspaceResize(rect) {
-  if (state?.flowMode === "templates") return;
+
   if (!rect || rect.width <= 0 || rect.height <= 0) { observedWorkspaceSize = null; return; }
   const previous = observedWorkspaceSize;
   observedWorkspaceSize = { width: rect.width, height: rect.height };
@@ -2762,7 +2733,7 @@ function initCanvasResizeObserver() {
   canvasResizeObserver.observe(workspace);
 }
 function fitContent() {
-  if (state?.flowMode === "templates") return;
+
   if (!state?.nodes.length) return; const rect = workspace.getBoundingClientRect();
   const minX = Math.min(...state.nodes.map(node => node.x)); const minY = Math.min(...state.nodes.map(node => node.y));
   const maxX = Math.max(...state.nodes.map(node => node.x + node.width)); const maxY = Math.max(...state.nodes.map(node => node.y + node.height));
@@ -2837,7 +2808,7 @@ function duplicateSelected() {
   state.nodes.push(...copies); state.selectedIds = copies.map(node => node.id); renderWorkspace(); scheduleSave();
 }
 function renderLibrary() {
-  if (state?.flowMode === "templates") return;
+
   if (state.libraryTab === "assets") return renderAssetsLibrary(); if (state.libraryTab === "history") return renderHistoryLibrary();
   const counts = type => state.nodes.filter(node => node.type === type).length;
   libraryContent.innerHTML = `<div class="section-label"><span>创建模块</span><span>${state.nodes.filter(node => node.type !== "frame").length}</span></div><div class="module-list">
@@ -2936,7 +2907,7 @@ function bindImageUniformScaleControl() {
   $(`[data-confirm-image-uniform-scale]`)?.addEventListener("click", event => { event.stopPropagation(); applyImageUniformScale(slider?.value); });
 }
 function renderInspector() {
-  if (state?.flowMode === "templates") return;
+
   if (selectedEdgeId) return renderEdgeInspector(); const selectedNodes = state.selectedIds.map(findNode).filter(Boolean); if (selectedNodes.length > 1) return renderMultiSelectionInspector(selectedNodes); const node = selectedNode(); if (node) return renderNodeInspector(node);
   $("#inspectorEyebrow").textContent = "PROJECT"; $("#inspectorTitle").textContent = "自由画布概览";
   inspectorContent.innerHTML = `${crossProjectImageLibraryHtml()}
@@ -2979,7 +2950,7 @@ async function handleCanvasPaste(event) {
   if (document.querySelector('#layerEditor[open], #localEditDialog[open]')) return;
   const target = event.target instanceof Element ? event.target : null;
   const isEditable = Boolean(target?.closest("input, textarea, select, [contenteditable=true]"));
-  if (!state || state.flowMode === "templates" || isEditable) return;
+  if (!state || isEditable) return;
   const clipboardFiles = [...(event.clipboardData?.files || [])];
   const videoFiles = [...(event.clipboardData?.items || [])]
     .filter(item => item.kind === "file" && isSupportedVideoFile(item.getAsFile?.()))
@@ -3453,7 +3424,7 @@ async function runGeneratorNode(nodeId) {
     try {
       const status = await requestJson("/api/status", {}, 10_000);
       const channel = generator.provider === "ark-plan" ? status.arkPlan : status.ark;
-      if (channel?.protocol !== (generator.provider === "ark-plan" ? arkPlanProtocol : arkProtocol)) return toast("请先恢复生图服务，以加载火山引擎接入", true);
+      if (channel?.protocol !== (generator.provider === "ark-plan" ? arkPlanProtocol : arkProtocol)) return toast("请先在设置中重启本机服务，以加载火山引擎接入", true);
       if (!channel.ready) { openSettings(); return toast(generator.provider === "ark-plan" ? "请先在设置中保存火山 Agent Plan 套餐密钥" : "请先在设置中保存火山引擎官方 API Key", true); }
     } catch { return toast("本机服务不可用，无法检查火山引擎设置", true); }
   }
@@ -3474,7 +3445,7 @@ async function runGeneratorNode(nodeId) {
     try {
       const status = await requestJson("/api/status", {}, 10_000);
       if (!status.runninghub?.ready) { openSettings(); return toast("请先在设置中保存 RunningHub API Key", true); }
-      if (generator.provider === "runninghub-moss" && status.runninghub?.mossWorkflowId !== mossWorkflow.id) return toast("请先恢复生图服务，以加载 MOSS 工作流", true);
+      if (generator.provider === "runninghub-moss" && status.runninghub?.mossWorkflowId !== mossWorkflow.id) return toast("请先在设置中重启本机服务，以加载 MOSS 工作流", true);
     } catch { return toast("本机服务不可用，无法检查 RunningHub 设置", true); }
   }
   isGenerating = true;
@@ -3545,7 +3516,7 @@ async function runAnswerNode(nodeId) {
   try {
     const status = await requestJson("/api/status", {}, 8_000);
     if (usesKimiPlan) {
-      if (status.arkPlanAnswer?.protocol !== "kimi-ark-plan-v1") return toast("请先恢复生图服务，以加载火山套餐 Kimi K3.1 Pro", true);
+      if (status.arkPlanAnswer?.protocol !== "kimi-ark-plan-v1") return toast("请先在设置中重启本机服务，以加载火山套餐 Kimi K3.1 Pro", true);
       if (!status.arkPlanAnswer.ready) { openSettings(); setTimeout(() => { const input = $("#arkPlanApiKeyInput"); input?.scrollIntoView({block:"center"}); input?.focus(); }, 50); return toast("请先在设置中保存火山 Agent Plan 套餐密钥", true); }
     }
     const kimiGateway = kimiModel === "kimi-k3-moyu" ? "moyu" : "moonshot";
@@ -3639,7 +3610,7 @@ async function openNodeLayerEditor(nodeId) {
       },
       onStart:async({model,prompt})=>{
         const status=await requestJson('/api/layers/status',{},10000);
-        if(status.protocol!=='seedream-layer-document-v1')throw new Error('请先恢复生图服务以加载拆层功能');
+        if(status.protocol!=='seedream-layer-document-v1')throw new Error('请先在设置中重启本机服务以加载拆层功能');
         if(!status.ready)throw new Error('请先在设置中保存火山 Agent Plan 套餐密钥');
         const source=node.layerSource||imageSourceFromNode(node);let image=await sourceToDataUrl(source);
         if(!/^data:image\/(png|jpeg);/.test(image)){const converted=new Image();await new Promise((resolve,reject)=>{converted.onload=resolve;converted.onerror=reject;converted.src=image;});const c=document.createElement('canvas');c.width=converted.naturalWidth;c.height=converted.naturalHeight;c.getContext('2d').drawImage(converted,0,0);image=c.toDataURL('image/png');}
@@ -3745,34 +3716,36 @@ async function importProject(file) {
   catch (error) { toast(error.message || "项目文件无法读取", true); }
 }
 function toast(message, isError = false) { const element = document.createElement("div"); element.className = `toast${isError ? " is-error" : ""}`; element.innerHTML = `${icon(isError ? "circle-alert" : "circle-check")}<span>${escapeHtml(message)}</span>`; $("#toastRegion").appendChild(element); refreshIcons(); setTimeout(() => element.remove(), 4300); }
-function setHomeServiceState(label, detail, mode = "") {
-  const status = $("#homeServiceStatus"); const copy = $("#homeServiceDetail");
-  if (status) { status.textContent = label; status.classList.toggle("is-ready", mode === "ready"); status.classList.toggle("is-error", mode === "error"); }
-  if (copy) copy.textContent = detail;
-}async function checkApiStatus() {
-  const element = $("#apiState"); if (!element) return;
-  setHomeServiceState("检查中", "正在检查本机服务与 Image2 网关连接。");
+let connectionCheck = 0;
+function setConnectionLight(status, label) {
+  const light = $("#apiState");
+  light.classList.toggle("is-ready", status === "ready");
+  light.classList.toggle("is-error", status === "error");
+  light.title = label;
+  light.setAttribute("aria-label", label);
+}
+async function checkApiStatus() {
+  const check = ++connectionCheck;
+  setConnectionLight("checking", "Image2 正在检查连接");
   const headers = apiKey ? { "x-image2-api-key": apiKey } : {};
   try {
     const status = await requestJson("/api/status", { headers }, 10_000);
+    if (check !== connectionCheck) return;
     $("#apiBase").value = status.baseUrl || "https://rehdasu.cn/v1";
-    if (!status.ready && !apiKey) {
-      element.classList.remove("is-ready"); element.classList.add("is-error"); element.querySelector("b").textContent = "需要 API Key"; setHomeServiceState("需要 API Key", "本机服务正常，但尚未配置可用的 API Key。", "error"); return;
-    }
-    try {
-      const health = await requestJson("/api/health", { headers }, 20_000);
-      const ready = Boolean(health.ready); element.classList.toggle("is-ready", ready); element.classList.toggle("is-error", !ready); element.querySelector("b").textContent = ready ? "Image2 已验证" : "Image2 模型不可用"; setHomeServiceState(ready ? "连接正常" : "模型不可用", ready ? "本机服务与网关连接正常，可开始生图。" : (health.message || "网关未提供当前模型。"), ready ? "ready" : "error");
-    } catch (error) {
-      element.classList.remove("is-ready"); element.classList.add("is-error"); element.querySelector("b").textContent = error.message || "Image2 网关异常"; setHomeServiceState("网关异常", error.message || "无法连接 Image2 网关。", "error");
-    }
+    if (!status.ready && !apiKey) return setConnectionLight("error", "Image2 需要 API Key");
+    const health = await requestJson("/api/health", { headers }, 20_000);
+    if (check !== connectionCheck) return;
+    setConnectionLight(health.ready ? "ready" : "error", health.ready ? "Image2 连接正常" : "Image2 模型不可用");
   } catch {
-    element.classList.remove("is-ready"); element.classList.add("is-error"); element.querySelector("b").textContent = "本机服务异常"; setHomeServiceState("本机服务异常", "无法访问本地 Node 服务，请尝试恢复生图服务。", "error");
+    if (check === connectionCheck) setConnectionLight("error", "Image2 连接异常");
   }
 }
 async function restartImage2Service() {
-  const checkButton = $("#homeCheckServiceButton"); const restartButton = $("#homeRestartServiceButton");
+  const restartButton = $("#restartServiceButton");
   if (!restartButton || restartButton.disabled) return;
-  checkButton.disabled = true; restartButton.disabled = true; setHomeServiceState("正在恢复", "正在重启本机服务，项目和图片不会被删除。");
+  restartButton.disabled = true;
+  ++connectionCheck;
+  setConnectionLight("checking", "正在重启本机服务");
   try {
     await requestJson("/api/restart", { method: "POST" }, 8_000);
     const startedAt = Date.now(); let ready = false;
@@ -3781,10 +3754,10 @@ async function restartImage2Service() {
       try { await requestJson("/api/status", {}, 1_500); ready = true; break; } catch { /* 服务切换期间短暂不可用 */ }
     }
     if (!ready) throw new Error("本机服务未能在规定时间内恢复");
-    await checkApiStatus(); toast("生图服务已恢复");
+    await checkApiStatus(); toast("本机服务已重启");
   } catch (error) {
-    setHomeServiceState("恢复失败", error.message || "请重新打开桌面应用。", "error"); toast(error.message || "生图服务恢复失败", true);
-  } finally { checkButton.disabled = false; restartButton.disabled = false; }
+    setConnectionLight("error", "本机服务重启失败"); toast(error.message || "生图服务恢复失败", true);
+  } finally { restartButton.disabled = false; }
 }
 async function runVideoGeneratorNode(generator) {
   if (generator.status === "running" && generator.activeJobId) return cancelVideoGeneratorNode(generator);
@@ -3802,9 +3775,9 @@ async function runVideoGeneratorNode(generator) {
   if (linkedAudio.length || isWenwu(generator) || !runningHubApiKey) {
     try {
       const status = await requestJson("/api/status", {}, 10_000);
-      if (isWenwu(generator) && generator.videoSeconds > (status.runninghub?.wenwuMaxSeconds ?? 15)) return toast("请在项目首页点击恢复生图服务，再提交超过 15 秒的视频", true);
-      if (linkedAudio.length && !status.runninghub?.cloneAudioReferences) return toast('请在项目首页恢复生图服务，以启用克隆音频连线', true);
-      if (isWenwu(generator) && status.runninghub?.wenwuWorkflowId !== wenwuId) return toast("请在项目首页点击恢复生图服务，再运行文武双全", true);
+      if (isWenwu(generator) && generator.videoSeconds > (status.runninghub?.wenwuMaxSeconds ?? 15)) return toast("请在设置中点击「重启本机服务」，再提交超过 15 秒的视频", true);
+      if (linkedAudio.length && !status.runninghub?.cloneAudioReferences) return toast('请在设置中点击「重启本机服务」，以启用克隆音频连线', true);
+      if (isWenwu(generator) && status.runninghub?.wenwuWorkflowId !== wenwuId) return toast("请在设置中点击「重启本机服务」，再运行文武双全", true);
       if (!runningHubApiKey && !status.runninghub?.ready) { openSettings(); return toast("请先在设置中保存 RunningHub API Key", true); }
     }
     catch { return toast("本机服务不可用，无法检查 RunningHub 设置", true); }
@@ -3850,8 +3823,8 @@ async function refreshSeedreamSettingsStatus() {
   const statusElement = $("#seedreamKeyStatus"); if (!statusElement) return;
   try {
     const result = await requestJson("/api/status", {}, 5_000);
-    const planStatus = $("#arkPlanKeyStatus"); if (planStatus) planStatus.textContent = result.arkPlan?.ready ? "套餐密钥已配置 · Agent Plan · 使用套餐额度，与普通官方渠道独立" : result.arkPlan ? "尚未配置 Agent Plan 套餐密钥，不使用普通官方密钥代替。" : "请先恢复生图服务以加载套餐渠道。";
-    const arkStatus = $("#arkKeyStatus"); if (arkStatus) arkStatus.textContent = result.ark?.ready ? "火山引擎官方密钥已配置 · Flash / Pro · 最多 10 张参考图" : result.ark ? "尚未配置火山引擎官方密钥，与现有 Seedream 网关独立。" : "请先恢复生图服务以启用火山引擎。";
+    const planStatus = $("#arkPlanKeyStatus"); if (planStatus) planStatus.textContent = result.arkPlan?.ready ? "套餐密钥已配置 · Agent Plan · 使用套餐额度，与普通官方渠道独立" : result.arkPlan ? "尚未配置 Agent Plan 套餐密钥，不使用普通官方密钥代替。" : "请先在设置中重启本机服务以加载套餐渠道。";
+    const arkStatus = $("#arkKeyStatus"); if (arkStatus) arkStatus.textContent = result.ark?.ready ? "火山引擎官方密钥已配置 · Flash / Pro · 最多 10 张参考图" : result.ark ? "尚未配置火山引擎官方密钥，与现有 Seedream 网关独立。" : "请先在设置中重启本机服务以启用火山引擎。";
     statusElement.textContent = result.seedream?.ready ? `已配置 · ${result.seedream.model}` : "尚未配置，保存密钥后即可在生图节点中选择 Seedream。";
   } catch { statusElement.textContent = "本机服务暂时不可用，保存后会在服务恢复时生效。"; }
 }
@@ -3909,16 +3882,15 @@ function bindStaticEvents() {
   $("#closeGeneratedCleanupButton").addEventListener("click", () => $("#generatedCleanupDialog").close());
   $("#cancelGeneratedCleanupButton").addEventListener("click", () => $("#generatedCleanupDialog").close());
   $("#confirmGeneratedCleanupButton").addEventListener("click", () => void confirmGeneratedCleanup());
-  $("#homeCheckServiceButton").addEventListener("click", () => checkApiStatus());
-  $("#homeRestartServiceButton").addEventListener("click", restartImage2Service);
+  $("#restartServiceButton").addEventListener("click", restartImage2Service);
   $$("#homeThemeSwitch [data-theme-value]").forEach(button => button.addEventListener("click", () => setTheme(button.dataset.themeValue)));
   $("#homeSettingsButton").addEventListener("click", openSettings);
   $("#backHomeButton").addEventListener("click", goHome);
 
   workspace.addEventListener("pointerdown", event => {
     closeConnectionMenu();
-    if (state?.flowMode === "templates") return;
-    if (event.target.closest(".flow-switch, .canvas-status, .mobile-panel-button")) return;
+
+    if (event.target.closest(".canvas-status, .mobile-panel-button")) return;
     if (event.target.closest(".canvas-node, .node-port, .node-interactive")) return;
     if (event.button === 2) return;
     // Left-drag pans the empty canvas; Shift keeps the existing box-selection workflow available.
@@ -3926,7 +3898,7 @@ function bindStaticEvents() {
     if (state.tool === "hand" || spacePressed || [0, 1].includes(event.button)) return startPan(event);
   });
   workspace.addEventListener("selectstart", event => { if (!allowsCanvasTextSelection(event.target)) event.preventDefault(); });
-  workspace.addEventListener("wheel", event => { if (state?.flowMode === "workflow") handleWheel(event); }, { passive: false });
+  workspace.addEventListener("wheel", event => { if (state) handleWheel(event); }, { passive: false });
   window.addEventListener("pointermove", handlePointerMove);
   window.addEventListener("pointerup", handlePointerUp);
   window.addEventListener("pointercancel", resetInterruptedInteractionState);
@@ -3934,7 +3906,17 @@ function bindStaticEvents() {
   $("#redoButton").addEventListener("click", redo);
   $("#fitButton").addEventListener("click", fitContent);
   $("#zoomButton").addEventListener("click", () => { state.viewport.scale = 1; updateViewport(); scheduleSave(); });
-  $$("[data-flow-mode]").forEach(button => button.addEventListener("click", () => setFlowMode(button.dataset.flowMode)));
+  for (const button of $$("[data-home-mode]")) {
+    button.addEventListener("click", () => {
+      const templates = button.dataset.homeMode === "templates";
+      $("#homeProjects").hidden = templates;
+      $("#homeTemplates").hidden = !templates;
+      for (const option of $$("[data-home-mode]")) {
+        option.classList.toggle("is-active", option === button);
+        option.setAttribute("aria-pressed", String(option === button));
+      }
+    });
+  }
   $("#importButton").addEventListener("click", () => imageFileInput.click());
   imageFileInput.addEventListener("change", async event => { const files = [...event.target.files || []]; const pending = pendingImageUploadNodeId; pendingImageUploadNodeId = null; if (pending) { if (files[0]) await uploadImageIntoNode(pending, files[0]); event.target.value = ""; return; } await importImages(event.target.files); event.target.value = ""; });
   videoFileInput.addEventListener("change", async event => {
@@ -4056,10 +4038,10 @@ function bindStaticEvents() {
     const historyShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y");
     const clipboardShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "c" || event.key.toLowerCase() === "v");
     const selectAllShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a";
-    if (state?.flowMode === "templates" && !historyShortcut) return;
+
     if (selectAllShortcut && !isEditable) { event.preventDefault(); selectAnswerResponse(selectedAnswerResponse()); return; }
     if (clipboardShortcut && isEditable) return;
-    if (clipboardShortcut && state?.flowMode !== "templates") { const selection = window.getSelection(); const answerTextSelected = Boolean(selection?.toString().trim() && selection.anchorNode?.parentElement?.closest(".answer-response")); if (event.key.toLowerCase() === "c" && answerTextSelected) return; if (event.key.toLowerCase() === "c") { event.preventDefault(); copyWorkflowSelection(); } return; }
+    if (clipboardShortcut) { const selection = window.getSelection(); const answerTextSelected = Boolean(selection?.toString().trim() && selection.anchorNode?.parentElement?.closest(".answer-response")); if (event.key.toLowerCase() === "c" && answerTextSelected) return; if (event.key.toLowerCase() === "c") { event.preventDefault(); copyWorkflowSelection(); } return; }
     if (historyShortcut && editableTarget?.matches("[data-prompt-content]")) { commitEditableHistory(editableTarget); event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
     if (historyShortcut && isEditable) { discardEditableHistory(editableTarget); return; }
     if (historyShortcut && state && !settingsDialog.open && !newProjectDialog.open) { event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
@@ -4068,7 +4050,7 @@ function bindStaticEvents() {
     if (event.code === "Space") { spacePressed = true; workspace.style.cursor = "grab"; event.preventDefault(); }
     if (event.key.toLowerCase() === "v") setActiveTool("select");
     if (event.key.toLowerCase() === "h") setActiveTool("hand");
-    if (state.flowMode !== "templates" && event.key.toLowerCase() === "f") addFrame();
+    if (event.key.toLowerCase() === "f") addFrame();
     if (event.key === "Delete" || event.key === "Backspace") { deleteSelection(); }
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { const node = selectedNode(); if (node?.type === "generator") runGeneratorNode(node.id); }
   });
@@ -4079,7 +4061,7 @@ function bindStaticEvents() {
   workspace.addEventListener("dragover", event => { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"; });
   workspace.addEventListener("drop", async event => {
     event.preventDefault();
-    if (state?.flowMode === "templates") return;
+
     const files = [...event.dataTransfer.files || []];
     if (!files.length) return;
     const hasImages = files.some(file => /^image\/(png|jpeg|webp)$/i.test(file.type));

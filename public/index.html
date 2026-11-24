@@ -7,7 +7,7 @@
   <title>万物维 · Image2 节点画布</title>
   <link rel="icon" type="image/svg+xml" href="/wanwuwei-mark.svg">
   <link rel="alternate icon" href="/favicon.ico">
-  <link rel="stylesheet" href="/styles.css?v=20261124-template">
+  <link rel="stylesheet" href="/styles.css?v=20261124-home">
   <link rel="stylesheet" href="/speech.css">
 </head>
 <body>
@@ -27,32 +27,25 @@
       </div>
     </header>
     <main class="home-main">
-      <div class="projects-heading">
-        <div><span class="eyebrow">WORKSPACES</span><h1>项目</h1><p>为每个故事、角色或商品保留独立的节点工作流。</p></div>
-        <div class="projects-heading-actions">
-          <button class="button button-subtle" id="cleanupUnusedGeneratedButton" type="button"><i data-lucide="hard-drive"></i> 清理未使用图片</button>
-          <button class="button button-primary new-project-button" id="newProjectButton" type="button"><i data-lucide="plus"></i> 新建项目</button>
-        </div>
+      <div class="home-mode-switch" role="group" aria-label="画布模式切换">
+        <button type="button" data-home-mode="workflow" class="is-active" aria-pressed="true"><i data-lucide="workflow"></i> 自由画布</button>
+        <button type="button" data-home-mode="templates" aria-pressed="false"><i data-lucide="layout-template"></i> 一键模板</button>
       </div>
-      <section class="service-health-panel" aria-labelledby="homeServiceTitle">
-        <div class="service-health-copy">
-          <div class="service-health-icon" aria-hidden="true"><i data-lucide="activity"></i></div>
-          <div>
-            <span class="eyebrow">IMAGE2 SERVICE</span>
-            <div class="service-health-title"><strong id="homeServiceTitle">生图服务</strong><span class="service-health-status" id="homeServiceStatus">检查中</span></div>
-            <p id="homeServiceDetail">正在检查本机服务与 Image2 网关连接。</p>
+      <section id="homeProjects" aria-label="自由画布项目">
+        <div class="projects-heading">
+          <div><span class="eyebrow">WORKSPACES</span><h1>项目</h1><p>为每个故事、角色或商品保留独立的节点工作流。</p></div>
+          <div class="projects-heading-actions">
+            <button class="button button-subtle" id="cleanupUnusedGeneratedButton" type="button"><i data-lucide="hard-drive"></i> 清理未使用图片</button>
+            <button class="button button-primary new-project-button" id="newProjectButton" type="button"><i data-lucide="plus"></i> 新建项目</button>
           </div>
         </div>
-        <div class="service-health-actions">
-          <button class="button button-subtle" id="homeCheckServiceButton" type="button"><i data-lucide="plug-zap"></i> 检查连接</button>
-          <button class="button button-primary" id="homeRestartServiceButton" type="button"><i data-lucide="refresh-cw"></i> 恢复生图服务</button>
+        <div class="project-toolbar">
+          <label class="search-field" for="projectSearch"><i data-lucide="search"></i><input id="projectSearch" type="search" placeholder="搜索项目"></label>
+          <span class="project-count" id="projectCount">0 个项目</span>
         </div>
+        <div class="project-grid" id="projectGrid"></div>
       </section>
-      <div class="project-toolbar">
-        <label class="search-field" for="projectSearch"><i data-lucide="search"></i><input id="projectSearch" type="search" placeholder="搜索项目"></label>
-        <span class="project-count" id="projectCount">0 个项目</span>
-      </div>
-      <div class="project-grid" id="projectGrid"></div>
+      <section id="homeTemplates" aria-label="一键模板" hidden><p class="template-empty">暂无模板</p></section>
     </main>
   </section>
 
@@ -69,7 +62,7 @@
         <span class="save-state" id="saveState"><i data-lucide="circle-check"></i> 已保存</span>
       </div>
       <div class="topbar-actions">
-        <div class="api-state" id="apiState"><span></span><b>检查连接</b></div>
+        <span class="api-state" id="apiState" role="img" aria-label="Image2 正在检查连接" title="Image2 正在检查连接"></span>
         <button class="button button-subtle" id="exportProjectButton" type="button"><i data-lucide="package-open"></i> 导出项目</button>
         <button class="icon-button" id="settingsButton" type="button" aria-label="设置" data-tooltip="设置"><i data-lucide="settings-2"></i></button>
       </div>
@@ -96,10 +89,6 @@
     </aside>
 
     <main class="workspace" id="workspace" aria-label="项目画布">
-      <div class="flow-switch" id="flowSwitch" role="group" aria-label="画布模式切换">
-        <button type="button" data-flow-mode="workflow" class="is-active"><i data-lucide="workflow"></i> 自由画布</button>
-        <button type="button" data-flow-mode="templates"><i data-lucide="layout-template"></i> 一键模板</button>
-      </div>
       <div class="selection-rect" id="selectionRect" hidden></div>
       <div class="canvas-scene" id="canvasScene">
         <div class="frame-layer" id="frameLayer"></div>
@@ -166,6 +155,7 @@
         <button type="button" data-line-motion="static"><i data-lucide="minus"></i> 静态</button>
       </div>
       <p class="field-note">静态模式会暂停连线流动与发光，不影响连接、选中和删除。</p>
+      <button type="button" class="button button-subtle" id="restartServiceButton"><i data-lucide="refresh-cw"></i> 重启本机服务</button>
       <label class="field-label" for="apiBase">Image2 API 地址</label>
       <input class="text-input" id="apiBase" type="text" readonly value="https://rehdasu.cn/v1">
       <label class="field-label" for="apiKeyInput">临时 API Key</label>
@@ -230,7 +220,7 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
   <script src="/vendor/lucide.min.js?v=20260724-8"></script>
-  <script type="module" src="/app.js?v=20261124-template"></script>
+  <script type="module" src="/app.js?v=20261124-home"></script>
 </body>
 </html>
 
