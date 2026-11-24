@@ -32,6 +32,8 @@ function resetResult() {
     output.pause(); output.removeAttribute('src'); output.load();
     URL.revokeObjectURL(resultUrl); resultUrl = '';
   }
+  byId('remakeDelete').hidden = true;
+  byId('remakeLength').textContent = '';
   output.hidden = true;
   byId('remakeEmpty').hidden = false;
   byId('remakeDownload').hidden = true;
@@ -82,17 +84,27 @@ byId('removeRemakeVideo').onclick = () => selectVideo(null);
 prompt.oninput = resetResult;
 cancel.onclick = () => active?.abort();
 
-// Record a short, local storyboard in the reference video's aspect ratio.
+byId('remakeDelete').onclick = resetResult;
+for (const control of view.querySelectorAll('.workshop-settings select')) control.onchange = resetResult;
+
+// Record a storyboard in the selected output format.
 async function makeSample(signal) {
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) throw Error('当前浏览器不支持制作样片，请使用桌面 Chrome 或 Edge。');
   await Promise.all(images.map(img => img.decode().catch(() => { throw Error('有图片无法解码，请移除或替换后重试。'); })));
   signal.throwIfAborted();
-  const clip = document.createElement('video'); clip.playsInline = true; clip.muted = true; clip.src = sourceUrl;
+  const clip = document.createElement('video'); clip.playsInline = true; clip.muted = true; clip.loop = true; clip.src = sourceUrl;
   const canvas = document.createElement('canvas');
-  const scale = Math.min(1, 720 / Math.max(source.videoWidth, source.videoHeight));
-  canvas.width = Math.max(2, 2*Math.round(source.videoWidth*scale/2));
-  canvas.height = Math.max(2, 2*Math.round(source.videoHeight*scale/2));
+  const [wide, tall] = byId('remakeRatio').value.split(':').map(Number);
+  const pixels = Number(byId('remakePixels').value);
+  canvas.width = Math.round(pixels * wide / Math.min(wide,tall));
+  canvas.height = Math.round(pixels * tall / Math.min(wide,tall));
   const ctx = canvas.getContext('2d');
+  const filters = {
+    natural: 'none',
+    warm: 'sepia(0.40) saturate(0.88) contrast(1.08)',
+    mono: 'grayscale(1) contrast(1.12)'
+  };
+  ctx.filter = filters[byId('remakeStyle').value];
   const stream = canvas.captureStream(24);
   let recorder, frame, timer;
   try {
@@ -100,8 +112,9 @@ async function makeSample(signal) {
     recorder = new MediaRecorder(stream, mimeType ? {mimeType} : undefined);
     await clip.play(); signal.throwIfAborted();
     const chunks = [];
-    const lead = Math.min(Number.isFinite(clip.duration) ? clip.duration : 4, 4);
-    const total = lead + images.length;
+    const total = Number(byId('remakeDuration').value);
+    const lead = images.length ? Math.min(total * 0.6, Number.isFinite(clip.duration) ? clip.duration : 4) : total;
+    const stillDuration = (total - lead) / Math.max(1, images.length);
     return await new Promise((resolve,reject) => {
       const started = performance.now();
       const fail = () => reject(Error('制作样片失败，请检查视频后重试。'));
@@ -112,7 +125,7 @@ async function makeSample(signal) {
       function draw() {
         if (signal.aborted) return;
         const elapsed = (performance.now()-started)/1000;
-        const media = elapsed < lead ? clip : images[Math.floor(elapsed-lead)];
+        const media = elapsed < lead ? clip : images[Math.floor((elapsed-lead)/stillDuration)];
         if (!media || elapsed >= total) { recorder.stop(); return; }
         const w = media.videoWidth || media.naturalWidth, h = media.videoHeight || media.naturalHeight;
         if (w && h) {
@@ -135,7 +148,7 @@ build.onclick = async () => {
   if (build.disabled) return;
   active = new AbortController(); source.pause(); output.pause();
   refreshControls();
-  const inputs = view.querySelectorAll('[data-pick], #removeRemakeVideo, #remakeThumbs button, textarea');
+  const inputs = view.querySelectorAll('[data-pick], #removeRemakeVideo, #remakeThumbs button, textarea, .workshop-settings select[id], #remakeDelete');
   inputs.forEach(el => el.disabled = true);
   feedback.textContent = '正在读取素材…';
   try {
@@ -146,7 +159,49 @@ build.onclick = async () => {
     byId('remakeEmpty').hidden = true;
     const download = byId('remakeDownload'); download.href = resultUrl; download.hidden = false;
     download.download = '短视频复刻-预览样片.'+(blob.type.includes('mp4')?'mp4':'webm');
+    byId('remakeDelete').hidden = false;
+    byId('remakeLength').textContent = '样片时长 · ' + byId('remakeDuration').value + ' 秒';
     feedback.textContent = '样片已就绪，可以播放或下载。';
   } catch (error) { feedback.textContent = active.signal.aborted ? '已取消，素材和提示词已保留。' : error.message; }
   finally { active = null; inputs.forEach(el=>el.disabled=false); refreshControls(); }
 };
+
+const layout = view.querySelector('.remake-layout');
+const separators = Array.from(layout.querySelectorAll('[data-split]'));
+let cuts = [24, 64];
+function sizePanels() {
+  layout.style.setProperty('--media', cuts[0] + 'fr');
+  layout.style.setProperty('--editor', (cuts[1] - cuts[0]) + 'fr');
+  layout.style.setProperty('--result', (100 - cuts[1]) + 'fr');
+  separators.forEach((handle, index) => {
+    handle.setAttribute('aria-valuenow', Math.round(cuts[index]));
+    handle.setAttribute('aria-valuemin', Math.ceil(index ? cuts[0]+23 : 18));
+    handle.setAttribute('aria-valuemax', Math.floor(index ? 80 : cuts[1]-23));
+  });
+}
+for (const [index, handle] of separators.entries()) {
+  let origin;
+  function move(value) {
+    const low = index ? cuts[0]+23 : 18;
+    const high = index ? 80 : cuts[1]-23;
+    cuts[index] = Math.max(low,Math.min(high,value));
+    sizePanels();
+  }
+  handle.onpointerdown = event => {
+    if (event.button !== 0) return;
+    origin = {x:event.clientX, cut:cuts[index]};
+    handle.setPointerCapture(event.pointerId);
+    handle.classList.add('dragging');
+  };
+  handle.onpointermove = event => {
+    if (origin) move(origin.cut + (event.clientX-origin.x)*100/(layout.clientWidth-20));
+  };
+  handle.onlostpointercapture = () => { origin = null; handle.classList.remove('dragging'); };
+  handle.ondblclick = () => { cuts = [24,64]; sizePanels(); };
+  handle.onkeydown = event => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    move(cuts[index] + (event.key === 'ArrowLeft' ? -1 : 1));
+  };
+}
+sizePanels();

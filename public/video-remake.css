@@ -15,39 +15,72 @@
 .template-caption strong { font-size: 18px; }
 .template-caption small,.remake-back,.remake-note,.remake-feedback { color: var(--muted); }
 .template-caption svg,.remake-back svg,.remake-actions svg { width: 17px; height: 17px; }
-.remake-view { padding-top: 28px; }
-.remake-back { display: inline-flex; align-items: center; gap: 7px; padding: 4px 0; margin-bottom: 18px; background: transparent; cursor: pointer; }
-.remake-layout { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); align-items: start; gap: 18px; }
-.remake-inputs,.remake-result { min-width: 0; }
-.remake-inputs { display: grid; gap: 18px; }
-.remake-panel { padding: clamp(16px,2vw,25px); border: 1px solid var(--line); background: var(--surface); border-radius: 12px; }
-.remake-panel h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 18px; font-size: 18px; }
-.remake-step { padding: 3px 7px; color: var(--primary); background: var(--primary-soft); font: 600 12px/1.5 monospace; border-radius: 4px; }
-.remake-sources { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
-.remake-sources h3 { margin: 0 0 8px; font-size: 13px; }
-.remake-sources small { color: var(--muted); font-size: 11px; font-weight: normal; }
-.remake-drop { border: 1px dashed var(--line-strong); border-radius: 8px; overflow: hidden; background: var(--surface-soft); }
-.remake-drop:focus-within,.remake-drop.is-over,.remake-drop:hover { border-color: var(--primary); }
-.remake-drop button { width: 100%; min-height: 128px; display: grid; place-content: center; justify-items: center; gap: 7px; background: transparent; cursor: pointer; }
-.remake-drop button svg { color: var(--primary); width: 22px; }
-.remake-drop video { width: 100%; height: 128px; display: block; background: #101616; }
-.remake-file,.remake-actions { display: flex; align-items: center; gap: 6px; }
-.remake-file { margin-top: 7px; font-size: 12px; }
-.remake-file span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.remake-file button,.remake-thumbs button { cursor: pointer; }
-.remake-file button { color: var(--primary); background: transparent; padding: 3px; }
-.remake-thumbs { list-style: none; display: flex; flex-wrap: wrap; gap: 7px; margin: 8px 0 0; padding: 0; }
-.remake-thumbs li { position: relative; }
-.remake-thumbs img { display: block; width: 54px; height: 54px; object-fit: cover; border-radius: 5px; }
-.remake-thumbs button { position: absolute; top: 0; right: 0; padding: 1px 5px; border-radius: 4px; background: #182322da; color: #fff; }
-#remakePrompt { width: 100%; padding: 12px; resize: vertical; min-height: 95px; border: 1px solid var(--line); background: var(--surface-soft); border-radius: 6px; color: var(--ink); font: inherit; line-height: 1.6; }
-.remake-actions { margin-top: 12px; }
-.remake-actions button:disabled { opacity: .48; cursor: default; }
-.remake-feedback,.remake-note { font-size: 12px; line-height: 1.6; margin: 10px 0 0; }
-.remake-monitor { display: grid; place-items: center; overflow: hidden; min-height: 210px; aspect-ratio: 16/10; background: radial-gradient(ellipse at 50% 30%,#233634,#10191b); color: #b3c9c2; border-radius: 7px; }
-#remakeEmpty { display: grid; justify-items: center; gap: 10px; font-size: 13px; }
-#remakeEmpty svg { width: 36px; height: 36px; stroke-width: 1.3; }
-#remakeOutput { display: block; width: 100%; height: 100%; min-height: 0; }
-#remakeDownload { margin-top: 12px; text-decoration: none; }
-@media (max-width: 820px) { .remake-layout { grid-template-columns: 1fr; } }
-@media (max-width: 520px) { .remake-sources { grid-template-columns: 1fr; } .remake-monitor { min-height: 175px; } .remake-drop button { min-height: 94px; } }
+/* The workshop has its own materials across all application themes. */
+.home-view:has(.remake-view:not([hidden])) { background: #16100d url('/assets/workshop/iron.webp') repeat; }
+.home-view:has(.remake-view:not([hidden])) .home-header { display: none; }
+.home-main.remake-view {
+  --gold: #e6c18c; --edge: #8c673e; --dark: #191410; --paper: #352b24;
+  color-scheme: dark; color: #f2dfc3; width: 100%; max-width: none; padding: 0 10px 16px;
+  font-family: Inter, "Microsoft YaHei", sans-serif;
+}
+.workshop-mast,.remake-panel {
+  border: 12px solid #5b402a; border-image: url('/assets/workshop/panel.webp') 19 stretch;
+  background: linear-gradient(110deg,#281f19cf,#201b17dd),url('/assets/workshop/iron.webp') repeat;
+  box-shadow: 0 5px 12px #000a; min-width: 0;
+}
+.workshop-mast { margin: 0 -8px 14px; min-height: 87px; display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 0 clamp(12px,2vw,34px); background: #241c14 url('/assets/workshop/iron.webp') center/cover; }
+.workshop-name { display: flex; align-items: center; gap: 17px; }
+.workshop-camera { width: 80px; height: 61px; background: url('/assets/workshop/camera.webp') center/contain no-repeat; mix-blend-mode: lighten; }
+.workshop-name h1,.remake-panel h2,.remake-panel h3,#remakeBuild { font-family: 'STSong','SimSun','Songti SC',serif; }
+.workshop-name h1 { margin: 0; color: #f5d39b; letter-spacing: .08em; font-size: clamp(25px,2.5vw,39px); line-height:1.12; text-shadow: 0 2px 2px #000; }
+.workshop-name small { color: var(--gold); line-height: 1.7; letter-spacing: .22em; }
+.remake-back,.workshop-exports .button,.remake-actions #remakeCancel,.remake-file button { color: #f4d9ae; background: linear-gradient(#51402d,#2d231c); border: 1px solid var(--edge); border-radius: 4px; cursor: pointer; }
+.remake-back { display:inline-flex;align-items:center;gap:6px;padding:7px 12px; }
+.remake-layout { display: grid; grid-template-columns: minmax(0,var(--media,24fr)) 10px minmax(0,var(--editor,40fr)) 10px minmax(0,var(--result,36fr)); align-items: stretch; min-height: clamp(580px,calc(100dvh - 125px),920px); }
+.remake-panel { padding: clamp(8px,1.05vw,19px); position: relative; }
+.workshop-split { position:relative;cursor:col-resize;touch-action:none;user-select:none;background:linear-gradient(90deg,#0c0908,#624427 44%,#2b2118 57%,#100d0a); }
+.workshop-split::after { content:'';position:absolute;top:45%;left:2px;width:6px;height:57px;border-radius:4px;background:repeating-linear-gradient(#ae8857 0 1px,#503c29 2px 5px); }
+.workshop-split:is(:focus-visible,:hover,.dragging) { outline:1px solid #f6ae51; background:#72502d; }
+.remake-sources { display:grid;gap:25px; }
+.remake-sources>div,.workshop-settings { background: #231d18aa; border:1px solid #725436; box-shadow: inset 0 0 0 3px #110e0bb0, inset 0 0 0 4px #68513d; padding:12px;min-width:0; }
+.remake-sources h3 { display:inline-flex;align-items:center;gap:8px;margin:0 0 14px -6px;padding:5px 14px;color:#20140b;background:linear-gradient(145deg,#b08858,#e2bd87 35%,#9b7447);border:2px ridge #997347;font-size:clamp(17px,1.6vw,24px); }
+.remake-sources h3 svg,.remake-panel h2 svg { width:21px; }
+.remake-sources small { font: 11px "Microsoft YaHei",sans-serif; }
+.remake-drop { border:1px dashed #9b7c57;border-radius:7px;overflow:hidden;background:#211b17; }
+.remake-drop.is-over,.remake-drop:focus-within { border-color:#ffc377;box-shadow:inset 0 0 15px #c17a2c33; }
+.remake-drop button { width:100%;min-height:125px;display:grid;place-content:center;justify-items:center;gap:9px;background:transparent;color:#e2cba8;cursor:pointer; }
+.remake-drop button svg { color:#d3a874; }
+.remake-drop video { display:block;width:100%;height:clamp(135px,19vh,205px);background:#100e0d; }
+.remake-file,.workshop-exports,.remake-actions { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.remake-file { margin-top:6px;font-size:12px; }
+.remake-file span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1; }
+.remake-thumbs { list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;max-height:200px;overflow:auto;padding:0;margin:8px 0 0; }
+.remake-thumbs:empty { display:none; }
+.remake-thumbs li { position:relative; }
+.remake-thumbs img { display:block;width:100%;aspect-ratio:3/4;object-fit:cover;border:1px solid #b39670;border-radius:4px; }
+.remake-thumbs button { position:absolute;right:2px;top:2px;background:#211811eb;color:white;border:1px solid #a78861;border-radius:50%;cursor:pointer; }
+.workshop-editor,.remake-result { display:flex;flex-direction:column;gap:15px; }
+.remake-panel h2 { display:flex;align-items:center;gap:12px;margin:0;color:var(--gold);font-size:clamp(20px,2vw,32px);padding:0 4px 10px;border-bottom:1px solid var(--edge);text-shadow:0 2px #160e07; }
+#remakePrompt { flex:1;min-height:190px;width:100%;resize:none;color:#fff2d8;background:linear-gradient(120deg,#302720,#241f1c);padding:18px;font:inherit;font-size:16px;line-height:1.75;border:3px ridge #907048;border-radius:6px; }
+#remakePrompt::placeholder { color:#ae9e8b; }
+.workshop-settings { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:13px 9px; }
+.workshop-settings label { display:grid;gap:6px;font-size:12px;color:#dbc4a4; }
+.workshop-settings select { min-width:0;width:100%;color:#f2dfc4;background:#33281e;border:1px solid #896842;border-radius:4px;padding:6px 2px; }
+.remake-actions { justify-content:center; }
+#remakeBuild { border:0;background:#432811 url("/assets/workshop/button.webp") center / 100% 100% no-repeat;box-shadow:inset 0 0 12px #ec943455,0 2px 8px #cd813d55;color:#ffe0a0;min-height:66px;min-width:78%;font-size:clamp(18px,1.6vw,26px);letter-spacing:.05em; }
+#remakeBuild:disabled { filter:saturate(.5);opacity:.65; }
+#remakeBuild:enabled:hover { box-shadow:inset 0 0 15px #ffa94d77,0 0 13px #e78d3e88; }
+.remake-feedback,.remake-note,.workshop-exports small { font-size:12px;color:#c3b29c;line-height:1.6;margin:0; }
+.remake-feedback { text-align:center; }
+.remake-result { isolation:isolate; }
+.remake-result::after { content:'';position:absolute;z-index:-1;inset:auto 0 0 auto;width:83%;height:24%;background:url('/assets/workshop/gears.webp') bottom right/contain no-repeat;mask-image:linear-gradient(to right,transparent,#000 38%);opacity:.85; }
+.remake-monitor { display:grid;place-items:center;position:relative;overflow:hidden;aspect-ratio:4/3;min-height:180px;background:radial-gradient(#241f1a,#080706 85%);border:6px ridge #9a7346;border-radius:7px;box-shadow:0 4px 12px #060403; }
+#remakeEmpty { display:grid;gap:10px;justify-items:center;color:#b79a74; }
+#remakeEmpty svg { width:38px;height:38px; }
+#remakeOutput { position:absolute;width:100%;height:100%;object-fit:contain; }
+.workshop-exports { order:1; }
+.remake-note { order:2;max-width:38em; }
+.workshop-exports small { margin-left:auto; }
+@media(min-width:901px) and (max-width:1180px) { .workshop-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:900px) { .remake-layout { display:flex;flex-direction:column;gap:12px; } .workshop-split { display:none; } .remake-sources { grid-template-columns:repeat(2,minmax(0,1fr));gap:10px; } .remake-result::after { display:none; } .remake-monitor { aspect-ratio:16/9; } }
+@media(max-width:540px) { .workshop-camera { width:44px;height:42px; } .workshop-name { gap:5px; } .remake-sources { grid-template-columns:1fr; } .workshop-mast { padding:0 2px; } .workshop-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } }
