@@ -260,15 +260,6 @@ function generatorModelLabel(modelId, fallback = "Image2") {
 }
 function generatorReferenceLimit(node) { if (isArkProvider(node?.provider)) return 10; if (node?.mediaType === "video") return runningHubVideoMode(node).inputs.length; if (["runninghub-krea2", "runninghub-moss"].includes(node?.provider)) return 0; if (node?.provider === "midjourney") return 4; if (node?.provider === "moyu") return 6; return 8; }
 const nodeLabels = { speech: "声音克隆", audio: "音频结果", prompt: "提示词", composition: "参数控制", image: "图像", video: "视频", "video-editor": "视频剪辑", "video-preview": "成片预览", generator: "生图", answer: "模型回答", note: "便签", frame: "画板", loading: "生成中" };
-const scriptRoleTypes = [
-  { id: "male-1", gender: "male", label: "男性 1" },
-  { id: "male-2", gender: "male", label: "男性 2" },
-  { id: "male-3", gender: "male", label: "男性 3" },
-  { id: "female-1", gender: "female", label: "女性 1" },
-  { id: "female-2", gender: "female", label: "女性 2" },
-  { id: "female-3", gender: "female", label: "女性 3" }
-];
-const scriptStoryTypeOptions = ["阻碍型", "两难型", "倒计时型", "信息揭露型", "身份危机型", "背叛型", "追逐型", "诱惑型", "灾难型", "资源争夺型", "代价累积型", "身份暴露型", "关系逆转型", "不可言说型"];
 const defaultPromptComposition = Object.freeze({ perspective: null, horizon: 50, tilt: 0, depth: null, focalLength: null, cameraHeight: null, cameraDirection: null, cameraAngle: null, shotSize: null, horizonEnabled: false, horizonPending: false, panel: "parameters", visualStyle: null, temperature: null, palette: null, saturation: null, tone: null, contrast: null, texture: null });
 const compositionPerspectiveLabels = { "left-near": "左近右远", "right-near": "右近左远", parallel: "平行视角" };
 const compositionDepthLabels = { shallow: "浅景深", balanced: "均衡景深", deep: "深景深" };
@@ -304,11 +295,7 @@ const cropDialog = $("#cropDialog");
 const cropCanvas = $("#cropCanvas");
 const cropSourceImage = $("#cropSourceImage");
 const cropSelection = $("#cropSelection");
-const dialogueScriptDialog = $("#dialogueScriptDialog");
 const selectionRect = $("#selectionRect");
-const scriptFlowStage = $("#scriptFlowStage");
-const scriptEdgeLayer = $("#scriptEdgeLayer");
-const scriptNodeLayer = $("#scriptNodeLayer");
 const activeProjectSessionKey = "image2-canvas-active-project";
 
 let state = null;
@@ -338,12 +325,10 @@ function clearWorkflowInteractionState() {
   if (selectionRect) selectionRect.hidden = true;
 }
 function resetInterruptedInteractionState() {
-  const scriptSessions = [scriptDragSession, scriptPanSession, scriptConnectionDraft, scriptSelectionSession, scriptPanelResizeSession, scriptStoryResizeSession, scriptEmotionPointSession, scriptEmotionBoardDragSession, scriptEmotionResizeSession, scriptFrameResizeSession, scriptCharacterArcPointSession, scriptCharacterArcResizeSession, scriptGoalPointSession, scriptGoalResizeSession, scriptAssistantResizeSession, scriptNoteResizeSession, scriptFloatingPanelSession, scriptManagerRoleDragSession, scriptManagerSegmentDragSession, scriptManagerActResizeSession];
-  const hadInteraction = Boolean(dragSession || resizeSession || panSession || selectionSession || connectionDraft || scriptSessions.some(Boolean));
+  const hadInteraction = Boolean(dragSession || resizeSession || panSession || selectionSession || connectionDraft || panelResizeSession);
   if (!hadInteraction) {
     spacePressed = false;
     workspace?.classList.remove("is-flow-interacting", "is-panning");
-    scriptFlowStage?.classList.remove("is-interacting");
     return;
   }
   dragSession?.elements?.forEach(item => {
@@ -352,22 +337,15 @@ function resetInterruptedInteractionState() {
     item.element.style.willChange = "";
     item.element.classList.remove("is-dragging");
   });
-  [resizeSession, scriptFloatingPanelSession, scriptGoalResizeSession, scriptNoteResizeSession, scriptAssistantResizeSession, scriptCharacterArcResizeSession, scriptFrameResizeSession, scriptEmotionResizeSession, scriptEmotionBoardDragSession, scriptStoryResizeSession].forEach(session => { if (session?.element) session.element.style.willChange = ""; });
+  if (resizeSession?.element) resizeSession.element.style.willChange = "";
   clearWorkflowInteractionState();
-  scriptDragSession = null; scriptPanSession = null; scriptConnectionDraft = null; scriptSelectionSession = null;
-  scriptPanelResizeSession = null; scriptStoryResizeSession = null; scriptEmotionPointSession = null; scriptEmotionBoardDragSession = null; scriptEmotionResizeSession = null;
-  scriptFrameResizeSession = null; scriptCharacterArcPointSession = null; scriptCharacterArcResizeSession = null; scriptGoalPointSession = null; scriptGoalResizeSession = null;
-  scriptAssistantResizeSession = null; scriptNoteResizeSession = null; scriptFloatingPanelSession = null; scriptManagerRoleDragSession = null; scriptManagerSegmentDragSession = null; scriptManagerActResizeSession = null;
+  panelResizeSession = null;
+  document.body.classList.remove("is-resizing-panel");
   workspace?.classList.remove("is-flow-interacting", "is-panning");
-  scriptFlowStage?.classList.remove("is-interacting");
   if (selectionRect) selectionRect.hidden = true;
   spacePressed = false;
   if (!state) return;
-  if (state.flowMode === "script") {
-    renderScriptFlow(); renderLibrary(); renderInspector();
-  } else {
-    renderCanvas(); renderCanvasSelection(); syncVideoGeneratorPortPositions(); renderEdges(); renderInspector();
-  }
+  renderCanvas(); renderCanvasSelection(); syncVideoGeneratorPortPositions(); renderEdges(); renderInspector();
   updateHistoryButtons();
   scheduleSave();
 }
@@ -386,28 +364,13 @@ const promptQuickSelection = new Map();
 const promptFormatSelection = new Map();
 let selectedEdgeId = null;
 let crossProjectSourceProjectId = "";
-let scriptDragSession = null;
-let scriptPanSession = null;
-let scriptConnectionDraft = null;
-let scriptSelectionSession = null;
-let scriptPanelResizeSession = null;
-let scriptStoryResizeSession = null;
-let scriptEmotionPointSession = null;
-let scriptEmotionBoardDragSession = null;
-let scriptEmotionResizeSession = null;
-
+let panelResizeSession = null;
 function workspaceSessionSnapshot() {
   if (!state?.id) return null;
-  const scriptViewport = state.scriptFlow?.viewport;
   return {
     projectId: state.id,
-    flowMode: state.flowMode === "script" ? "script" : "workflow",
-    viewport: state.viewport,
-    scriptViewport: scriptViewport && {
-      x: Number(scriptViewport.x) || 0,
-      y: Number(scriptViewport.y) || 0,
-      scale: Number(scriptViewport.scale) || 1
-    }
+    flowMode: state.flowMode,
+    viewport: state.viewport
   };
 }
 function rememberActiveProject() {
@@ -426,55 +389,21 @@ function clearActiveProjectSession() {
 }
 function restoreWorkspaceSession(nextState, saved) {
   if (!saved || saved.projectId !== nextState.id) return;
-  if (saved.flowMode === "script" || saved.flowMode === "workflow") nextState.flowMode = saved.flowMode;
+  if (saved.flowMode) nextState.flowMode = normalizeFlowMode(saved.flowMode);
   const restoreViewport = (target, source, min, max) => {
     if (!target || !source || !Number.isFinite(Number(source.x)) || !Number.isFinite(Number(source.y)) || !Number.isFinite(Number(source.scale))) return;
     target.x = Number(source.x); target.y = Number(source.y); target.scale = Math.min(max, Math.max(min, Number(source.scale)));
   };
   restoreViewport(nextState.viewport, saved.viewport, WORKFLOW_ZOOM_MIN, WORKFLOW_ZOOM_MAX);
-  restoreViewport(nextState.scriptFlow?.viewport, saved.scriptViewport, SCRIPT_ZOOM_MIN, SCRIPT_ZOOM_MAX);
 }
-let scriptFrameResizeSession = null;
-let scriptCharacterArcPointSession = null;
-let scriptCharacterArcResizeSession = null;
-let scriptGoalPointSession = null;
-let scriptGoalResizeSession = null;
-let scriptAssistantResizeSession = null;
-let scriptNoteResizeSession = null;
-let scriptAssistantPendingIds = new Set();
-let characterArcRolePickerId = "";
-let characterGoalRolePickerId = "";
-let storyTypePickerId = "";
-let scriptFloatingPanelSession = null;
-let scriptManagerRoleDragSession = null;
-let scriptManagerSegmentDragSession = null;
-let scriptManagerActResizeSession = null;
-let managerSegmentMenuId = "";
-let scriptRoleAddGuard = { roleTypeId: "", at: 0 };
-let scriptClipboard = null;
-let scriptPasteSerial = 0;
 let workflowClipboard = null;
 let workflowPasteSerial = 0;
-let dialogueEditor = null;
-let dialoguePanelSession = null;
-let dialogueMenuEntryId = "";
-let dialogueAnalysisMenuRoleId = "";
-let dialogueMarkerDragId = "";
-let dialoguePanelIsMaximized = false;
-let dialogueDraftUndoStack = [];
-let dialogueDraftRedoStack = [];
-const dialogueEditableHistorySessions = new WeakMap();
-const dialoguePanelLayout = { x: 190, y: 82, width: 860, height: 630 };
-const dialogueAnalysisLayout = { width: 272 };
-const dialogueAnalysisFields = [{ key: "initial", label: "初始", placeholder: "输入初始状态或背景" }, { key: "event", label: "事件", placeholder: "输入触发的事件" }, { key: "reaction", label: "反应", placeholder: "输入角色直接反应" }, { key: "mind", label: "心理", placeholder: "输入内心想法或动机" }, { key: "decision", label: "决策", placeholder: "输入做出的关键决定" }, { key: "action", label: "行动", placeholder: "输入具体行动" }, { key: "obstacle", label: "阻碍", placeholder: "输入面临的阻碍" }, { key: "method", label: "方法", placeholder: "输入解决方式" }, { key: "change", label: "改变", placeholder: "输入发生的改变" }, { key: "ending", label: "末尾", placeholder: "输入阶段性的结果" }];
 let spacePressed = false;
 let saveTimer = null;
 let saveRevision = 0;
 let projectSaveQueue = Promise.resolve();
 const WORKFLOW_ZOOM_MIN = 0.05;
 const WORKFLOW_ZOOM_MAX = 5;
-const SCRIPT_ZOOM_MIN = 0.05;
-const SCRIPT_ZOOM_MAX = 5;
 const generationPollFailures = new Map();
 let generationElapsedClock = null;
 let apiKey = "";
@@ -484,9 +413,6 @@ let projectSearch = "";
 let projectOpeningId = null;
 let generatedCleanupPreview = null;
 let edgeRenderFrame = 0;
-let scriptEdgeRenderFrame = 0;
-let scriptSelectionFrame = 0;
-let pendingScriptSelectionPoint = null;
 const generationPollers = new Map();
 
 function uid(prefix = "item") {
@@ -739,88 +665,6 @@ function createAnswerNode(x, y) {
 function createReferenceNode(x, y) {
   return { id: uid("ref"), type: "image", name: "参考图", x, y, width: 270, height: nodeHeight("image"), src: "", source: "参考图", ratio: "未上传", createdAt: Date.now() };
 }
-function createScriptFlow() {
-  return {
-    characters: [], relationships: [], storyCards: [], storyLinks: [], storyFrames: [], emotionBoards: [], emotionLinks: [], characterArcs: [], characterGoals: [], aiAssistants: [], scriptNotes: [], selectedIds: [], selectedEdgeId: null,
-    viewport: { x: 0, y: 0, scale: 1 }, panelWidths: { library: 238, inspector: 286 }, characterCounter: 1,
-    emotionBoard: { visible: false, x: 260, y: 520, width: 720, height: 260, levels: {} },
-    characterManager: { visible: false, x: 250, y: 90, width: 880, height: 460, acts: [{ title: "第一幕", subtitle: "铺垫与引入" }, { title: "第二幕", subtitle: "冲突升级与发展" }, { title: "第三幕", subtitle: "高潮与结局" }], actSplits: [33.333, 66.667], paragraphs: [] },
-    characterNotes: { visible: false, roleId: "", x: 1170, y: 122, width: 280, height: 390 }
-  };
-}
-function normalizeScriptFlow(flow) {
-  const base = createScriptFlow(); const next = { ...base, ...(flow || {}) };
-  next.characters = Array.isArray(next.characters) ? next.characters.filter(Boolean).map((role, index) => ({ id: role.id || uid("role"), type: "character", roleType: scriptRoleTypes.some(item => item.id === role.roleType) ? role.roleType : "male-1", gender: role.gender === "female" ? "female" : "male", name: role.name || "", identity: role.identity || "", age: role.age || "", occupation: role.occupation || "", personality: role.personality || "", goal: role.goal || "", bio: role.bio || "", tags: Array.isArray(role.tags) ? role.tags : [], managementPosition: Math.min(96, Math.max(4, Number.isFinite(Number(role.managementPosition)) ? Number(role.managementPosition) : Math.min(88, 12 + index * 16))), x: Number.isFinite(role.x) ? role.x : 220 + index * 150, y: Number.isFinite(role.y) ? role.y : 160, createdAt: role.createdAt || Date.now() + index })) : [];
-  next.storyCards = Array.isArray(next.storyCards) ? next.storyCards.filter(Boolean).map((card, index) => ({ id: card.id || uid("story"), type: "story-card", title: card.title || "未命名情节", scene: card.scene || "", time: card.time || "", location: card.location || "", characters: card.characters || "", mood: card.mood || "", goal: card.goal || "", initialSituation: card.initialSituation || "", finalSituation: card.finalSituation || "", storyType: card.storyType || "", storyTypeMode: card.storyTypeMode === "custom" || (card.storyType && !scriptStoryTypeOptions.includes(card.storyType)) ? "custom" : "preset", content: String(card.content || ""), displayNumber: String(card.displayNumber || "").replace(/[^0-9]/g, "").slice(0, 4), dialogueAnalysis: card.dialogueAnalysis && typeof card.dialogueAnalysis === "object" && !Array.isArray(card.dialogueAnalysis) ? card.dialogueAnalysis : {}, dialogueAnalysisHiddenRoles: Array.isArray(card.dialogueAnalysisHiddenRoles) ? card.dialogueAnalysisHiddenRoles.filter(id => typeof id === "string") : [], dialogue: Array.isArray(card.dialogue) ? card.dialogue.filter(Boolean).map(entry => ({ id: entry.id || uid("dialogue"), type: ["speech", "action", "narration"].includes(entry.type) ? entry.type : "speech", roleId: typeof entry.roleId === "string" ? entry.roleId : "", content: String(entry.content || "") })) : [], x: Number.isFinite(card.x) ? card.x : 240 + index * 260, y: Number.isFinite(card.y) ? card.y : 220, width: Math.min(440, Math.max(185, Number(card.width) || 220)), height: Math.min(620, Math.max(250, Number(card.height) || 330)), createdAt: card.createdAt || Date.now() + index })) : [];
-  next.storyFrames = Array.isArray(next.storyFrames) ? next.storyFrames.filter(Boolean).map((frame, index) => ({ id: frame.id || uid("script-frame"), type: "story-frame", name: frame.name || `剧本分组 ${index + 1}`, x: Number.isFinite(frame.x) ? frame.x : 180 + index * 40, y: Number.isFinite(frame.y) ? frame.y : 140 + index * 40, width: Math.max(300, Number(frame.width) || 620), height: Math.max(230, Number(frame.height) || 420), createdAt: frame.createdAt || Date.now() + index })) : [];
-  const characterIds = new Set(next.characters.map(role => role.id)); const storyIds = new Set(next.storyCards.map(card => card.id)); const frameIds = new Set(next.storyFrames.map(frame => frame.id)); const allIds = new Set([...characterIds, ...storyIds, ...frameIds]);
-  next.relationships = Array.isArray(next.relationships) ? next.relationships.filter(link => link && characterIds.has(link.source) && characterIds.has(link.target) && link.source !== link.target).map(link => ({ id: link.id || uid("rel"), source: link.source, target: link.target })) : [];
-  next.storyLinks = Array.isArray(next.storyLinks) ? next.storyLinks.filter(link => link && storyIds.has(link.source) && storyIds.has(link.target) && link.source !== link.target).map(link => ({ id: link.id || uid("story-link"), source: link.source, target: link.target })) : [];
-  next.selectedIds = Array.isArray(next.selectedIds) ? next.selectedIds : [];
-  next.selectedEdgeId = typeof next.selectedEdgeId === "string" ? next.selectedEdgeId : null;
-  const viewport = next.viewport || {}; next.viewport = { x: Number.isFinite(viewport.x) ? viewport.x : 0, y: Number.isFinite(viewport.y) ? viewport.y : 0, scale: Math.min(WORKFLOW_ZOOM_MAX, Math.max(WORKFLOW_ZOOM_MIN, Number.isFinite(viewport.scale) ? viewport.scale : 1)) };
-  const panelWidths = next.panelWidths || {}; next.panelWidths = { library: Math.min(480, Math.max(190, Number(panelWidths.library) || 238)), inspector: Math.min(520, Math.max(220, Number(panelWidths.inspector) || 286)) };
-  const board = next.emotionBoard || {}; next.emotionBoard = { visible: Boolean(board.visible), x: Number.isFinite(board.x) ? board.x : 260, y: Number.isFinite(board.y) ? board.y : 520, width: Math.min(1000, Math.max(420, Number(board.width) || 720)), height: Math.min(520, Math.max(210, Number(board.height) || 260)), levels: board.levels && typeof board.levels === "object" ? board.levels : {} };
-  const rawBoards = Array.isArray(next.emotionBoards) && next.emotionBoards.length ? next.emotionBoards : (next.emotionBoard.visible ? [next.emotionBoard] : []);
-  next.emotionBoards = rawBoards.filter(Boolean).map((item, index) => ({ id: item.id || uid("emotion"), type: "emotion-board", x: Number.isFinite(item.x) ? item.x : 260 + index * 48, y: Number.isFinite(item.y) ? item.y : 520 + index * 42, width: Math.min(1000, Math.max(420, Number(item.width) || 720)), height: Math.min(520, Math.max(210, Number(item.height) || 260)), levels: item.levels && typeof item.levels === "object" ? item.levels : {}, labels: item.labels && typeof item.labels === "object" ? item.labels : {}, createdAt: item.createdAt || Date.now() + index }));
-  const rawCharacterArcs = Array.isArray(next.characterArcs) ? next.characterArcs : [];
-  next.characterArcs = rawCharacterArcs.filter(Boolean).map((item, index) => { const stages = item.stages && typeof item.stages === "object" ? item.stages : {}; return { id: item.id || uid("character-arc"), type: "character-arc", roleIds: Array.isArray(item.roleIds) ? item.roleIds.filter(id => characterIds.has(id)) : [], stages: { origin: { label: "原始状态", text: String(stages.origin?.text || ""), position: Math.min(96, Math.max(4, Number(stages.origin?.position) || 18)) }, event: { label: "重大事件", text: String(stages.event?.text || ""), position: Math.min(96, Math.max(4, Number(stages.event?.position) || 50)) }, result: { label: "转化结果", text: String(stages.result?.text || ""), position: Math.min(96, Math.max(4, Number(stages.result?.position) || 82)) } }, x: Number.isFinite(item.x) ? item.x : 260 + index * 44, y: Number.isFinite(item.y) ? item.y : 220 + index * 44, width: Math.min(1200, Math.max(620, Number(item.width) || 820)), height: Math.min(700, Math.max(320, Number(item.height) || 390)), createdAt: item.createdAt || Date.now() + index }; });
-  const rawCharacterGoals = Array.isArray(next.characterGoals) ? next.characterGoals : [];
-  const normalizeGoalEntries = (entries, prefix) => entries.filter(Boolean).map((entry, entryIndex) => ({
-    id: entry.id || uid(prefix),
-    text: String(entry.text || ""),
-    position: Math.min(96, Math.max(4, Number.isFinite(Number(entry.position)) ? Number(entry.position) : Math.min(92, 12 + entryIndex * 24)))
-  }));
-  next.characterGoals = rawCharacterGoals.filter(Boolean).map((item, index) => ({
-    id: item.id || uid("character-goal"), type: "character-goal",
-    roleIds: Array.isArray(item.roleIds) ? item.roleIds.filter(id => characterIds.has(id)) : [],
-    surfaceGoals: normalizeGoalEntries(Array.isArray(item.surfaceGoals) ? item.surfaceGoals : [], "surface-goal"),
-    coreGoals: normalizeGoalEntries(Array.isArray(item.coreGoals) ? item.coreGoals : [], "core-goal"),
-    x: Number.isFinite(item.x) ? item.x : 280 + index * 44,
-    y: Number.isFinite(item.y) ? item.y : 240 + index * 44,
-    width: Math.max(680, Number(item.width) || 900),
-    height: Math.max(360, Number(item.height) || 520),
-    createdAt: item.createdAt || Date.now() + index
-  }));
-  const rawScriptNotes = Array.isArray(next.scriptNotes) ? next.scriptNotes : [];
-  next.scriptNotes = rawScriptNotes.filter(Boolean).map((item, index) => ({ id: item.id || uid("script-note"), type: "script-note", content: String(item.content || ""), x: Number.isFinite(item.x) ? item.x : 320 + index * 34, y: Number.isFinite(item.y) ? item.y : 360 + index * 34, width: Math.min(720, Math.max(200, Number(item.width) || 280)), height: Math.min(720, Math.max(160, Number(item.height) || 210)), createdAt: item.createdAt || Date.now() + index }));
-  const scriptNoteIds = new Set(next.scriptNotes.map(item => item.id));
-  const emotionBoardIds = new Set(next.emotionBoards.map(item => item.id)); const characterArcIds = new Set(next.characterArcs.map(item => item.id)); const characterGoalIds = new Set(next.characterGoals.map(item => item.id));
-  const assistantTargets = new Set([...allIds, ...emotionBoardIds, ...characterArcIds, ...characterGoalIds, ...scriptNoteIds, "character-manager"]);
-  next.aiAssistants = Array.isArray(next.aiAssistants) ? next.aiAssistants.filter(Boolean).map((item, index) => ({ id: item.id || uid("script-ai"), type: "ai-assistant", targetId: assistantTargets.has(item.targetId) ? item.targetId : "", instruction: String(item.instruction || ""), answer: String(item.answer || ""), error: String(item.error || ""), status: item.status === "running" && scriptAssistantPendingIds.has(item.id) ? "running" : "idle", model: "gpt-5.6", x: Number.isFinite(item.x) ? item.x : 320 + index * 36, y: Number.isFinite(item.y) ? item.y : 260 + index * 36, width: Math.min(900, Math.max(360, Number(item.width) || 520)), height: Math.min(760, Math.max(320, Number(item.height) || 430)), createdAt: item.createdAt || Date.now() + index })) : [];
-  const aiAssistantIds = new Set(next.aiAssistants.map(item => item.id)); next.selectedIds = next.selectedIds.filter(id => allIds.has(id) || emotionBoardIds.has(id) || characterArcIds.has(id) || characterGoalIds.has(id) || scriptNoteIds.has(id) || aiAssistantIds.has(id));
-  next.emotionLinks = Array.isArray(next.emotionLinks) ? next.emotionLinks.filter(link => link && emotionBoardIds.has(link.source) && storyIds.has(link.target)).map(link => ({ id: link.id || uid("emotion-link"), source: link.source, target: link.target, createdAt: Number.isFinite(link.createdAt) ? link.createdAt : 0 })) : []; const linkedStoryIds = new Set(); next.emotionLinks = next.emotionLinks.filter(link => { if (linkedStoryIds.has(link.target)) return false; linkedStoryIds.add(link.target); return true; });
-  if (!next.emotionLinks.length && !Array.isArray(flow?.emotionLinks) && next.emotionBoard.visible && next.emotionBoards[0]) next.emotionLinks = next.storyCards.map((card, index) => ({ id: uid("emotion-link"), source: next.emotionBoards[0].id, target: card.id, createdAt: index })); const edgeIds = new Set([...next.relationships, ...next.storyLinks, ...next.emotionLinks].map(link => link.id)); next.selectedEdgeId = edgeIds.has(next.selectedEdgeId) ? next.selectedEdgeId : null;
-  const manager = next.characterManager || {};
-  const acts = Array.isArray(manager.acts) ? manager.acts : [];
-  const rawActSplits = Array.isArray(manager.actSplits) ? manager.actSplits : [33.333, 66.667];
-  const firstActSplit = Math.min(70, Math.max(15, Number(rawActSplits[0]) || 33.333));
-  const secondActSplit = Math.min(85, Math.max(firstActSplit + 15, Number(rawActSplits[1]) || 66.667));
-  next.characterManager = {
-    visible: Boolean(manager.visible),
-    x: Number.isFinite(manager.x) ? manager.x : 250,
-    y: Number.isFinite(manager.y) ? manager.y : 90,
-    width: Math.max(620, Number(manager.width) || 880),
-    height: Math.min(720, Math.max(430, Number(manager.height) || 460)),
-    acts: [0, 1, 2].map(index => ({ title: typeof acts[index]?.title === "string" ? acts[index].title : ["第一幕", "第二幕", "第三幕"][index], subtitle: typeof acts[index]?.subtitle === "string" ? acts[index].subtitle : ["铺垫与引入", "冲突升级与发展", "高潮与结局"][index] })),
-    actSplits: [firstActSplit, secondActSplit],
-    paragraphs: (Array.isArray(manager.paragraphs) ? manager.paragraphs : []).filter(item => item && typeof item === "object").map((item, index) => ({ id: item.id || uid("segment"), title: typeof item.title === "string" ? item.title : "段落 " + (index + 1), content: typeof item.content === "string" ? item.content : "", position: Math.min(94, Math.max(6, Number(item.position) || 10 + index * 18)) }))
-  };
-  const notes = next.characterNotes || {};
-  next.characterNotes = {
-    visible: Boolean(notes.visible) && characterIds.has(notes.roleId),
-    roleId: characterIds.has(notes.roleId) ? notes.roleId : "",
-    x: Number.isFinite(notes.x) ? notes.x : 1170,
-    y: Number.isFinite(notes.y) ? notes.y : 122,
-    width: Math.min(560, Math.max(240, Number(notes.width) || 280)),
-    height: Math.min(720, Math.max(270, Number(notes.height) || 390))
-  };
-  next.characterCounter = Math.max(Number(next.characterCounter) || 1, next.characters.length + 1); return next;
-}
-function ensureScriptFlow() { if (!state) return createScriptFlow(); state.scriptFlow = normalizeScriptFlow(state.scriptFlow); return state.scriptFlow; }function createScriptCharacter(roleTypeId, x, y) {
-  const roleType = scriptRoleTypes.find(item => item.id === roleTypeId) || scriptRoleTypes[0];
-  return { id: uid("role"), type: "character", roleType: roleType.id, gender: roleType.gender, name: "", identity: "", age: "", occupation: "", personality: "", goal: "", bio: "", tags: [], managementPosition: 50, x, y, createdAt: Date.now() };
-}
 function createStarterProject(name, theme = "light", sample = false) {
   const prompt = createPromptNode(70, 90, sample ? "古代将军府厨房内，年轻女厨娘林小满端着一碗蛋浆蜜饮，三分之二侧身，神情专注，暖色烛光与清晨天光交织，中景，电影感写实画面，服装与角色参考保持一致" : "");
   const generator = createGeneratorNode(520, 100);
@@ -836,7 +680,7 @@ function createStarterProject(name, theme = "light", sample = false) {
     images.forEach((imageNode, index) => edges.push({ id: uid("edge"), source: imageNode.id, sourcePort: "image", target: generator.id, targetPort: `image-${index}`, type: "image" }));
   }
   const now = Date.now();
-  return { version: 2, id: uid("project"), projectName: name, theme, createdAt: now, updatedAt: now, nodes, edges, selectedIds: [], selectedEdgeId: null, viewport: { x: 180, y: 95, scale: 0.72 }, tool: "select", libraryTab: "modules", flowMode: "workflow", panelWidths: { library: 238, inspector: 286 }, scriptFlow: createScriptFlow(), recentIds: [], frameCounter: 1 };
+  return { version: 2, id: uid("project"), projectName: name, theme, createdAt: now, updatedAt: now, nodes, edges, selectedIds: [], selectedEdgeId: null, viewport: { x: 180, y: 95, scale: 0.72 }, tool: "select", libraryTab: "modules", flowMode: "workflow", panelWidths: { library: 238, inspector: 286 }, recentIds: [], frameCounter: 1 };
 }
 function normalizeProject(project) {
   if (!project) return createStarterProject("未命名项目", globalTheme);
@@ -890,7 +734,8 @@ function normalizeProject(project) {
       if (node.type === "frame") return { ...node, name: node.name || "工作流分组", width: node.width || 700, height: node.height || 480 };
       return node;
     });
-    const panelWidths = normalized.panelWidths || {}; normalized.panelWidths = { library: Math.min(480, Math.max(190, Number(panelWidths.library) || 238)), inspector: Math.min(520, Math.max(220, Number(panelWidths.inspector) || 286)) }; normalized.scriptFlow = normalizeScriptFlow(normalized.scriptFlow);
+    const panelWidths = normalized.panelWidths || {}; normalized.panelWidths = { library: Math.min(480, Math.max(190, Number(panelWidths.library) || 238)), inspector: Math.min(520, Math.max(220, Number(panelWidths.inspector) || 286)) };
+    normalized.flowMode = normalizeFlowMode(project.flowMode);
     return normalized;
   }
   const migrated = createStarterProject(project.projectName || "迁移项目", project.theme || globalTheme);
@@ -907,7 +752,8 @@ function normalizeProject(project) {
   legacyImages.slice(0, 8).forEach((imageNode, index) => migrated.edges.push({ id: uid("edge"), source: imageNode.id, sourcePort: "image", target: generator.id, targetPort: `image-${index}`, type: "image" }));
   migrated.viewport = project.viewport || migrated.viewport;
   migrated.recentIds = project.recentIds || [];
-  migrated.scriptFlow = normalizeScriptFlow(project.scriptFlow);
+  migrated.flowMode = normalizeFlowMode(project.flowMode);
+  if (Object.hasOwn(project, "scriptFlow")) migrated.scriptFlow = project.scriptFlow;
   return migrated;
 }
 function projectMeta(project) {
@@ -1131,21 +977,12 @@ function cleanProjectForSave() {
 }
 function snapshot() { return structuredClone(cleanProjectForSave()); }
 function recordHistory(before = snapshot()) { undoStack.push(before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; updateHistoryButtons(); }
-function syncDialogueEditorAfterRestore() {
-  if (!dialogueEditor) return;
-  const card = ensureScriptFlow().storyCards.find(item => item.id === dialogueEditor.cardId);
-  if (!card) return closeStoryDialogue();
-  dialogueEditor.entries = structuredClone(card.dialogue || []);
-  dialogueEditor.analysis = structuredClone(card.dialogueAnalysis || {});
-  dialogueEditor.analysisHiddenRoles = structuredClone(card.dialogueAnalysisHiddenRoles || []);
-  renderDialogueEditor();
-}
-function restoreSnapshot(next) { state = normalizeProject(structuredClone(next)); applyTheme(state.theme); renderWorkspace(); syncDialogueEditorAfterRestore(); scheduleSave(); speechController.resume(); state.nodes.filter(node=>node.layerJobId).forEach(node=>void pollLayerJob(node.id,node.layerJobId,state.id)); }
+function restoreSnapshot(next) { state = normalizeProject(structuredClone(next)); applyTheme(state.theme); renderWorkspace(); scheduleSave(); speechController.resume(); state.nodes.filter(node=>node.layerJobId).forEach(node=>void pollLayerJob(node.id,node.layerJobId,state.id)); }
 function undo() { if (!undoStack.length || isGenerating) return; redoStack.push(snapshot()); restoreSnapshot(undoStack.pop()); updateHistoryButtons(); }
 function redo() { if (!redoStack.length || isGenerating) return; undoStack.push(snapshot()); restoreSnapshot(redoStack.pop()); updateHistoryButtons(); }
 function updateHistoryButtons() { $("#undoButton").disabled = !undoStack.length || isGenerating; $("#redoButton").disabled = !redoStack.length || isGenerating; }
 function editableHistoryEligible(target) {
-  return Boolean(state && target instanceof Element && target.matches("input, textarea, select, [contenteditable=true]") && !target.matches('input[type="file"]') && !target.closest("#dialogueScriptDialog, #settingsDialog, #newProjectDialog, #localEditDialog"));
+  return Boolean(state && target instanceof Element && target.matches("input, textarea, select, [contenteditable=true]") && !target.matches('input[type="file"]') && !target.closest("#settingsDialog, #newProjectDialog, #localEditDialog"));
 }
 function beginEditableHistory(target) {
   if (!editableHistoryEligible(target) || editableHistorySessions.has(target)) return;
@@ -1383,27 +1220,23 @@ async function deleteProject(id) {
 }
 function renderWorkspace() {
   if (!state) return;
-  state.flowMode ||= "workflow";
-  ensureScriptFlow();
   $("#projectName").textContent = state.projectName;
   $$(".library-tabs .tab").forEach(tab => tab.classList.toggle("is-active", tab.dataset.libraryTab === state.libraryTab));
   renderCanvas(); renderLibrary(); renderInspector(); setActiveTool(state.tool || "select"); updateViewport(); updateHistoryButtons(); renderFlowMode(); refreshIcons();
 }
+function normalizeFlowMode(mode) {
+  return mode === "templates" || mode === "script" ? "templates" : "workflow";
+}
 function renderFlowMode() {
-  if (!state) return;
-  const mode = state.flowMode || "workflow";
-  $$("[data-flow-mode]").forEach(button => button.classList.toggle("is-active", button.dataset.flowMode === mode));
-  const scriptMode = mode === "script";
-  $("#workspace").classList.toggle("is-script-mode", scriptMode);
-  $("#workspaceView").classList.toggle("is-script-mode", scriptMode);
-  $("#scriptFlowStage").hidden = !scriptMode;
+  const templates = state.flowMode === "templates";
+  $("#workspaceView").classList.toggle("is-template-mode", templates);
+  for (const button of $$("[data-flow-mode]")) {
+    const selected = button.dataset.flowMode === state.flowMode;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
   applyPanelWidths();
-  if (scriptMode) {
-    // Render after the stage is visible so script item and edge geometry uses real bounds.
-    renderScriptFlow();
-  } else {
-    // Workflow nodes are hidden in script mode; remeasure DOM-backed ports only after
-    // restoring the workflow layer, otherwise hidden H3 ports resolve to zero coordinates.
+  if (!templates) {
     updateViewport();
     syncVideoGeneratorPortPositions();
     renderEdges();
@@ -1411,6 +1244,7 @@ function renderFlowMode() {
 }
 function setFlowMode(mode) {
   if (!state || state.flowMode === mode) return;
+  closeConnectionMenu(); closeCanvasContextMenu();
   recordHistory();
   state.flowMode = mode;
   renderWorkspace();
@@ -1569,7 +1403,7 @@ function createCanvasElementAt(kind, clientX, clientY) {
   recordHistory(); state.nodes.push(node); state.selectedIds = [node.id]; selectedEdgeId = null; renderWorkspace(); scheduleSave();
 }
 function showCanvasContextMenu(event) {
-  if (!state || state.flowMode === "script" || event.target.closest(".flow-switch, .canvas-status, .mobile-panel-button, input, textarea, [contenteditable=true]")) return;
+  if (!state || state.flowMode === "templates" || event.target.closest(".flow-switch, .canvas-status, .mobile-panel-button, input, textarea, [contenteditable=true]")) return;
   event.preventDefault(); closeConnectionMenu(); closeCanvasContextMenu();
   const choices = [
     { kind: "prompt", title: "提示词", icon: "text-cursor-input" },
@@ -1620,31 +1454,6 @@ function showConnectionMenu(clientX, clientY, draft) {
   positionConnectionMenu(menu, clientX, clientY); refreshIcons();
   setTimeout(() => window.addEventListener("pointerdown", handleConnectionMenuOutside), 0);
 }
-function scriptRoleType(role) { return scriptRoleTypes.find(item => item.id === role.roleType) || scriptRoleTypes.find(item => item.gender === role.gender) || scriptRoleTypes[0]; }
-function scriptAvatarHtml(role, compact = false, connectable = false) {
-  const gender = role.gender === "female" ? "female" : "male";
-  const tag = connectable ? "button" : "div";
-  const connection = connectable ? ` type="button" data-script-link="${role.id}" aria-label="从角色头像拖动连接"` : ' aria-hidden="true"';
-  const imageSrc = gender === "female" ? "/assets/script-roles/female-profile.png" : "/assets/script-roles/male-profile.png";
-  return `<${tag} class="script-avatar ${gender}${compact ? " is-compact" : ""}${connectable ? " script-avatar-connect" : ""}"${connection}><img class="script-avatar-art" src="${imageSrc}" alt=""></${tag}>`;
-}
-function scriptViewport() {
-  if (!state) return { x: 0, y: 0, scale: 1 };
-  const flow = state.scriptFlow || (state.scriptFlow = createScriptFlow());
-  flow.viewport ||= { x: 0, y: 0, scale: 1 };
-  flow.viewport.scale = Math.min(SCRIPT_ZOOM_MAX, Math.max(SCRIPT_ZOOM_MIN, Number(flow.viewport.scale) || 1));
-  flow.viewport.x = Number.isFinite(flow.viewport.x) ? flow.viewport.x : 0;
-  flow.viewport.y = Number.isFinite(flow.viewport.y) ? flow.viewport.y : 0;
-  return flow.viewport;
-}
-function updateScriptViewport() {
-  if (!state || !scriptFlowStage) return;
-  const viewport = scriptViewport();
-  const transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`;
-  scriptEdgeLayer.style.transform = transform;
-  scriptNodeLayer.style.transform = transform;
-  if (state.flowMode === "script") $("#zoomButton").textContent = `${Math.round(viewport.scale * 100)}%`;
-}
 function workflowPanelWidths() {
   if (!state) return { library: 238, inspector: 286 };
   state.panelWidths ||= { library: 238, inspector: 286 };
@@ -1652,25 +1461,13 @@ function workflowPanelWidths() {
   state.panelWidths.inspector = Math.min(520, Math.max(220, Number(state.panelWidths.inspector) || 286));
   return state.panelWidths;
 }
-function scriptPanelWidths() {
-  const flow = ensureScriptFlow();
-  flow.panelWidths ||= { library: 238, inspector: 286 };
-  flow.panelWidths.library = Math.min(480, Math.max(190, Number(flow.panelWidths.library) || 238));
-  flow.panelWidths.inspector = Math.min(520, Math.max(220, Number(flow.panelWidths.inspector) || 286));
-  return flow.panelWidths;
-}
-function activePanelWidths(mode = state?.flowMode) { return mode === "script" ? scriptPanelWidths() : workflowPanelWidths(); }
 function applyPanelWidths() {
   const shell = $("#workspaceView"); if (!shell || !state) return;
-  const widths = activePanelWidths();
+  const widths = workflowPanelWidths();
   shell.style.setProperty("--library-width", `${widths.library}px`);
   shell.style.setProperty("--inspector-width", `${widths.inspector}px`);
   shell.style.setProperty("--library-layout-width", shell.classList.contains("is-library-collapsed") ? "0px" : `${widths.library}px`);
   shell.style.setProperty("--inspector-layout-width", shell.classList.contains("is-inspector-collapsed") ? "0px" : `${widths.inspector}px`);
-  if (state.flowMode === "script") {
-    shell.style.setProperty("--script-library-scale", Math.min(1.45, Math.max(.84, widths.library / 238)).toFixed(3));
-    shell.style.setProperty("--script-inspector-scale", Math.min(1.35, Math.max(.86, widths.inspector / 286)).toFixed(3));
-  } else { shell.style.removeProperty("--script-library-scale"); shell.style.removeProperty("--script-inspector-scale"); }
 }
 function sidebarIsCompact() { return window.matchMedia?.("(max-width: 920px)").matches === true; }
 function setSidebarCollapsed(side, collapsed) {
@@ -1693,8 +1490,7 @@ function setSidebarCollapsed(side, collapsed) {
   refreshIcons();
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (!state) return;
-    if (state.flowMode === "script") renderScriptFlow();
-    else { syncVideoGeneratorPortPositions(); renderEdges(); }
+    if (state.flowMode === "workflow") { syncVideoGeneratorPortPositions(); renderEdges(); }
   }));
 }
 function toggleSidebar(side) {
@@ -1710,76 +1506,22 @@ function toggleSidebar(side) {
 function startPanelResize(event, side) {
   if (!state || event.button !== 0) return;
   event.preventDefault(); event.stopPropagation();
-  const mode = state.flowMode; const widths = activePanelWidths(mode); scriptPanelResizeSession = { side, mode, startX: event.clientX, startWidth: widths[side] };
+  const widths = workflowPanelWidths();
+  panelResizeSession = { side, startX: event.clientX, startWidth: widths[side] };
   document.body.classList.add("is-resizing-panel");
 }
 function handlePanelResize(event) {
-  if (!scriptPanelResizeSession) return false;
-  const session = scriptPanelResizeSession; const widths = activePanelWidths(session.mode); const other = session.side === "library" ? widths.inspector : widths.library;
+  if (!panelResizeSession) return false;
+  const session = panelResizeSession; const widths = workflowPanelWidths(); const other = session.side === "library" ? widths.inspector : widths.library;
   const delta = event.clientX - session.startX; const proposed = session.side === "library" ? session.startWidth + delta : session.startWidth - delta;
   const max = Math.max(session.side === "library" ? 190 : 220, Math.min(session.side === "library" ? 480 : 520, $("#workspaceView").getBoundingClientRect().width - other - 420));
   widths[session.side] = Math.round(Math.min(max, Math.max(session.side === "library" ? 190 : 220, proposed)));
   applyPanelWidths(); return true;
 }
 function finishPanelResize() {
-  if (!scriptPanelResizeSession) return false;
-  scriptPanelResizeSession = null; document.body.classList.remove("is-resizing-panel"); scheduleSave(); return true;
-}function scriptPoint(clientX, clientY) {
-  const rect = scriptFlowStage.getBoundingClientRect(); const viewport = scriptViewport();
-  return { x: (clientX - rect.left - viewport.x) / viewport.scale, y: (clientY - rect.top - viewport.y) / viewport.scale };
-}
-function scriptRoleCenter(role) { return { x: role.x + 74, y: role.y + 59 }; }
-function scriptStoryCenter(card) { return { x: card.x + card.width / 2, y: card.y + card.height / 2 }; }
-function emotionBoardCenter(board) { return { x: board.x + board.width / 2, y: board.y + board.height / 2 }; }
-function scriptItemById(flow, id) { if (id === "character-manager" && flow.characterManager?.visible) return { ...flow.characterManager, id: "character-manager", type: "character-manager" }; if (id === "character-notes" && flow.characterNotes?.visible) return { ...flow.characterNotes, id: "character-notes", type: "character-notes" }; return flow.characters.find(item => item.id === id) || flow.storyCards.find(item => item.id === id) || flow.storyFrames.find(item => item.id === id) || (flow.emotionBoards || []).find(item => item.id === id) || (flow.characterArcs || []).find(item => item.id === id) || (flow.characterGoals || []).find(item => item.id === id) || (flow.scriptNotes || []).find(item => item.id === id) || (flow.aiAssistants || []).find(item => item.id === id) || null; }
-function scriptItemKind(item) { return item?.type === "story-card" ? "story" : item?.type === "emotion-board" ? "emotion" : item?.type === "story-frame" ? "frame" : item?.type === "character-manager" ? "角色管理" : item?.type === "character-notes" ? "角色功能" : item?.type === "character-arc" ? "character-arc" : item?.type === "character-goal" ? "character-goal" : item?.type === "script-note" ? "便签" : item?.type === "ai-assistant" ? "ai-assistant" : "character"; }
-function copyScriptSelection() {
-  const flow = ensureScriptFlow();
-  const allowed = new Set(["character", "story-card", "story-frame", "emotion-board", "character-arc", "character-goal", "script-note", "ai-assistant"]);
-  const items = flow.selectedIds.map(id => scriptItemById(flow, id)).filter(item => item && allowed.has(item.type));
-  if (!items.length) return toast("请选择剧本模块后再复制", true);
-  const ids = new Set(items.map(item => item.id));
-  scriptClipboard = {
-    items: structuredClone(items),
-    relationships: structuredClone(flow.relationships.filter(link => ids.has(link.source) && ids.has(link.target))),
-    storyLinks: structuredClone(flow.storyLinks.filter(link => ids.has(link.source) && ids.has(link.target))),
-    emotionLinks: structuredClone((flow.emotionLinks || []).filter(link => ids.has(link.source) && ids.has(link.target)))
-  };
-  scriptPasteSerial = 0;
-  toast(`已复制 ${items.length} 个剧本元素`);
-}
-function pasteScriptSelection() {
-  if (!scriptClipboard?.items?.length) return toast("请先复制剧本模块", true);
-  const flow = ensureScriptFlow(); recordHistory(); const offset = 36 + scriptPasteSerial * 18; const idMap = new Map();
-  const copies = scriptClipboard.items.map((item, index) => {
-    const copy = structuredClone(item); const nextId = uid(item.type === "story-card" ? "story" : item.type === "story-frame" ? "script-frame" : item.type === "emotion-board" ? "emotion" : item.type === "character-arc" ? "character-arc" : item.type === "character-goal" ? "character-goal" : item.type === "script-note" ? "script-note" : item.type === "ai-assistant" ? "script-ai" : "role");
-    idMap.set(item.id, nextId); copy.id = nextId; copy.x = Math.round((copy.x || 0) + offset); copy.y = Math.round((copy.y || 0) + offset); copy.createdAt = Date.now() + index;
-    if (copy.type === "story-card") copy.displayNumber = "";
-    if (copy.type === "emotion-board") copy.levels = {};
-    return copy;
-  });
-  copies.forEach(copy => {
-    if (copy.type === "character") flow.characters.push(copy);
-    else if (copy.type === "story-card") flow.storyCards.push(copy);
-    else if (copy.type === "story-frame") flow.storyFrames.push(copy);
-    else if (copy.type === "emotion-board") flow.emotionBoards.push(copy);
-    else if (copy.type === "character-arc") { copy.roleIds = copy.roleIds.filter(id => flow.characters.some(role => role.id === id)); flow.characterArcs.push(copy); }
-    else if (copy.type === "character-goal") { copy.roleIds = copy.roleIds.filter(id => flow.characters.some(role => role.id === id)); copy.surfaceGoals = (copy.surfaceGoals || []).map(item => ({ ...item, id: uid("surface-goal") })); copy.coreGoals = (copy.coreGoals || []).map(item => ({ ...item, id: uid("core-goal") })); flow.characterGoals.push(copy); }
-    else if (copy.type === "script-note") flow.scriptNotes.push(copy);
-    else if (copy.type === "ai-assistant") { copy.status = "idle"; copy.error = ""; flow.aiAssistants.push(copy); }
-  });
-  scriptClipboard.items.filter(item => item.type === "emotion-board").forEach(board => {
-    const copy = copies.find(item => item.id === idMap.get(board.id)); if (!copy) return;
-    copy.levels = Object.fromEntries(Object.entries(board.levels || {}).filter(([id]) => idMap.has(id)).map(([id, value]) => [idMap.get(id), value]));
-  });
-  scriptClipboard.relationships.forEach(link => flow.relationships.push({ ...link, id: uid("rel"), source: idMap.get(link.source), target: idMap.get(link.target) }));
-  scriptClipboard.storyLinks.forEach(link => flow.storyLinks.push({ ...link, id: uid("story-link"), source: idMap.get(link.source), target: idMap.get(link.target) }));
-  scriptClipboard.emotionLinks.forEach(link => flow.emotionLinks.push({ ...link, id: uid("emotion-link"), source: idMap.get(link.source), target: idMap.get(link.target), createdAt: Date.now() }));
-  flow.selectedIds = copies.map(item => item.id); flow.selectedEdgeId = null; scriptPasteSerial += 1;
-
-  syncEmotionLevels(flow); renderWorkspace(); scheduleSave(); toast(`已粘贴 ${copies.length} 个剧本元素`);
-}
-function copyWorkflowSelection() {
+  if (!panelResizeSession) return false;
+  panelResizeSession = null; document.body.classList.remove("is-resizing-panel"); scheduleSave(); return true;
+}function copyWorkflowSelection() {
   const nodes = state.selectedIds.map(findNode).filter(node => node && node.type !== "loading");
   if (!nodes.length) return toast("请选择节点后再复制", true);
   const ids = new Set(nodes.map(node => node.id));
@@ -1803,612 +1545,7 @@ function pasteWorkflowSelection() {
   renderWorkspace(); scheduleSave(); toast(`已粘贴 ${copies.length} 个节点`);
 }
 
-function characterArcCenter(arc) { return { x: arc.x + arc.width / 2, y: arc.y + arc.height / 2 }; }
-function characterGoalCenter(goal) { return { x: goal.x + goal.width / 2, y: goal.y + goal.height / 2 }; }
-function scriptItemCenter(item) { return item?.type === "emotion-board" ? emotionBoardCenter(item) : ["story-card", "story-frame", "script-note", "ai-assistant", "character-manager", "character-notes"].includes(item?.type) ? scriptStoryCenter(item) : item?.type === "character-arc" ? characterArcCenter(item) : item?.type === "character-goal" ? characterGoalCenter(item) : scriptRoleCenter(item); }
-function scriptItemElement(id) { if (id === "character-manager") return scriptNodeLayer.querySelector("[data-character-manager-panel]"); if (id === "character-notes") return scriptNodeLayer.querySelector("[data-character-notes-panel]"); return scriptNodeLayer.querySelector(`[data-script-character="${CSS.escape(id)}"], [data-story-card="${CSS.escape(id)}"], [data-script-frame="${CSS.escape(id)}"], [data-emotion-board="${CSS.escape(id)}"], [data-character-arc="${CSS.escape(id)}"], [data-character-goal="${CSS.escape(id)}"], [data-script-note="${CSS.escape(id)}"], [data-ai-assistant="${CSS.escape(id)}"]`); }
-function scriptItemLabel(item) { return item?.type === "story-card" ? storyCardLabel(item) : item?.type === "emotion-board" ? "情绪曲线" : item?.type === "character-manager" ? "角色管理" : item?.type === "character-notes" ? "角色功能" : item?.type === "character-arc" ? "角色转变" : item?.type === "character-goal" ? "角色目标" : item?.type === "script-note" ? "便签" : item?.type === "story-frame" ? item.name : item?.type === "ai-assistant" ? "AI助手" : scriptCharacterLabel(item) || "-"; }
-function scriptRelationshipPath(start, end) { const dx = end.x - start.x; const distance = Math.max(70, Math.abs(dx) * .42); return `M ${start.x} ${start.y} C ${start.x + distance} ${start.y}, ${end.x - distance} ${end.y}, ${end.x} ${end.y}`; }
-function storyCardSequence(flow = ensureScriptFlow()) {
-  const cards = flow.storyCards || []; const order = new Map();
-  (flow.emotionLinks || []).forEach((link, index) => { if (!order.has(link.target)) order.set(link.target, index); });
-  return cards.slice().sort((a, b) => { const aOrder = order.has(a.id) ? order.get(a.id) : Number.MAX_SAFE_INTEGER; const bOrder = order.has(b.id) ? order.get(b.id) : Number.MAX_SAFE_INTEGER; return aOrder - bOrder || (a.createdAt || 0) - (b.createdAt || 0); });
-}
-function emotionBoardCards(flow, board) { const byId = new Map((flow.storyCards || []).map(card => [card.id, card])); return (flow.emotionLinks || []).filter(link => link.source === board.id).map(link => byId.get(link.target)).filter(Boolean); }
-function syncEmotionLevels(flow = ensureScriptFlow()) { (flow.emotionBoards || []).forEach(board => { const levels = board.levels || (board.levels = {}); const labels = board.labels || (board.labels = {}); const ids = new Set(emotionBoardCards(flow, board).map(card => card.id)); Object.keys(levels).forEach(id => { if (!ids.has(id)) delete levels[id]; }); Object.keys(labels).forEach(id => { if (!ids.has(id)) delete labels[id]; }); ids.forEach(id => { if (!Number.isFinite(levels[id])) levels[id] = .5; }); }); }
-function createScriptFrame(x, y, index) { return { id: uid("script-frame"), type: "story-frame", name: `剧本分组 ${index + 1}`, x, y, width: 620, height: 420, createdAt: Date.now() }; }
-function scriptFrameContainedItems(frame, flow = ensureScriptFlow()) { const floatingPanels = [flow.characterManager?.visible ? { ...flow.characterManager, id: "character-manager", type: "character-manager" } : null, flow.characterNotes?.visible ? { ...flow.characterNotes, id: "character-notes", type: "character-notes" } : null].filter(Boolean); return [...flow.characters, ...flow.storyCards, ...(flow.emotionBoards || []), ...(flow.characterArcs || []), ...(flow.characterGoals || []), ...(flow.aiAssistants || []), ...(flow.scriptNotes || []), ...floatingPanels].filter(item => { const panel = ["story-card", "emotion-board", "character-arc", "character-goal", "script-note", "ai-assistant", "character-manager", "character-notes"].includes(item.type); if (["character-manager", "character-notes"].includes(item.type)) return item.x < frame.x + frame.width && item.x + item.width > frame.x && item.y < frame.y + frame.height && item.y + item.height > frame.y; const halfWidth = panel ? item.width / 2 : 74; const halfHeight = panel ? item.height / 2 : 92; return item.x + halfWidth >= frame.x && item.x + halfWidth <= frame.x + frame.width && item.y + halfHeight >= frame.y && item.y + halfHeight <= frame.y + frame.height; }); }
-function addScriptFrame() { if (!state) return; const flow = ensureScriptFlow(); const rect = scriptFlowStage.getBoundingClientRect(); const center = scriptPoint(rect.left + rect.width / 2, rect.top + rect.height / 2); recordHistory(); const frame = createScriptFrame(Math.round(center.x - 310), Math.round(center.y - 210), flow.storyFrames.length); flow.storyFrames.push(frame); flow.selectedIds = [frame.id]; flow.selectedEdgeId = null; renderWorkspace(); scheduleSave(); }
-function scriptFrameTitleWidth(name = "") { return Math.max(104, Math.min(340, Array.from(name).length * 22 + 28)); } function renderScriptFrame(frame, flow) { const selected = flow.selectedIds.includes(frame.id) ? " is-selected" : ""; const count = scriptFrameContainedItems(frame, flow).length; const titleWidth = scriptFrameTitleWidth(frame.name); return `<section class="script-group-frame${selected}" data-script-frame="${frame.id}" style="left:${frame.x}px;top:${frame.y}px;width:${frame.width}px;height:${frame.height}px"><header><input class="script-frame-name" data-script-frame-name="${frame.id}" value="${escapeHtml(frame.name)}" style="width:${titleWidth}px" aria-label="分组画板名称"><span>${count} 个元素</span></header></section>`; } function renderScriptFrameResizeControls(frame) { return ["sw", "se"].map(corner => { const left = corner === "sw" ? frame.x - 10 : frame.x + frame.width - 10; return `<button class="script-frame-resize" data-script-frame-resize="${frame.id}" data-script-frame-resize-corner="${corner}" style="left:${left}px;top:${frame.y + frame.height - 10}px" aria-label="调整分组画板大小" type="button"></button>`; }).join(""); } function positionScriptFrameResizeControls(frame) { $$(`[data-script-frame-resize="${CSS.escape(frame.id)}"]`).forEach(handle => { const left = handle.dataset.scriptFrameResizeCorner === "sw" ? frame.x - 10 : frame.x + frame.width - 10; handle.style.left = `${left}px`; handle.style.top = `${frame.y + frame.height - 10}px`; }); }function createStoryCard(x, y) { return { id: uid("story"), type: "story-card", title: "未命名情节", scene: "", time: "", location: "", characters: "", mood: "", goal: "", initialSituation: "", finalSituation: "", storyType: "", storyTypeMode: "preset", content: "", dialogue: [], x, y, width: 220, height: 330, createdAt: Date.now() }; }
-function addStoryCard() { if (!state) return; const flow = ensureScriptFlow(); const rect = scriptFlowStage.getBoundingClientRect(); const center = scriptPoint(rect.left + rect.width / 2, rect.top + rect.height / 2); const index = flow.storyCards.length; recordHistory(); const card = createStoryCard(Math.round(center.x - 110 + ((index % 3) - 1) * 250), Math.round(center.y - 155 + Math.floor(index / 3) * 365)); flow.storyCards.push(card); flow.selectedIds = [card.id]; flow.selectedEdgeId = null; syncEmotionLevels(flow); renderWorkspace(); scheduleSave(); }
-function addEmotionBoard() { if (!state) return; const flow = ensureScriptFlow(); const rect = scriptFlowStage.getBoundingClientRect(); const point = scriptPoint(rect.left + rect.width / 2, rect.top + rect.height * .72); const index = (flow.emotionBoards || []).length; recordHistory(); const board = { id: uid("emotion"), type: "emotion-board", x: Math.round(point.x - 360 + index * 28), y: Math.round(point.y - 130 + index * 28), width: 720, height: 260, levels: {}, labels: {}, createdAt: Date.now() + index }; flow.emotionBoards.push(board); flow.selectedIds = []; flow.selectedEdgeId = null; renderWorkspace(); scheduleSave(); }
-function createCharacterArc(x, y, index) {
-  return { id: uid("character-arc"), type: "character-arc", roleIds: [], stages: { origin: { label: "原始状态", text: "", position: 18 }, event: { label: "重大事件", text: "", position: 50 }, result: { label: "转化结果", text: "", position: 82 } }, x, y, width: 820, height: 390, createdAt: Date.now() + index };
-}
-function addCharacterArc() {
-  if (!state) return; const flow = ensureScriptFlow(); const rect = scriptFlowStage.getBoundingClientRect(); const point = scriptPoint(rect.left + rect.width / 2, rect.top + rect.height * .5); recordHistory(); const arc = createCharacterArc(Math.round(point.x - 410 + flow.characterArcs.length * 30), Math.round(point.y - 195 + flow.characterArcs.length * 30), flow.characterArcs.length); flow.characterArcs.push(arc); flow.selectedIds = [arc.id]; flow.selectedEdgeId = null; renderWorkspace(); scheduleSave();
-}
-function createCharacterGoal(x, y, index) {
-  return { id: uid("character-goal"), type: "character-goal", roleIds: [], surfaceGoals: [], coreGoals: [], x, y, width: 900, height: 520, createdAt: Date.now() + index };
-}
-function addCharacterGoal() {
-  if (!state) return; const flow = ensureScriptFlow(); const rect = scriptFlowStage.getBoundingClientRect(); const point = scriptPoint(rect.left + rect.width / 2, rect.top + rect.height * .54); recordHistory(); const goal = createCharacterGoal(Math.round(point.x - 450 + (flow.characterGoals || []).length * 32), Math.round(point.y - 260 + (flow.characterGoals || []).length * 32), (flow.characterGoals || []).length); flow.characterGoals.push(goal); flow.selectedIds = [goal.id]; flow.selectedEdgeId = null; renderWorkspace(); scheduleSave();
-}
-function characterGoalMarkup(goal, flow) {
-  const selected = flow.selectedIds.includes(goal.id) ? " is-selected" : ""; const roles = goal.roleIds.map(id => flow.characters.find(role => role.id === id)).filter(Boolean); const pickerOpen = characterGoalRolePickerId === goal.id;
-  const chips = roles.length ? roles.map(role => `<span class="character-goal-role-chip ${role.gender}">${scriptAvatarHtml(role, true)}<strong>${escapeHtml(scriptCharacterLabel(role))}</strong><button type="button" class="character-goal-interactive script-interactive" data-character-goal-remove-role="${goal.id}" data-role-id="${role.id}" aria-label="移除 ${escapeHtml(scriptCharacterLabel(role))}">${icon("x")}</button></span>`).join("") : `<span class="character-goal-role-empty">选择画布中的角色</span>`;
-  const picker = pickerOpen ? `<div class="character-goal-role-picker" role="menu">${flow.characters.length ? flow.characters.map(role => `<button type="button" class="character-goal-role-option ${role.gender} character-goal-interactive script-interactive" data-character-goal-pick-role="${goal.id}" data-role-id="${role.id}">${scriptAvatarHtml(role, true)}<span><strong>${escapeHtml(scriptCharacterLabel(role))}</strong><small>${escapeHtml(role.identity || (role.gender === "female" ? "女性角色" : "男性角色"))}</small></span></button>`).join("") : `<span class="character-goal-role-picker-empty">画布中还没有角色</span>`}</div>` : "";
-  const safePosition = position => Math.min(85, Math.max(15, Number(position) || 50)); const cards = (entries, kind, placeholder) => entries.map(entry => `<article class="character-goal-entry character-goal-entry-${kind}" data-character-goal-entry="${entry.id}" data-character-goal-id="${goal.id}" data-goal-kind="${kind}" style="left:${safePosition(entry.position)}%"><button type="button" class="character-goal-entry-grip character-goal-interactive script-interactive" data-character-goal-point="${goal.id}" data-goal-kind="${kind}" data-goal-entry="${entry.id}" aria-label="横向移动目标">${icon("grip-vertical")}</button><textarea class="character-goal-interactive script-interactive" data-character-goal-text="${goal.id}" data-goal-kind="${kind}" data-goal-entry="${entry.id}" placeholder="${placeholder}">${escapeHtml(entry.text || "")}</textarea><span></span></article>`).join("");
-  return `<article class="character-goal-card${selected}" data-character-goal="${goal.id}" style="left:${goal.x}px;top:${goal.y}px;width:${goal.width}px;height:${goal.height}px"><header><div><small>CHARACTER GOALS</small><strong>角色目标</strong></div><span>${roles.length} 位关联角色</span></header><div class="character-goal-roles"><b>关联角色</b><div class="character-goal-role-list">${chips}</div><div class="character-goal-role-picker-wrap"><button type="button" class="character-goal-add-role character-goal-interactive script-interactive" data-character-goal-role-toggle="${goal.id}" aria-expanded="${pickerOpen}" aria-label="添加关联角色">${icon("plus")} 添加角色</button>${picker}</div></div><section class="character-goal-section surface"><div class="character-goal-section-heading"><div><strong>表层目标</strong><span>可多个，随剧情阶段变化</span></div><button type="button" class="character-goal-add-entry character-goal-interactive script-interactive" data-character-goal-add-entry="${goal.id}" data-goal-kind="surface">${icon("plus")} 添加表层目标</button></div><div class="character-goal-track" data-character-goal-track="${goal.id}" data-goal-kind="surface"><i></i>${cards(goal.surfaceGoals, "surface", "输入表层目标")}</div></section><section class="character-goal-section core"><div class="character-goal-section-heading"><div><strong>核心目标</strong><span>贯穿故事的内在驱动力</span></div><button type="button" class="character-goal-add-entry character-goal-interactive script-interactive" data-character-goal-add-entry="${goal.id}" data-goal-kind="core">${icon("plus")} 添加核心目标</button></div><div class="character-goal-track" data-character-goal-track="${goal.id}" data-goal-kind="core"><i></i>${cards(goal.coreGoals, "core", "输入核心目标")}</div></section><span class="character-goal-resize character-goal-interactive script-interactive" data-character-goal-resize="${goal.id}" aria-hidden="true"></span></article>`;
-}
-function addCharacterGoalRole(goalId, roleId) { const flow = ensureScriptFlow(); const goal = (flow.characterGoals || []).find(item => item.id === goalId); if (!goal || !flow.characters.some(role => role.id === roleId)) return; recordHistory(); goal.roleIds.push(roleId); characterGoalRolePickerId = ""; renderScriptFlow(); renderInspector(); scheduleSave(); }
-function removeCharacterGoalRole(goalId, roleId) { const goal = (ensureScriptFlow().characterGoals || []).find(item => item.id === goalId); const index = goal?.roleIds.indexOf(roleId) ?? -1; if (!goal || index < 0) return; recordHistory(); goal.roleIds.splice(index, 1); renderScriptFlow(); renderInspector(); scheduleSave(); }
-function addCharacterGoalEntry(goalId, kind) { const goal = (ensureScriptFlow().characterGoals || []).find(item => item.id === goalId); const key = kind === "core" ? "coreGoals" : "surfaceGoals"; if (!goal) return; recordHistory(); const entries = goal[key]; const position = Math.min(84, Math.max(18, entries.length ? 18 + entries.length * Math.max(12, 66 / entries.length) : 18)); entries.push({ id: uid(kind === "core" ? "core-goal" : "surface-goal"), text: "", position }); renderScriptFlow(); scheduleSave(); }
-function updateCharacterGoalText(goalId, kind, entryId, value) { const goal = (ensureScriptFlow().characterGoals || []).find(item => item.id === goalId); const entry = goal?.[kind === "core" ? "coreGoals" : "surfaceGoals"]?.find(item => item.id === entryId); if (!entry) return; entry.text = value; scheduleSave(); }
-function removeCharacterGoalEntry(goalId, kind, entryId) { const goal = (ensureScriptFlow().characterGoals || []).find(item => item.id === goalId); const key = kind === "core" ? "coreGoals" : "surfaceGoals"; if (!goal || !goal[key].some(item => item.id === entryId)) return; recordHistory(); goal[key] = goal[key].filter(item => item.id !== entryId); renderScriptFlow(); renderInspector(); scheduleSave(); }
-
-function characterArcMarkup(arc, flow) {
-  const selected = flow.selectedIds.includes(arc.id) ? " is-selected" : ""; const roles = arc.roleIds.map(id => flow.characters.find(role => role.id === id)).filter(Boolean); const stageOrder = ["origin", "event", "result"]; const canvasRoles = flow.characters;
-  const chips = roles.length ? roles.map(role => `<span class="character-arc-role-chip ${role.gender}">${scriptAvatarHtml(role, true)}<strong>${escapeHtml(scriptCharacterLabel(role))}</strong><button type="button" class="character-arc-interactive script-interactive" data-character-arc-remove-role="${arc.id}" data-role-id="${role.id}" aria-label="移除 ${escapeHtml(scriptCharacterLabel(role))}">${icon("x")}</button></span>`).join("") : `<span class="character-arc-role-empty">选择画布中的角色</span>`;
-  const pickerOpen = characterArcRolePickerId === arc.id;
-  const picker = pickerOpen ? `<div class="character-arc-role-picker" role="menu">${canvasRoles.length ? canvasRoles.map(role => `<button type="button" class="character-arc-role-option ${role.gender} character-arc-interactive script-interactive" data-character-arc-pick-role="${arc.id}" data-role-id="${role.id}">${scriptAvatarHtml(role, true)}<span><strong>${escapeHtml(scriptCharacterLabel(role))}</strong><small>${escapeHtml(role.identity || (role.gender === "female" ? "女性角色" : "男性角色"))}</small></span></button>`).join("") : `<span class="character-arc-role-picker-empty">画布中还没有角色</span>`}</div>` : "";
-  const cards = stageOrder.map(key => { const stage = arc.stages[key]; return `<section class="character-arc-stage"><span>${stage.label}</span><textarea class="character-arc-interactive script-interactive" data-character-arc-text="${arc.id}" data-stage-key="${key}" placeholder="输入${stage.label}">${escapeHtml(stage.text || "")}</textarea></section>`; }).join("");
-  const points = stageOrder.map(key => { const stage = arc.stages[key]; return `<button type="button" class="character-arc-point character-arc-point-${key} character-arc-interactive script-interactive" data-character-arc-point="${arc.id}" data-stage-key="${key}" style="left:${stage.position}%" aria-label="拖动${stage.label}位置"><span></span><em>${key === "origin" ? "拥有" : key === "event" ? "转折" : "丢弃"}</em></button>`; }).join("");
-  return `<article class="character-arc-card${selected}" data-character-arc="${arc.id}" style="left:${arc.x}px;top:${arc.y}px;width:${arc.width}px;height:${arc.height}px"><header><div><small>CHARACTER ARC</small><strong>角色转变</strong></div><span>${roles.length} 位关联角色</span></header><div class="character-arc-roles"><b>关联角色</b><div class="character-arc-role-list">${chips}</div><div class="character-arc-role-picker-wrap"><button type="button" class="character-arc-add-role character-arc-interactive script-interactive" data-character-arc-role-toggle="${arc.id}" aria-expanded="${pickerOpen}" aria-label="添加关联角色">${icon("plus")} 添加角色</button>${picker}</div></div><div class="character-arc-stages">${cards}</div><div class="character-arc-track" data-character-arc-track="${arc.id}"><span class="character-arc-line"></span>${points}</div><span class="character-arc-resize character-arc-interactive script-interactive" data-character-arc-resize="${arc.id}" aria-hidden="true"></span></article>`;
-}
-function updateCharacterArcStage(arcId, key, value) { const arc = ensureScriptFlow().characterArcs.find(item => item.id === arcId); if (!arc || !arc.stages[key]) return; arc.stages[key].text = value; scheduleSave(); }
-function addCharacterArcRole(arcId, roleId) { const flow = ensureScriptFlow(); const arc = flow.characterArcs.find(item => item.id === arcId); if (!arc || !flow.characters.some(role => role.id === roleId)) return; recordHistory(); characterArcRolePickerId = ""; arc.roleIds.push(roleId); renderScriptFlow(); renderInspector(); scheduleSave(); }
-function removeCharacterArcRole(arcId, roleId) { const arc = ensureScriptFlow().characterArcs.find(item => item.id === arcId); const index = arc?.roleIds.indexOf(roleId) ?? -1; if (!arc || index < 0) return; recordHistory(); arc.roleIds.splice(index, 1); renderScriptFlow(); renderInspector(); scheduleSave(); }function nextManagementPosition(roles) { const slots = Array.from({ length: 8 }, (_, index) => 8 + index * 12); const used = roles.map(role => Number(role.managementPosition)).filter(Number.isFinite); return slots.find(position => used.every(value => Math.abs(value - position) > 4)) ?? 92; }
-function repairManagerRolePositions(flow) { const occupied = []; flow.characters.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).forEach(role => { const current = Number(role.managementPosition); if (!Number.isFinite(current) || occupied.some(value => Math.abs(value - current) < 2)) role.managementPosition = nextManagementPosition(flow.characters.filter(item => item.id !== role.id && !occupied.includes(item.managementPosition))); occupied.push(role.managementPosition); }); }
-function addScriptCharacter(roleTypeId) { if (!state) return; const flow = ensureScriptFlow(); const x = 360; const y = 180; recordHistory(); repairManagerRolePositions(flow); const role = createScriptCharacter(roleTypeId, x, y); role.managementPosition = nextManagementPosition(flow.characters); flow.characters.push(role); flow.selectedIds = [role.id]; flow.selectedEdgeId = null; renderWorkspace(); scheduleSave(); }
-window.__image2CanvasAddScriptRole = roleTypeId => { const now = performance.now(); if (scriptRoleAddGuard.roleTypeId === roleTypeId && now - scriptRoleAddGuard.at < 250) return; scriptRoleAddGuard = { roleTypeId, at: now }; addScriptCharacter(roleTypeId); };
-function scriptCharacterLabel(role) { return role.name || scriptRoleType(role).label; }
-function storyCardLabel(card) { return card.title || "未命名情节"; }
-function selectScriptItem(id, additive = false) { const flow = ensureScriptFlow(); if (!scriptItemById(flow, id)) return; flow.selectedIds = additive ? (flow.selectedIds.includes(id) ? flow.selectedIds.filter(item => item !== id) : [...flow.selectedIds, id]) : [id]; flow.selectedEdgeId = null; renderScriptFlow(); renderLibrary(); renderInspector(); scheduleSave(); }
-function selectScriptCharacter(id, additive = false) { selectScriptItem(id, additive); }
-function storyCardOrder(flow, id) { const link = (flow.emotionLinks || []).find(item => item.target === id); if (link) { const board = (flow.emotionBoards || []).find(item => item.id === link.source); return Math.max(1, emotionBoardCards(flow, board).findIndex(card => card.id === id) + 1); } const unlinked = (flow.storyCards || []).filter(card => !(flow.emotionLinks || []).some(item => item.target === card.id)).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)); return Math.max(1, unlinked.findIndex(card => card.id === id) + 1); }
-function storyCardNumber(flow, card) { const manual = String(card?.displayNumber || "").replace(/[^0-9]/g, "").slice(0, 4); return manual ? manual.padStart(2, "0") : String(Math.max(1, storyCardOrder(flow, card.id))).padStart(2, "0"); }function storyTypeControl(card) {
-  const isCustom = card.storyTypeMode === "custom" || (card.storyType && !scriptStoryTypeOptions.includes(card.storyType));
-  const pickerOpen = storyTypePickerId === card.id;
-  const value = isCustom ? `<input data-story-field="${card.id}" data-story-key="storyType" value="${escapeHtml(card.storyType || "")}" placeholder="输入自定义类型" aria-label="自定义故事类型">` : `<span class="story-type-value">${escapeHtml(card.storyType || "选择类型")}</span>`;
-  const picker = pickerOpen ? `<div class="story-type-picker" role="menu">${scriptStoryTypeOptions.map(type => `<button type="button" data-story-type-pick="${card.id}" data-story-type-value="${escapeHtml(type)}">${escapeHtml(type)}</button>`).join("")}<button type="button" class="is-custom" data-story-type-custom="${card.id}">自定义</button></div>` : "";
-  return `<span class="story-type-control${isCustom ? " is-custom" : ""}">${value}<button type="button" class="script-interactive" data-story-type-toggle="${card.id}" aria-expanded="${pickerOpen}" aria-label="选择故事类型" title="选择故事类型">${icon("list")}</button>${picker}</span>`;
-}
-function renderStoryCard(card, flow) { const selected = flow.selectedIds.includes(card.id) ? " is-selected" : ""; const number = storyCardNumber(flow, card); const pickerOpen = storyTypePickerId === card.id; return `<article class="script-story-card${selected}${pickerOpen ? " has-open-type-picker" : ""}" data-story-card="${card.id}" style="left:${card.x}px;top:${card.y}px;width:${card.width}px;height:${card.height}px" aria-label="故事卡 ${number} ${escapeHtml(storyCardLabel(card))}"><div class="story-card-header"><input class="story-card-number" data-story-number="${card.id}" value="${number}" inputmode="numeric" maxlength="4" aria-label="故事卡编号"><button class="story-dialog-trigger" data-story-dialog-open="${card.id}" type="button" aria-label="双击打开对话脚本">故事卡</button></div><label class="story-card-title story-card-field"><input data-story-field="${card.id}" data-story-key="title" value="${escapeHtml(card.title || "")}" placeholder="情节标题" aria-label="情节标题"></label><div class="story-card-fields"><label class="story-card-field"><span>时间</span><input data-story-field="${card.id}" data-story-key="time" value="${escapeHtml(card.time || "")}" placeholder="如：清晨"></label><label class="story-card-field"><span>地点</span><input data-story-field="${card.id}" data-story-key="location" value="${escapeHtml(card.location || "")}" placeholder="如：海岸小镇"></label><label class="story-card-field"><span>人物</span><input data-story-field="${card.id}" data-story-key="characters" value="${escapeHtml(card.characters || "")}" placeholder="如：林远、舒晴"></label><label class="story-card-field"><span>目标</span><input data-story-field="${card.id}" data-story-key="goal" value="${escapeHtml(card.goal || "")}" placeholder="本段推动什么"></label><label class="story-card-field"><span>阻力</span><input data-story-field="${card.id}" data-story-key="mood" value="${escapeHtml(card.mood || "")}" placeholder="如：紧张、舒缓"></label><label class="story-card-field"><span>局面初</span><input data-story-field="${card.id}" data-story-key="initialSituation" value="${escapeHtml(card.initialSituation || "")}" placeholder="初始局面"></label><label class="story-card-field"><span>局面末</span><input data-story-field="${card.id}" data-story-key="finalSituation" value="${escapeHtml(card.finalSituation || "")}" placeholder="结束局面"></label><label class="story-card-field story-type-field"><span>类型</span>${storyTypeControl(card)}</label></div><label class="story-card-content story-card-field"><span>场景大纲</span><textarea class="script-interactive" data-story-field="${card.id}" data-story-key="content" placeholder="记录场景大纲…" aria-label="场景大纲">${escapeHtml(card.content || "")}</textarea></label><span class="story-card-resize" data-story-resize="${card.id}" aria-hidden="true"></span></article>`; }
-function dialogueCard() { if (!dialogueEditor || !state) return null; return ensureScriptFlow().storyCards.find(card => card.id === dialogueEditor.cardId) || null; }
-function dialogueDraftSnapshot() {
-  if (!dialogueEditor) return null;
-  return structuredClone({ roleId: dialogueEditor.roleId, analysisRoleId: dialogueEditor.analysisRoleId, analysis: dialogueEditor.analysis || {}, analysisHiddenRoles: dialogueEditor.analysisHiddenRoles || [], entries: dialogueEditor.entries || [] });
-}
-function restoreDialogueDraft(snapshot) {
-  if (!dialogueEditor || !snapshot) return;
-  dialogueEditor.roleId = snapshot.roleId || dialogueEditor.roleId;
-  dialogueEditor.analysisRoleId = snapshot.analysisRoleId || "";
-  dialogueEditor.analysis = structuredClone(snapshot.analysis || {});
-  dialogueEditor.analysisHiddenRoles = structuredClone(snapshot.analysisHiddenRoles || []);
-  dialogueEditor.entries = structuredClone(snapshot.entries || []);
-  renderDialogueEditor();
-}
-function recordDialogueDraftHistory(before = dialogueDraftSnapshot()) {
-  if (!before) return;
-  dialogueDraftUndoStack.push(before); if (dialogueDraftUndoStack.length > 30) dialogueDraftUndoStack.shift(); dialogueDraftRedoStack = [];
-}
-function undoDialogueDraft() {
-  if (!dialogueEditor || !dialogueDraftUndoStack.length) return false;
-  dialogueDraftRedoStack.push(dialogueDraftSnapshot()); restoreDialogueDraft(dialogueDraftUndoStack.pop()); return true;
-}
-function redoDialogueDraft() {
-  if (!dialogueEditor || !dialogueDraftRedoStack.length) return false;
-  dialogueDraftUndoStack.push(dialogueDraftSnapshot()); restoreDialogueDraft(dialogueDraftRedoStack.pop()); return true;
-}
-function dialogueEditableHistoryTarget(target) { return Boolean(dialogueEditor && target instanceof Element && target.closest("#dialogueScriptDialog") && target.matches("input, textarea, select")); }
-function beginDialogueEditableHistory(target) {
-  if (!dialogueEditableHistoryTarget(target) || dialogueEditableHistorySessions.has(target)) return;
-  dialogueEditableHistorySessions.set(target, { before: dialogueDraftSnapshot(), changed: false, timer: null });
-}
-function commitDialogueEditableHistory(target) {
-  const session = dialogueEditableHistorySessions.get(target); if (!session) return;
-  if (session.timer) clearTimeout(session.timer); dialogueEditableHistorySessions.delete(target);
-  if (!session.changed || JSON.stringify(session.before) === JSON.stringify(dialogueDraftSnapshot())) return;
-  recordDialogueDraftHistory(session.before);
-}
-function scheduleDialogueEditableHistory(target) {
-  beginDialogueEditableHistory(target); const session = dialogueEditableHistorySessions.get(target); if (!session) return;
-  session.changed = true; if (session.timer) clearTimeout(session.timer);
-  session.timer = setTimeout(() => commitDialogueEditableHistory(target), 700);
-}
-function discardDialogueEditableHistory(target) {
-  const session = dialogueEditableHistorySessions.get(target); if (session?.timer) clearTimeout(session.timer); dialogueEditableHistorySessions.delete(target);
-}function dialogueEntryHtml(entry, roles, side = "left") {
-  if (entry.type === "speech") {
-    const role = roles.find(item => item.id === entry.roleId); const name = role ? scriptCharacterLabel(role) : "已移除角色";
-    const avatar = role ? `<div class="dialogue-message-avatar" data-dialogue-delete="${entry.id}" title="右键删除这句台词">${scriptAvatarHtml(role, true)}</div>` : `<span class="dialogue-missing-avatar" data-dialogue-delete="${entry.id}">${icon("user-round")}</span>`;
-    return `<article class="dialogue-message is-${side}" data-dialogue-item="${entry.id}" data-dialogue-draggable="${entry.id}" draggable="true">${avatar}<div><div class="dialogue-message-meta"><strong>${escapeHtml(name)}</strong><button class="dialogue-message-drag" type="button" tabindex="-1" aria-label="拖动${escapeHtml(name)}的台词调整位置" title="拖动调整位置">${icon("grip-vertical")}</button></div><textarea class="dialogue-speech-content" data-dialogue-entry="${entry.id}" aria-label="${escapeHtml(name)}的台词">${escapeHtml(entry.content)}</textarea></div></article>`;
-  }
-  const marker = entry.type === "action" ? { icon: "box", title: "动作", placeholder: "描述角色动作…" } : { icon: "book-open", title: "旁白", placeholder: "输入旁白内容…" };
-  return `<article class="dialogue-marker ${entry.type}" data-dialogue-item="${entry.id}" data-dialogue-draggable="${entry.id}" data-dialogue-delete="${entry.id}" draggable="true"><button class="dialogue-marker-drag" type="button" tabindex="-1" aria-label="拖动${marker.title}调整位置" title="拖动调整位置">${icon("grip-vertical")}</button><span>${icon(marker.icon)}</span><strong>${marker.title}</strong><textarea data-dialogue-entry="${entry.id}" placeholder="${marker.placeholder}" aria-label="${marker.title}内容">${escapeHtml(entry.content)}</textarea></article>`;
-}
-function dialogueAnalysisRoles(roles) {
-  if (!dialogueEditor) return [];
-  const roleIds = new Set(dialogueEditor.entries.filter(entry => entry.type === "speech" && entry.roleId).map(entry => entry.roleId));
-  if (dialogueEditor.roleId) roleIds.add(dialogueEditor.roleId);
-  const hiddenRoleIds = new Set(dialogueEditor.analysisHiddenRoles || []);
-  return roles.filter(role => roleIds.has(role.id) && !hiddenRoleIds.has(role.id));
-}
-function ensureDialogueAnalysis(roleId) {
-  if (!dialogueEditor || !roleId) return {};
-  dialogueEditor.analysis ||= {};
-  dialogueEditor.analysis[roleId] ||= {};
-  return dialogueEditor.analysis[roleId];
-}
-function renderDialogueAnalysis(roles) {
-  const tabs = $("#dialogueAnalysisTabs"); const content = $("#dialogueAnalysisContent");
-  if (!tabs || !content || !dialogueEditor) return;
-  const participantRoles = dialogueAnalysisRoles(roles);
-  if (!participantRoles.some(role => role.id === dialogueEditor.analysisRoleId)) dialogueEditor.analysisRoleId = participantRoles[0]?.id || "";
-  if (!participantRoles.length) {
-    tabs.innerHTML = "";
-    content.innerHTML = `<div class="dialogue-analysis-empty">${icon("users-round")}<strong>选择说话角色</strong><span>开始编写台词后，可在这里记录角色在当前故事卡中的人物变化。</span></div>`;
-    refreshIcons();
-    return;
-  }
-  const activeRole = participantRoles.find(role => role.id === dialogueEditor.analysisRoleId) || participantRoles[0];
-  const analysis = ensureDialogueAnalysis(activeRole.id);
-  tabs.innerHTML = participantRoles.map(role => `<button class="dialogue-analysis-role${role.id === activeRole.id ? " is-active" : ""}" data-dialogue-analysis-role="${role.id}" type="button">${scriptAvatarHtml(role, true)}<span>${escapeHtml(scriptCharacterLabel(role))}</span></button>`).join("");
-  content.innerHTML = `<section class="dialogue-analysis-card"><div class="dialogue-analysis-role-head">${scriptAvatarHtml(activeRole, true)}<div><strong>${escapeHtml(scriptCharacterLabel(activeRole))}</strong><span>${escapeHtml(activeRole.identity || "当前说话角色")}</span></div></div><div class="dialogue-analysis-fields">${dialogueAnalysisFields.map(field => `<label><span>${field.label}</span><textarea data-dialogue-analysis-field="${field.key}" placeholder="${field.placeholder}" aria-label="${escapeHtml(scriptCharacterLabel(activeRole))}的${field.label}">${escapeHtml(analysis[field.key] || "")}</textarea></label>`).join("")}</div></section>`;
-  $$('[data-dialogue-analysis-role]').forEach(button => { button.addEventListener("click", () => { dialogueEditor.analysisRoleId = button.dataset.dialogueAnalysisRole; renderDialogueAnalysis(roles); }); button.addEventListener("contextmenu", event => openDialogueAnalysisMenu(event, button.dataset.dialogueAnalysisRole)); });
-  $$('[data-dialogue-analysis-field]').forEach(input => input.addEventListener("input", event => { ensureDialogueAnalysis(dialogueEditor.analysisRoleId)[event.target.dataset.dialogueAnalysisField] = event.target.value; }));
-  refreshIcons();
-}
-function renderDialogueEditor() {
-  if (!dialogueEditor) return;
-  const card = dialogueCard(); if (!card) return closeStoryDialogue();
-  const roles = ensureScriptFlow().characters;
-  if (!roles.some(role => role.id === dialogueEditor.roleId)) dialogueEditor.roleId = roles[0]?.id || "";
-  $("#dialogueCardLabel").textContent = `故事卡 ${storyCardNumber(ensureScriptFlow(), card)} · ${storyCardLabel(card)}`;
-  const selectedRole = roles.find(role => role.id === dialogueEditor.roleId);
-  $("#dialogueRolePreview").innerHTML = selectedRole ? `${scriptAvatarHtml(selectedRole, true)}<strong>${escapeHtml(scriptCharacterLabel(selectedRole))}</strong>` : `<span class="dialogue-missing-avatar">${icon("user-round")}</span><strong>请先添加角色</strong>`;
-  $("#dialogueRoleSelect").innerHTML = roles.length ? roles.map(role => `<option value="${role.id}"${role.id === dialogueEditor.roleId ? " selected" : ""}>${escapeHtml(scriptCharacterLabel(role))}</option>`).join("") : `<option value="">当前画布没有角色</option>`;
-  $("#dialogueRoleSelect").disabled = !roles.length;
-  $("#addDialogueSpeechButton").disabled = !roles.length;
-  renderDialogueAnalysis(roles);
-  const roleSides = new Map(); let previousSide = "right";
-  const thread = dialogueEditor.entries.map(entry => {
-    if (entry.type !== "speech") return dialogueEntryHtml(entry, roles);
-    let side = roleSides.get(entry.roleId);
-    if (!side) { side = previousSide === "left" ? "right" : "left"; roleSides.set(entry.roleId, side); }
-    previousSide = side;
-    return dialogueEntryHtml(entry, roles, side);
-  }).join("");
-  $("#dialogueThread").innerHTML = dialogueEditor.entries.length ? thread : `<div class="dialogue-empty">${icon("messages-square")}<strong>从第一句台词开始</strong><span>选择角色后输入台词，或在右上添加动作、旁白。</span></div>`;
-  $$('[data-dialogue-entry]').forEach(input => input.addEventListener("input", event => { const entry = dialogueEditor?.entries.find(item => item.id === event.target.dataset.dialogueEntry); if (entry) entry.content = event.target.value; }));
-  $$('[data-dialogue-delete]').forEach(avatar => avatar.addEventListener("contextmenu", event => openDialogueEntryMenu(event, avatar.dataset.dialogueDelete)));
-  $$('[data-dialogue-draggable]').forEach(item => { item.addEventListener("dragstart", startDialogueMarkerDrag); item.addEventListener("dragend", endDialogueMarkerDrag); });
-  $$('[data-dialogue-item]').forEach(item => { item.addEventListener("dragover", previewDialogueMarkerDrop); item.addEventListener("dragleave", clearDialogueMarkerDropPreview); item.addEventListener("drop", dropDialogueMarker); });
-  refreshIcons();
-}
-function clearDialogueMarkerDropPreview() { $$('[data-dialogue-item]').forEach(item => item.classList.remove("is-dialogue-drop-before", "is-dialogue-drop-after")); }
-function startDialogueMarkerDrag(event) {
-  dialogueMarkerDragId = event.currentTarget.dataset.dialogueDraggable || "";
-  if (!dialogueMarkerDragId) return;
-  event.dataTransfer?.setData("text/plain", dialogueMarkerDragId);
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-  event.currentTarget.classList.add("is-dialogue-dragging");
-}
-function endDialogueMarkerDrag(event) { event.currentTarget.classList.remove("is-dialogue-dragging"); dialogueMarkerDragId = ""; clearDialogueMarkerDropPreview(); }
-function previewDialogueMarkerDrop(event) {
-  if (!dialogueMarkerDragId || event.currentTarget.dataset.dialogueItem === dialogueMarkerDragId) return;
-  event.preventDefault(); clearDialogueMarkerDropPreview();
-  const box = event.currentTarget.getBoundingClientRect(); event.currentTarget.classList.add(event.clientY > box.top + box.height / 2 ? "is-dialogue-drop-after" : "is-dialogue-drop-before");
-}
-function dropDialogueMarker(event) {
-  if (!dialogueEditor || !dialogueMarkerDragId) return;
-  event.preventDefault(); const targetId = event.currentTarget.dataset.dialogueItem; const sourceIndex = dialogueEditor.entries.findIndex(entry => entry.id === dialogueMarkerDragId); let targetIndex = dialogueEditor.entries.findIndex(entry => entry.id === targetId);
-  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) { dialogueMarkerDragId = ""; clearDialogueMarkerDropPreview(); return; }
-  const box = event.currentTarget.getBoundingClientRect(); const after = event.clientY > box.top + box.height / 2; recordDialogueDraftHistory(); const [entry] = dialogueEditor.entries.splice(sourceIndex, 1); if (sourceIndex < targetIndex) targetIndex -= 1; if (after) targetIndex += 1; dialogueEditor.entries.splice(targetIndex, 0, entry);
-  dialogueMarkerDragId = ""; clearDialogueMarkerDropPreview(); renderDialogueEditor();
-}
-function applyDialoguePanelLayout() {
-  const margin = 14; const maxWidth = Math.max(360, window.innerWidth - margin * 2); const maxHeight = Math.max(340, window.innerHeight - margin * 2);
-  dialoguePanelLayout.width = Math.min(Math.max(520, dialoguePanelLayout.width), maxWidth);
-  dialoguePanelLayout.height = Math.min(Math.max(440, dialoguePanelLayout.height), maxHeight);
-  dialoguePanelLayout.x = Math.min(Math.max(margin, dialoguePanelLayout.x), Math.max(margin, window.innerWidth - dialoguePanelLayout.width - margin));
-  dialoguePanelLayout.y = Math.min(Math.max(margin, dialoguePanelLayout.y), Math.max(margin, window.innerHeight - dialoguePanelLayout.height - margin));
-  Object.assign(dialogueScriptDialog.style, { left: `${dialoguePanelLayout.x}px`, top: `${dialoguePanelLayout.y}px`, width: `${dialoguePanelLayout.width}px`, height: `${dialoguePanelLayout.height}px` });
-  applyDialogueAnalysisLayout();
-}
-function applyDialogueAnalysisLayout() {
-  const body = $("#dialogueScriptBody"); if (!body) return;
-  const maxWidth = Math.max(210, dialoguePanelLayout.width - 390);
-  dialogueAnalysisLayout.width = Math.min(Math.max(210, dialogueAnalysisLayout.width), maxWidth);
-  body.style.setProperty("--dialogue-analysis-width", `${dialogueAnalysisLayout.width}px`);
-}
-function updateDialogueFullscreenButton() {
-  const button = $("#toggleDialogueFullscreenButton"); if (!button) return;
-  const label = dialoguePanelIsMaximized ? "退出全屏编辑" : "全屏编辑";
-  button.setAttribute("aria-label", label); button.title = label;
-  button.innerHTML = icon(dialoguePanelIsMaximized ? "minimize-2" : "maximize-2"); refreshIcons();
-}
-function toggleDialogueFullscreen() {
-  if (!dialogueEditor) return;
-  dialoguePanelIsMaximized = !dialoguePanelIsMaximized;
-  dialogueScriptDialog.classList.toggle("is-dialogue-fullscreen", dialoguePanelIsMaximized);
-  updateDialogueFullscreenButton(); requestAnimationFrame(applyDialogueAnalysisLayout);
-}function openStoryDialogue(cardId) {
-  const card = ensureScriptFlow().storyCards.find(item => item.id === cardId); if (!card) return;
-  dialoguePanelIsMaximized = false; dialogueDraftUndoStack = []; dialogueDraftRedoStack = []; dialogueScriptDialog.classList.remove("is-dialogue-fullscreen");
-  dialogueEditor = { cardId, roleId: ensureScriptFlow().characters[0]?.id || "", analysisRoleId: ensureScriptFlow().characters[0]?.id || "", analysis: structuredClone(card.dialogueAnalysis || {}), analysisHiddenRoles: structuredClone(card.dialogueAnalysisHiddenRoles || []), entries: structuredClone(card.dialogue || []) };
-  renderDialogueEditor(); if (!dialogueScriptDialog.open) dialogueScriptDialog.show(); requestAnimationFrame(() => { applyDialoguePanelLayout(); updateDialogueFullscreenButton(); });
-}
-function closeStoryDialogue() { closeDialogueEntryMenu(); closeDialogueAnalysisMenu(); dialoguePanelIsMaximized = false; dialogueDraftUndoStack = []; dialogueDraftRedoStack = []; dialogueScriptDialog.classList.remove("is-dialogue-fullscreen"); dialogueEditor = null; updateDialogueFullscreenButton(); if (dialogueScriptDialog.open) dialogueScriptDialog.close(); }
-function openDialogueAnalysisMenu(event, roleId) {
-  event.preventDefault(); event.stopPropagation(); dialogueAnalysisMenuRoleId = roleId;
-  const menu = $("#dialogueAnalysisMenu"); menu.hidden = false;
-  const width = 174; const height = 38; menu.style.left = `${Math.min(event.clientX, window.innerWidth - width - 12)}px`; menu.style.top = `${Math.min(event.clientY, window.innerHeight - height - 12)}px`;
-}
-function closeDialogueAnalysisMenu() { dialogueAnalysisMenuRoleId = ""; $("#dialogueAnalysisMenu").hidden = true; }
-function deleteDialogueAnalysisRole() {
-  if (!dialogueEditor || !dialogueAnalysisMenuRoleId) return closeDialogueAnalysisMenu();
-  recordDialogueDraftHistory(); dialogueEditor.analysisHiddenRoles = [...new Set([...(dialogueEditor.analysisHiddenRoles || []), dialogueAnalysisMenuRoleId])];
-  if (dialogueEditor.analysisRoleId === dialogueAnalysisMenuRoleId) dialogueEditor.analysisRoleId = "";
-  closeDialogueAnalysisMenu(); renderDialogueAnalysis(ensureScriptFlow().characters);
-}
-function openDialogueEntryMenu(event, entryId) {
-  event.preventDefault(); event.stopPropagation(); dialogueMenuEntryId = entryId;
-  const menu = $("#dialogueEntryMenu"); menu.hidden = false;
-  const width = 152; const height = 38; menu.style.left = `${Math.min(event.clientX, window.innerWidth - width - 12)}px`; menu.style.top = `${Math.min(event.clientY, window.innerHeight - height - 12)}px`;
-}
-function closeDialogueEntryMenu() { dialogueMenuEntryId = ""; $("#dialogueEntryMenu").hidden = true; }
-function deleteDialogueEntry() {
-  if (!dialogueEditor || !dialogueMenuEntryId) return closeDialogueEntryMenu();
-  recordDialogueDraftHistory(); dialogueEditor.entries = dialogueEditor.entries.filter(entry => entry.id !== dialogueMenuEntryId); closeDialogueEntryMenu(); renderDialogueEditor();
-}
-function startDialoguePanelGesture(event, mode) {
-  if (!dialogueEditor || dialoguePanelIsMaximized || (mode === "drag" && event.target.closest("button, select, input, textarea"))) return;
-  event.preventDefault(); event.stopPropagation();
-  dialoguePanelSession = { mode, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: { ...dialoguePanelLayout } };
-  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* Synthetic pointers do not own capture. */ }
-}
-function startDialogueAnalysisResize(event) {
-  if (!dialogueEditor) return;
-  event.preventDefault(); event.stopPropagation();
-  dialoguePanelSession = { mode: "analysis", pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: { width: dialogueAnalysisLayout.width } };
-  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* Synthetic pointers do not own capture. */ }
-}
-function moveDialoguePanelGesture(event) {
-  if (!dialoguePanelSession || event.pointerId !== dialoguePanelSession.pointerId) return;
-  const session = dialoguePanelSession; const dx = event.clientX - session.startX; const dy = event.clientY - session.startY;
-  if (session.mode === "drag") { dialoguePanelLayout.x = session.origin.x + dx; dialoguePanelLayout.y = session.origin.y + dy; applyDialoguePanelLayout(); }
-  else if (session.mode === "analysis") { dialogueAnalysisLayout.width = session.origin.width - dx; applyDialogueAnalysisLayout(); }
-  else { dialoguePanelLayout.width = session.origin.width + dx; dialoguePanelLayout.height = session.origin.height + dy; applyDialoguePanelLayout(); }
-}
-function endDialoguePanelGesture(event) { if (!dialoguePanelSession || event.pointerId !== dialoguePanelSession.pointerId) return; dialoguePanelSession = null; }
-function addDialogueSpeech() {
-  const text = $("#dialogueSpeechInput").value.trim(); if (!text || !dialogueEditor?.roleId) return;
-  recordDialogueDraftHistory(); dialogueEditor.entries.push({ id: uid("dialogue"), type: "speech", roleId: dialogueEditor.roleId, content: text });
-  $("#dialogueSpeechInput").value = ""; renderDialogueEditor(); requestAnimationFrame(() => { const thread = $("#dialogueThread"); thread.scrollTop = thread.scrollHeight; $("#dialogueSpeechInput").focus(); });
-}
-function addDialogueMarker(type) {
-  if (!dialogueEditor || !["action", "narration"].includes(type)) return;
-  recordDialogueDraftHistory(); const entry = { id: uid("dialogue"), type, roleId: "", content: "" }; dialogueEditor.entries.push(entry); renderDialogueEditor();
-  requestAnimationFrame(() => { const input = $(`[data-dialogue-entry="${CSS.escape(entry.id)}"]`); input?.focus(); input?.scrollIntoView({ block: "nearest" }); });
-}
-function saveStoryDialogue() {
-  const card = dialogueCard(); if (!card || !dialogueEditor) return;
-  recordHistory(); card.dialogue = structuredClone(dialogueEditor.entries); card.dialogueAnalysis = structuredClone(dialogueEditor.analysis || {}); card.dialogueAnalysisHiddenRoles = structuredClone(dialogueEditor.analysisHiddenRoles || []); dialogueDraftUndoStack = []; dialogueDraftRedoStack = []; scheduleSave(); renderScriptFlow(); toast("已保存当前编辑，可继续编辑");
-}
-function dialogueDownloadName(value = "") { return String(value || "对话脚本").replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").trim() || "对话脚本"; }
-function downloadDialogueText() {
-  const card = dialogueCard(); if (!card || !dialogueEditor) return;
-  const flow = ensureScriptFlow(); const order = storyCardNumber(flow, card);
-  const cardTitle = `故事卡 ${order} · ${storyCardLabel(card)}`;
-  const roles = flow.characters;
-  const entries = dialogueEditor.entries.map(entry => {
-    if (entry.type === "speech") { const role = roles.find(item => item.id === entry.roleId); return `${role ? scriptCharacterLabel(role) : "已移除角色"}：${entry.content || ""}`; }
-    return `${entry.type === "action" ? "【动作】" : "【旁白】"}${entry.content || ""}`;
-  });
-  const content = [`项目：${state?.projectName || "万物维"}`, cardTitle, "", ...entries].join("\r\n");
-  const blob = new Blob([`\uFEFF${content}`], { type: "text/plain;charset=utf-8" }); const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${dialogueDownloadName(`${state?.projectName || "项目"}-${cardTitle}`)}.txt`; anchor.hidden = true;
-  document.body.append(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); toast("对话文本已下载");
-}function emotionBoardMarkup(flow, board) {
-  const cards = emotionBoardCards(flow, board); syncEmotionLevels(flow); const pad = { left: 48, right: 28, top: 76, bottom: 42 }; const plotWidth = Math.max(1, board.width - pad.left - pad.right); const plotHeight = Math.max(1, board.height - pad.top - pad.bottom); const pointAt = (card, index) => ({ x: pad.left + (cards.length < 2 ? plotWidth / 2 : index * plotWidth / (cards.length - 1)), y: pad.top + (1 - board.levels[card.id]) * plotHeight }); const points = cards.map(pointAt); const path = points.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" "); const grid = [0, .5, 1].map(level => `<line x1="${pad.left}" x2="${board.width - pad.right}" y1="${pad.top + (1 - level) * plotHeight}" y2="${pad.top + (1 - level) * plotHeight}"></line>`).join(""); const empty = cards.length ? "" : `<text class="emotion-empty" x="${board.width / 2}" y="${board.height / 2 + 8}" text-anchor="middle">从卡片外沿拖线连接故事卡</text>`; return `<article class="script-emotion-board${flow.selectedIds.includes(board.id) ? " is-selected" : ""}" data-emotion-board="${board.id}" style="left:${board.x}px;top:${board.y}px;width:${board.width}px;height:${board.height}px"><header data-emotion-drag="${board.id}"><strong>情绪曲线</strong><span>${cards.length} 个已关联故事卡</span></header><svg viewBox="0 0 ${board.width} ${board.height}" aria-label="情绪曲线图"><g class="emotion-grid">${grid}</g><text x="8" y="${pad.top + 4}">高涨</text><text x="8" y="${pad.top + plotHeight / 2 + 4}">中性</text><text x="8" y="${pad.top + plotHeight}">低落</text>${empty}${points.length ? `<path class="emotion-line" d="${path}"></path>` : ""}${cards.map((card, index) => { const point = points[index]; return `<g class="emotion-point-group"><circle class="emotion-point" data-emotion-point="${card.id}" data-emotion-board-id="${board.id}" cx="${point.x}" cy="${point.y}" r="6"></circle><text x="${point.x}" y="${board.height - 16}" text-anchor="middle">${storyCardNumber(flow, card)}</text></g>`; }).join("")}</svg><span class="emotion-board-resize" data-emotion-resize="${board.id}" aria-hidden="true"></span></article>`;
-}
-function createCharacterManagerInput(value, placeholder, className, onInput) {
-  const input = document.createElement("input"); input.className = className; input.value = value || ""; input.placeholder = placeholder; input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("input", onInput); input.addEventListener("change", onInput); input.addEventListener("blur", onInput); return input;
-}
-function updateEmotionBoardLabel(boardId, cardId, value) {
-  const board = (ensureScriptFlow().emotionBoards || []).find(item => item.id === boardId); if (!board) return;
-  if (!board.labels) board.labels = {}; board.labels[cardId] = value; scheduleSave();
-}
-function renderEmotionBoardLabels(flow) {
-  (flow.emotionBoards || []).forEach(board => {
-    const boardElement = scriptNodeLayer.querySelector('[data-emotion-board="' + CSS.escape(board.id) + '"]'); if (!boardElement) return;
-    const cards = emotionBoardCards(flow, board); const left = 48; const right = 28; const top = 76; const bottom = 42; const plotWidth = Math.max(1, board.width - left - right); const plotHeight = Math.max(1, board.height - top - bottom);
-    cards.forEach((card, index) => {
-      const x = left + (cards.length < 2 ? plotWidth / 2 : index * plotWidth / (cards.length - 1)); const y = top + (1 - board.levels[card.id]) * plotHeight;
-      const label = document.createElement("div"); label.className = "emotion-point-label"; label.dataset.emotionLabel = card.id; label.dataset.emotionBoardId = board.id; label.contentEditable = "true"; label.spellcheck = false; label.textContent = board.labels?.[card.id] || ""; label.style.left = Math.max(12, Math.min(board.width - 116, Math.round(x - 52))) + "px"; label.style.top = Math.max(84, Math.round(y - 66)) + "px"; label.setAttribute("aria-label", "编辑情绪点剧情标记");
-      label.addEventListener("pointerdown", event => event.stopPropagation()); label.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); label.blur(); } }); label.addEventListener("input", event => updateEmotionBoardLabel(board.id, card.id, event.currentTarget.innerText.replace(/\r?\n/g, " ").trim())); label.addEventListener("blur", event => updateEmotionBoardLabel(board.id, card.id, event.currentTarget.innerText.replace(/\r?\n/g, " ").trim())); boardElement.append(label);
-    });
-  });
-}
-function applyFloatingPanelBox(element, panel) { element.style.left = panel.x + "px"; element.style.top = panel.y + "px"; element.style.width = panel.width + "px"; element.style.height = panel.height + "px"; }
-function toggleCharacterManager() {
-  const flow = ensureScriptFlow(); const panel = flow.characterManager;
-  if (!panel.visible) { const rect = scriptFlowStage.getBoundingClientRect(); const center = scriptPoint(rect.left + rect.width / 2, rect.top + rect.height * .42); panel.x = Math.round(center.x - panel.width / 2); panel.y = Math.round(center.y - panel.height / 2); }
-  panel.visible = !panel.visible; renderScriptFlow(); renderLibrary(); scheduleSave();
-}
-function openCharacterNotes(roleId) { const flow = ensureScriptFlow(); if (!flow.characters.some(role => role.id === roleId)) return; const wasVisible = flow.characterNotes.visible; flow.characterNotes.roleId = roleId; flow.characterNotes.visible = true; if (!wasVisible) { flow.characterNotes.x = flow.characterManager.x + flow.characterManager.width + 24; flow.characterNotes.y = flow.characterManager.y + 40; } renderScriptFlow(); scheduleSave(); }
-function summonCharacterFunction(roleId) { const flow = ensureScriptFlow(); const role = flow.characters.find(item => item.id === roleId); if (!role) return; const manager = flow.characterManager; if (!manager.visible) { const rect = scriptFlowStage.getBoundingClientRect(); const center = scriptPoint(rect.left + rect.width / 2, rect.top + rect.height * .58); manager.x = Math.round(center.x - manager.width / 2); manager.y = Math.round(center.y - manager.height / 2); } manager.visible = true; const notes = flow.characterNotes; notes.roleId = role.id; notes.visible = true; notes.x = Math.round(manager.x + manager.width * (Math.min(96, Math.max(4, Number(role.managementPosition) || 50)) / 100) - notes.width / 2); notes.y = Math.round(manager.y - notes.height - 22); renderScriptFlow(); renderLibrary(); renderInspector(); scheduleSave(); }
-function closeCharacterNotes() { ensureScriptFlow().characterNotes.visible = false; renderScriptFlow(); scheduleSave(); }
-function applyManagerSegmentPlacement(element, position) {
-  if (!element) return; const value = Math.min(100, Math.max(0, Number(position) || 0)); element.style.left = value + "%"; element.classList.toggle("is-edge-start", value <= .1); element.classList.toggle("is-edge-end", value >= 99.9);
-}
-function arrangeCharacterManagerSegments(manager, activeId, position, timelineWidth) {
-  const active = manager.paragraphs.find(item => item.id === activeId); if (!active) return manager.paragraphs;
-  active.position = Math.min(100, Math.max(0, position)); const gap = Math.max(16, 182 / Math.max(1, timelineWidth) * 100); const ordered = manager.paragraphs.slice().sort((a, b) => a.position - b.position);
-  ordered.forEach((item, index) => { if (!index) { item.position = Math.max(0, item.position); return; } const previous = ordered[index - 1]; if (item.position - previous.position < gap) item.position = Math.min(100, previous.position + gap); });
-  for (let index = ordered.length - 2; index >= 0; index -= 1) { const next = ordered[index + 1]; if (next.position - ordered[index].position < gap) ordered[index].position = Math.max(0, next.position - gap); }
-  manager.paragraphs = ordered; return ordered;
-}
-function addCharacterManagerSegment() { const flow = ensureScriptFlow(); const manager = flow.characterManager; const index = manager.paragraphs.length; recordHistory(); manager.paragraphs.push({ id: uid("segment"), title: "段落 " + (index + 1), content: "", position: index * 20 }); renderScriptFlow(); scheduleSave(); }
-function removeCharacterManagerSegment(id) { const manager = ensureScriptFlow().characterManager; if (!manager.paragraphs.some(item => item.id === id)) return; recordHistory(); manager.paragraphs = manager.paragraphs.filter(item => item.id !== id); closeManagerSegmentMenu(); renderScriptFlow(); scheduleSave(); }
-function openManagerSegmentMenu(event, id) {
-  event.preventDefault(); event.stopPropagation(); managerSegmentMenuId = id; let menu = document.getElementById("managerSegmentMenu");
-  if (!menu) { menu = document.createElement("div"); menu.id = "managerSegmentMenu"; menu.className = "manager-segment-menu"; menu.hidden = true; const button = document.createElement("button"); button.type = "button"; button.textContent = "删除段落"; button.addEventListener("pointerdown", menuEvent => { menuEvent.preventDefault(); menuEvent.stopPropagation(); if (managerSegmentMenuId) removeCharacterManagerSegment(managerSegmentMenuId); }); menu.append(button); document.body.append(menu); }
-  menu.hidden = false; menu.style.left = Math.min(event.clientX, window.innerWidth - 132) + "px"; menu.style.top = Math.min(event.clientY, window.innerHeight - 44) + "px";
-}
-function closeManagerSegmentMenu() { managerSegmentMenuId = ""; const menu = document.getElementById("managerSegmentMenu"); if (menu) menu.hidden = true; }
-function renderCharacterManagementPanels(flow) {
-  scriptNodeLayer.querySelectorAll(".character-manager-panel, .character-notes-panel").forEach(element => element.remove());
-  const manager = flow.characterManager;
-  if (manager.visible) {
-    const panel = document.createElement("section"); panel.className = "character-manager-panel"; panel.dataset.characterManagerPanel = "true"; panel.setAttribute("aria-label", "角色管理"); applyFloatingPanelBox(panel, manager);
-    const heading = document.createElement("header"); heading.className = "character-manager-heading"; heading.dataset.characterManagerDrag = "true";
-    const headingCopy = document.createElement("div"); const eyebrow = document.createElement("span"); eyebrow.className = "eyebrow"; eyebrow.textContent = "CHARACTER MAP"; const title = document.createElement("strong"); title.textContent = "角色管理"; headingCopy.append(eyebrow, title);
-    const count = document.createElement("span"); count.textContent = flow.characters.filter(role => flow.relationships.some(link => link.source === role.id || link.target === role.id)).length + " 个已连线角色"; heading.append(headingCopy, count); heading.addEventListener("pointerdown", event => startScriptFloatingPanel(event, "manager", "move")); panel.append(heading);
-    const acts = document.createElement("section"); acts.className = "character-manager-acts"; acts.dataset.characterManagerActs = "true"; acts.style.gridTemplateColumns = manager.actSplits[0] + "% " + (manager.actSplits[1] - manager.actSplits[0]) + "% " + (100 - manager.actSplits[1]) + "%";
-    manager.acts.forEach((act, index) => { const item = document.createElement("div"); item.className = "character-manager-act"; item.append(createCharacterManagerInput(act.title, "幕标题", "character-manager-act-title", event => { const current = ensureScriptFlow().characterManager.acts[index]; if (current) current.title = event.target.value; scheduleSave(); }), createCharacterManagerInput(act.subtitle, "幕说明", "character-manager-act-subtitle", event => { const current = ensureScriptFlow().characterManager.acts[index]; if (current) current.subtitle = event.target.value; scheduleSave(); })); acts.append(item); }); [0, 1].forEach(index => { const handle = document.createElement("span"); handle.className = "character-manager-act-resize"; handle.dataset.characterManagerActResize = String(index); handle.style.left = manager.actSplits[index] + "%"; handle.addEventListener("pointerdown", startManagerActResize); acts.append(handle); }); panel.append(acts);
-    const timeline = document.createElement("section"); timeline.className = "character-manager-timeline"; timeline.dataset.managerTimeline = "true";
-    const ruler = document.createElement("div"); ruler.className = "character-manager-ruler"; timeline.append(ruler);
-    const labels = document.createElement("div"); labels.className = "character-manager-percentages"; Array.from({ length: 11 }, (_, index) => index * 10 + "%").forEach(text => { const label = document.createElement("span"); label.textContent = text; labels.append(label); }); timeline.append(labels);
-    const segments = document.createElement("section"); segments.className = "character-manager-segments"; segments.setAttribute("aria-label", "段落轨道");
-    manager.paragraphs.forEach(segment => { const segmentCard = document.createElement("article"); segmentCard.className = "manager-segment-card"; segmentCard.dataset.managerSegment = segment.id; const segmentTitle = document.createElement("div"); segmentTitle.className = "manager-segment-title"; segmentTitle.contentEditable = "true"; segmentTitle.spellcheck = false; segmentTitle.textContent = segment.title; segmentTitle.setAttribute("aria-label", "编辑段落标题"); segmentTitle.addEventListener("pointerdown", event => event.stopPropagation()); segmentTitle.addEventListener("input", event => { const current = ensureScriptFlow().characterManager.paragraphs.find(item => item.id === segment.id); if (current) current.title = event.currentTarget.innerText.replace(/\r?\n/g, " ").trim(); scheduleSave(); }); const segmentContent = document.createElement("div"); segmentContent.className = "manager-segment-content"; segmentContent.contentEditable = "true"; segmentContent.spellcheck = false; segmentContent.textContent = segment.content || ""; segmentContent.setAttribute("aria-label", "编辑段落内容"); segmentContent.setAttribute("data-placeholder", "点击输入段落内容"); segmentContent.addEventListener("pointerdown", event => event.stopPropagation()); segmentContent.addEventListener("input", event => { const current = ensureScriptFlow().characterManager.paragraphs.find(item => item.id === segment.id); if (current) current.content = event.currentTarget.innerText; scheduleSave(); }); segmentCard.append(segmentTitle, segmentContent); segmentCard.addEventListener("contextmenu", event => openManagerSegmentMenu(event, segment.id)); segments.append(segmentCard); }); timeline.append(segments);
-    const addSegment = document.createElement("button"); addSegment.type = "button"; addSegment.className = "character-manager-add-segment"; addSegment.setAttribute("aria-label", "新增段落"); addSegment.textContent = "+"; addSegment.addEventListener("pointerdown", event => { event.preventDefault(); event.stopPropagation(); addCharacterManagerSegment(); }); timeline.append(addSegment);
-    const managedRoleIds = new Set(flow.relationships.flatMap(link => [link.source, link.target])); const managedRoles = flow.characters.filter(role => managedRoleIds.has(role.id));
-    if (!managedRoles.length) { const empty = document.createElement("p"); empty.className = "character-manager-empty"; empty.textContent = "在画布中连接角色后，会自动显示在这里。"; timeline.append(empty); }
-    managedRoles.forEach(role => {
-      const card = document.createElement("article"); card.className = "manager-role-card " + role.gender; card.dataset.managerRole = role.id; card.style.left = role.managementPosition + "%";
-      const avatar = document.createElement("button"); avatar.type = "button"; avatar.className = "manager-role-avatar"; avatar.setAttribute("aria-label", "编辑 " + scriptCharacterLabel(role)); avatar.innerHTML = scriptAvatarHtml(role, true); avatar.addEventListener("pointerdown", event => { if (event.detail === 2) { event.preventDefault(); event.stopPropagation(); summonCharacterFunction(role.id); } }); avatar.addEventListener("dblclick", event => { event.preventDefault(); event.stopPropagation(); summonCharacterFunction(role.id); });
-      const stem = document.createElement("span"); stem.className = "manager-role-stem";
-      const name = createCharacterManagerInput(role.name, "角色名称", "manager-role-name", event => updateScriptCharacterField(role.id, "name", event.target.value)); name.dataset.managerRoleName = role.id;
-      const identity = createCharacterManagerInput(role.identity, "角色定位", "manager-role-identity", event => updateScriptCharacterField(role.id, "identity", event.target.value)); identity.dataset.managerRoleIdentity = role.id;
-      card.append(avatar, stem, name, identity); card.addEventListener("pointerdown", startManagerRoleDrag); timeline.append(card);
-    });
-    panel.append(timeline);
-    const resize = document.createElement("span"); resize.className = "character-manager-resize"; resize.dataset.characterManagerResize = "true"; resize.setAttribute("role", "separator"); resize.addEventListener("pointerdown", event => startScriptFloatingPanel(event, "manager", "resize")); panel.append(resize);
-    scriptNodeLayer.append(panel);
-  }
-  const notes = flow.characterNotes; const role = notes.visible ? flow.characters.find(item => item.id === notes.roleId) : null;
-  if (!role) return;
-  const notePanel = document.createElement("section"); notePanel.className = "character-notes-panel"; notePanel.dataset.characterNotesPanel = "true"; notePanel.setAttribute("aria-label", "角色功能"); applyFloatingPanelBox(notePanel, notes);
-  const noteHeading = document.createElement("header"); noteHeading.className = "character-notes-heading"; noteHeading.dataset.characterNotesDrag = "true";
-  const noteCopy = document.createElement("div"); const noteEyebrow = document.createElement("span"); noteEyebrow.className = "eyebrow"; noteEyebrow.textContent = "CHARACTER NOTE"; const noteTitle = document.createElement("strong"); noteTitle.textContent = "角色功能"; noteCopy.append(noteEyebrow, noteTitle);
-  const close = document.createElement("button"); close.type = "button"; close.className = "character-notes-close"; close.setAttribute("aria-label", "关闭备注"); close.innerHTML = icon("x"); close.addEventListener("pointerdown", event => { event.preventDefault(); event.stopPropagation(); closeCharacterNotes(); }); noteHeading.append(noteCopy, close); noteHeading.addEventListener("pointerdown", event => { if (!event.target.closest("button")) startScriptFloatingPanel(event, "notes", "move"); }); notePanel.append(noteHeading);
-  const roleRow = document.createElement("div"); roleRow.className = "character-notes-role"; const avatarWrap = document.createElement("div"); avatarWrap.className = "character-notes-avatar"; avatarWrap.innerHTML = scriptAvatarHtml(role, true); const roleName = createCharacterManagerInput(role.name, "角色名称", "character-notes-name", event => updateScriptCharacterField(role.id, "name", event.target.value)); roleName.dataset.characterNotesName = role.id; const roleIdentity = document.createElement("span"); roleIdentity.dataset.characterNotesIdentity = role.id; roleIdentity.textContent = role.identity || "未填写身份"; roleRow.append(avatarWrap, roleName, roleIdentity); notePanel.append(roleRow);
-  const label = document.createElement("label"); label.className = "character-notes-label"; label.textContent = "备注"; notePanel.append(label);
-  const bio = document.createElement("textarea"); bio.className = "character-notes-bio"; bio.dataset.characterNotesBio = role.id; bio.placeholder = "记录这个角色的背景、关系、动机或后续调整…"; bio.value = role.bio || ""; bio.addEventListener("pointerdown", event => event.stopPropagation()); bio.addEventListener("input", event => updateScriptCharacterField(role.id, "bio", event.target.value)); notePanel.append(bio);
-  const noteResize = document.createElement("span"); noteResize.className = "character-notes-resize"; noteResize.dataset.characterNotesResize = "true"; noteResize.setAttribute("role", "separator"); noteResize.addEventListener("pointerdown", event => startScriptFloatingPanel(event, "notes", "resize")); notePanel.append(noteResize);
-  scriptNodeLayer.append(notePanel); refreshIcons();
-}
-function startScriptFloatingPanel(event, kind, mode) {
-  const flow = ensureScriptFlow(); const panel = kind === "manager" ? flow.characterManager : flow.characterNotes; if (!panel) return;
-  event.preventDefault(); event.stopPropagation();
-  scriptFloatingPanelSession = { kind, mode, start: scriptPoint(event.clientX, event.clientY), origin: { x: panel.x, y: panel.y, width: panel.width, height: panel.height }, before: snapshot(), moved: false, element: event.currentTarget.closest(kind === "manager" ? ".character-manager-panel" : ".character-notes-panel") };
-  if (scriptFloatingPanelSession.element) scriptFloatingPanelSession.element.style.willChange = mode === "move" ? "left, top" : "width, height";
-}
-function startManagerRoleDrag(event) {
-  if (event.target.closest('input, [contenteditable="true"]')) return; const flow = ensureScriptFlow(); const card = event.currentTarget.closest(".manager-role-card"); const role = flow.characters.find(item => item.id === card?.dataset.managerRole); if (!role) return;
-  event.preventDefault(); event.stopPropagation(); const timeline = event.currentTarget.closest(".character-manager-panel")?.querySelector("[data-manager-timeline]"); if (!timeline) return;
-  scriptManagerRoleDragSession = { id: role.id, timeline, before: snapshot(), moved: false, element: event.currentTarget };
-}
-function startManagerActResize(event) {
-  const flow = ensureScriptFlow(); const acts = event.currentTarget.closest("[data-character-manager-acts]"); const index = Number(event.currentTarget.dataset.characterManagerActResize); if (!acts || !Number.isInteger(index)) return;
-  event.preventDefault(); event.stopPropagation(); scriptManagerActResizeSession = { index, acts, before: snapshot(), moved: false };
-}
-function startManagerSegmentDrag(event) {
-  if (event.target.closest('input, button, [contenteditable="true"]')) return; const segment = ensureScriptFlow().characterManager.paragraphs.find(item => item.id === event.currentTarget.dataset.managerSegment); if (!segment) return;
-  event.preventDefault(); event.stopPropagation(); const timeline = event.currentTarget.closest(".character-manager-panel")?.querySelector("[data-manager-timeline]"); if (!timeline) return;
-  scriptManagerSegmentDragSession = { id: segment.id, timeline, before: snapshot(), moved: false, element: event.currentTarget };
-}
-function handleScriptFloatingPanels(event) {
-  if (scriptManagerActResizeSession) {
-    const session = scriptManagerActResizeSession; const manager = ensureScriptFlow().characterManager; const rect = session.acts.getBoundingClientRect(); const value = Math.min(85, Math.max(15, Math.round((event.clientX - rect.left) / Math.max(1, rect.width) * 1000) / 10));
-    if (session.index === 0) manager.actSplits[0] = Math.min(manager.actSplits[1] - 15, value); else manager.actSplits[1] = Math.max(manager.actSplits[0] + 15, value);
-    manager.actSplits[0] = Math.max(15, manager.actSplits[0]); manager.actSplits[1] = Math.min(85, manager.actSplits[1]); session.moved = true; session.acts.style.gridTemplateColumns = manager.actSplits[0] + "% " + (manager.actSplits[1] - manager.actSplits[0]) + "% " + (100 - manager.actSplits[1]) + "%"; session.acts.querySelectorAll("[data-character-manager-act-resize]").forEach(handle => { const index = Number(handle.dataset.characterManagerActResize); handle.style.left = manager.actSplits[index] + "%"; }); return true;
-  }
-  if (scriptFloatingPanelSession) {
-    const session = scriptFloatingPanelSession; const flow = ensureScriptFlow(); const panel = session.kind === "manager" ? flow.characterManager : flow.characterNotes; const point = scriptPoint(event.clientX, event.clientY); const dx = Math.round(point.x - session.start.x); const dy = Math.round(point.y - session.start.y);
-    if (session.mode === "move") { panel.x = session.origin.x + dx; panel.y = session.origin.y + dy; } else { const manager = session.kind === "manager"; panel.width = manager ? Math.max(620, session.origin.width + dx) : Math.min(560, Math.max(240, session.origin.width + dx)); panel.height = Math.min(720, Math.max(manager ? 430 : 270, session.origin.height + dy)); }
-    session.moved = panel.x !== session.origin.x || panel.y !== session.origin.y || panel.width !== session.origin.width || panel.height !== session.origin.height; if (session.element) applyFloatingPanelBox(session.element, panel); return true;
-  }
-  if (scriptManagerRoleDragSession) {
-    const session = scriptManagerRoleDragSession; const role = ensureScriptFlow().characters.find(item => item.id === session.id); if (!role) return true; const rect = session.timeline.getBoundingClientRect();
-    role.managementPosition = Math.min(96, Math.max(4, Math.round((event.clientX - rect.left) / Math.max(1, rect.width) * 1000) / 10)); session.moved = true; if (session.element) session.element.style.left = role.managementPosition + "%"; return true;
-  }
-  if (scriptManagerSegmentDragSession) {
-    const session = scriptManagerSegmentDragSession; const manager = ensureScriptFlow().characterManager; const segment = manager.paragraphs.find(item => item.id === session.id); if (!segment) return true; const rect = session.timeline.getBoundingClientRect();
-    const desired = Math.min(100, Math.max(0, Math.round((event.clientX - rect.left) / Math.max(1, rect.width) * 1000) / 10)); const ordered = arrangeCharacterManagerSegments(manager, segment.id, desired, rect.width); session.moved = true; ordered.forEach(item => applyManagerSegmentPlacement(scriptNodeLayer.querySelector('[data-manager-segment="' + CSS.escape(item.id) + '"]'), item.position)); return true;
-  }
-  return false;
-}
-function finishScriptFloatingPanels() {
-  const finish = session => { if (session.element) session.element.style.willChange = ""; if (session.moved) { undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); updateHistoryButtons(); renderScriptFlow(); renderLibrary(); renderInspector(); } return true; };
-  if (scriptManagerActResizeSession) { const session = scriptManagerActResizeSession; scriptManagerActResizeSession = null; return finish(session); }
-  if (scriptFloatingPanelSession) { const session = scriptFloatingPanelSession; scriptFloatingPanelSession = null; return finish(session); }
-  if (scriptManagerRoleDragSession) { const session = scriptManagerRoleDragSession; scriptManagerRoleDragSession = null; return finish(session); }
-  if (scriptManagerSegmentDragSession) { const session = scriptManagerSegmentDragSession; scriptManagerSegmentDragSession = null; return finish(session); }
-  return false;
-}
-function scriptAssistantTargets(flow = ensureScriptFlow()) {
-  return [
-    ...flow.characters.map(item => ({ id: item.id, kind: "角色", label: scriptCharacterLabel(item) })),
-    ...flow.storyCards.map(item => ({ id: item.id, kind: "故事卡", label: storyCardLabel(item) })),
-    ...(flow.emotionBoards || []).map((item, index) => ({ id: item.id, kind: "情绪曲线", label: `情绪曲线 ${index + 1}` })),
-    ...(flow.characterArcs || []).map((item, index) => ({ id: item.id, kind: "角色转变", label: `角色转变 ${index + 1}` })),
-    ...(flow.characterGoals || []).map((item, index) => ({ id: item.id, kind: "角色目标", label: `角色目标 ${index + 1}` })),
-    ...(flow.scriptNotes || []).map((item, index) => ({ id: item.id, kind: "便签", label: item.content.trim().split(/\r?\n/)[0].slice(0, 24) || `便签 ${index + 1}` })),
-    ...flow.storyFrames.map(item => ({ id: item.id, kind: "分组画板", label: item.name || "未命名画板" })),
-    { id: "character-manager", kind: "角色管理", label: "角色管理" }
-  ];
-}
-function scriptAssistantTargetLabel(flow, id) { const target = scriptAssistantTargets(flow).find(item => item.id === id); return target ? `${target.kind} · ${target.label}` : "未选择模块"; }
-function scriptAssistantContext(flow, targetId) {
-  if (targetId === "character-manager") return { type: "角色管理", acts: flow.characterManager?.acts || [], paragraphs: flow.characterManager?.paragraphs || [], characters: flow.characters.map(role => ({ name: scriptCharacterLabel(role), identity: role.identity, age: role.age, occupation: role.occupation, personality: role.personality, goal: role.goal, bio: role.bio })) };
-  const item = scriptItemById(flow, targetId); if (!item) return {};
-  if (item.type === "character") return { type: "角色", name: scriptCharacterLabel(item), identity: item.identity, age: item.age, occupation: item.occupation, personality: item.personality, goal: item.goal, bio: item.bio, tags: item.tags, relations: flow.relationships.filter(link => link.source === item.id || link.target === item.id).map(link => scriptCharacterLabel(flow.characters.find(role => role.id === (link.source === item.id ? link.target : link.source)) || {})) };
-  if (item.type === "story-card") return { type: "故事卡", number: storyCardNumber(flow, item), title: item.title, scene: item.scene, time: item.time, location: item.location, characters: item.characters, goal: item.goal, resistance: item.mood, initialSituation: item.initialSituation, finalSituation: item.finalSituation, storyType: item.storyType, content: item.content, dialogue: item.dialogue };
-  if (item.type === "emotion-board") return { type: "情绪曲线", points: emotionBoardCards(flow, item).map(card => ({ number: storyCardNumber(flow, card), title: card.title, label: item.labels?.[card.id] || "", level: item.levels?.[card.id] ?? .5 })) };
-  if (item.type === "character-arc") return { type: "角色转变", roles: item.roleIds.map(id => flow.characters.find(role => role.id === id)).filter(Boolean).map(role => ({ name: scriptCharacterLabel(role), identity: role.identity })), stages: item.stages };
-  if (item.type === "character-goal") return { type: "角色目标", roles: item.roleIds.map(id => flow.characters.find(role => role.id === id)).filter(Boolean).map(role => ({ name: scriptCharacterLabel(role), identity: role.identity })), surfaceGoals: item.surfaceGoals, coreGoals: item.coreGoals };
-  if (item.type === "script-note") return { type: "便签", content: item.content || "" };
-  if (item.type === "story-frame") return { type: "分组画板", name: item.name, items: scriptFrameContainedItems(item, flow).filter(child => child.id !== item.id).map(child => ({ type: scriptItemKind(child), label: scriptItemLabel(child) })) };
-  return { type: scriptItemKind(item), label: scriptItemLabel(item) };
-}
-function createScriptAssistant(x, y, index = 0) { return { id: uid("script-ai"), type: "ai-assistant", targetId: "", instruction: "", answer: "", error: "", status: "idle", model: "gpt-5.6", x, y, width: 520, height: 430, createdAt: Date.now() + index }; }
-function addScriptAssistant() { if (!state) return; const flow = ensureScriptFlow(); const rect = scriptFlowStage.getBoundingClientRect(); const point = scriptPoint(rect.left + rect.width / 2, rect.top + rect.height / 2); recordHistory(); const assistant = createScriptAssistant(Math.round(point.x - 260 + (flow.aiAssistants || []).length * 30), Math.round(point.y - 215 + (flow.aiAssistants || []).length * 30), (flow.aiAssistants || []).length); flow.aiAssistants.push(assistant); flow.selectedIds = [assistant.id]; flow.selectedEdgeId = null; renderWorkspace(); scheduleSave(); }
-function scriptAssistantMarkup(assistant, flow) {
-  const selected = flow.selectedIds.includes(assistant.id) ? " is-selected" : ""; const targets = scriptAssistantTargets(flow); const answer = assistant.answer || assistant.error || ""; const busy = assistant.status === "running";
-  const options = targets.map(target => `<option value="${escapeHtml(target.id)}"${target.id === assistant.targetId ? " selected" : ""}>${escapeHtml(`${target.kind} · ${target.label}`)}</option>`).join("");
-  return `<article class="script-ai-assistant${selected}${assistant.error ? " is-error" : ""}" data-ai-assistant="${assistant.id}" style="left:${assistant.x}px;top:${assistant.y}px;width:${assistant.width}px;height:${assistant.height}px"><header data-script-ai-drag="${assistant.id}"><div><small>AI ASSISTANT</small><strong>${icon("sparkles")} AI助手</strong></div><span>${busy ? "正在生成" : "指定模块"}</span></header><div class="script-ai-assistant-body"><label class="script-ai-target"><span>工作对象</span><select class="script-interactive" data-script-ai-target="${assistant.id}" aria-label="选择 AI 助手工作对象"><option value="">选择画布模块</option>${options}</select></label><label class="script-ai-request"><span>需求</span><textarea class="script-interactive" data-script-ai-request="${assistant.id}" placeholder="例如：梳理这个角色的动机，并给出下一步剧情建议。">${escapeHtml(assistant.instruction)}</textarea></label><div class="script-ai-actions"><select class="script-interactive" data-script-ai-model="${assistant.id}" aria-label="选择模型"><option value="gpt-5.6" selected>GPT-5.6</option></select><button class="button button-primary script-interactive" type="button" data-script-ai-run="${assistant.id}"${busy ? " disabled" : ""}>${icon(busy ? "loader-circle" : "send")} ${busy ? "生成中" : "确认并请求"}</button></div><section class="script-ai-response"><div><span>输出内容</span>${answer ? `<button class="script-interactive" type="button" data-script-ai-copy="${assistant.id}" aria-label="复制输出内容">${icon("copy")}</button>` : ""}</div><textarea readonly data-script-ai-answer="${assistant.id}" placeholder="模型的回答会显示在这里。">${escapeHtml(answer)}</textarea></section></div><span class="script-ai-resize script-interactive" data-script-ai-resize="${assistant.id}" aria-label="调整 AI 助手大小"></span></article>`;
-}
-function updateScriptAssistantField(id, field, value) { const assistant = (ensureScriptFlow().aiAssistants || []).find(item => item.id === id); if (!assistant) return; assistant[field] = value; scheduleSave(); }
-async function copyScriptAssistantOutput(id) { const answer = String((ensureScriptFlow().aiAssistants || []).find(item => item.id === id)?.answer || "").trim(); if (!answer) return toast("暂无可复制的 AI 输出", true); let copied = false; try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(answer); copied = true; } } catch { copied = false; } if (!copied) { const area = document.createElement("textarea"); area.value = answer; area.style.cssText = "position:fixed;opacity:0"; document.body.append(area); area.select(); copied = document.execCommand("copy"); area.remove(); } toast(copied ? "AI 输出已复制" : "复制失败，请手动选择文本复制", !copied); }
-async function runScriptAssistant(id) {
-  const flow = ensureScriptFlow(); const assistant = (flow.aiAssistants || []).find(item => item.id === id);
-  if (!assistant || assistant.status === "running") return;
-  if (!assistant.targetId) return toast("请先选择 AI 助手要处理的画布模块", true);
-  if (!assistant.instruction.trim()) return toast("请输入希望 AI 完成的内容", true);
-  if (!$("#apiState").classList.contains("is-ready") && !apiKey) { openSettings(); return toast("请先连接 API", true); }
-  const targetName = scriptAssistantTargetLabel(flow, assistant.targetId);
-  const context = scriptAssistantContext(flow, assistant.targetId);
-  const prompt = `你是剧本创作 AI 助手。请仅围绕用户指定的画布模块完成请求。\n\n工作对象：${targetName}\n\n模块资料：\n${JSON.stringify(context, null, 2)}\n\n用户需求：\n${assistant.instruction.trim()}\n\n请用清晰的中文作答。未提供的事实不要当作既定内容；新增内容请明确标注为建议。`;
-  const currentAssistant = () => (ensureScriptFlow().aiAssistants || []).find(item => item.id === id);
-  recordHistory(); scriptAssistantPendingIds.add(id); assistant.status = "running"; assistant.error = ""; renderScriptFlow(); renderInspector();
-  try {
-    const result = await requestJson("/api/respond", { method: "POST", headers: { "Content-Type": "application/json", ...(apiKey ? { "x-image2-api-key": apiKey } : {}) }, body: JSON.stringify({ prompt, model: assistant.model }) }, 165000);
-    const answer = String(result?.answer || "").trim();
-    if (!answer) throw new Error("AI 模型未返回可显示的文本，请重试");
-    const liveAssistant = currentAssistant();
-    if (liveAssistant) { liveAssistant.answer = answer; liveAssistant.model = result.model || liveAssistant.model; liveAssistant.error = ""; liveAssistant.status = "idle"; }
-    toast("AI 助手已完成输出");
-  } catch (error) {
-    const liveAssistant = currentAssistant();
-    if (liveAssistant) { liveAssistant.status = "idle"; liveAssistant.error = error?.message || "AI 助手请求失败"; }
-    toast(error?.message || "AI 助手请求失败", true);
-  } finally {
-    scriptAssistantPendingIds.delete(id);
-    const liveAssistant = currentAssistant(); if (liveAssistant) liveAssistant.status = "idle";
-    renderScriptFlow(); renderInspector(); scheduleSave(); updateHistoryButtons();
-  }
-}
-function startScriptAssistantResize(event) { const id = event.currentTarget.dataset.scriptAiResize; const assistant = (ensureScriptFlow().aiAssistants || []).find(item => item.id === id); if (!assistant) return; event.preventDefault(); event.stopPropagation(); selectScriptItem(id); scriptAssistantResizeSession = { id, start: scriptPoint(event.clientX, event.clientY), origin: { width: assistant.width, height: assistant.height }, before: snapshot(), moved: false, element: scriptItemElement(id) }; if (scriptAssistantResizeSession.element) scriptAssistantResizeSession.element.style.willChange = "width, height"; }
-function createScriptNote(x, y, index = 0) { return { id: uid("script-note"), type: "script-note", content: "", x, y, width: 280, height: 210, createdAt: Date.now() + index }; }
-function addScriptNote() { if (!state) return; const flow = ensureScriptFlow(); const rect = scriptFlowStage.getBoundingClientRect(); const point = scriptPoint(rect.left + rect.width / 2, rect.top + rect.height / 2); recordHistory(); const note = createScriptNote(Math.round(point.x - 140 + (flow.scriptNotes || []).length * 24), Math.round(point.y - 105 + (flow.scriptNotes || []).length * 24), (flow.scriptNotes || []).length); flow.scriptNotes.push(note); flow.selectedIds = [note.id]; flow.selectedEdgeId = null; renderWorkspace(); scheduleSave(); }
-function scriptNoteMarkup(note, flow) { const selected = flow.selectedIds.includes(note.id) ? " is-selected" : ""; return `<article class="script-note-card${selected}" data-script-note="${note.id}" style="left:${note.x}px;top:${note.y}px;width:${note.width}px;height:${note.height}px"><header data-script-note-drag="${note.id}"><span>${icon("sticky-note")}</span><strong>便签</strong></header><textarea class="script-note-text script-interactive" data-script-note-content="${note.id}" placeholder="记录你的想法…">${escapeHtml(note.content || "")}</textarea><span class="script-note-resize script-interactive" data-script-note-resize="${note.id}" aria-label="调整便签大小"></span></article>`; }
-function updateScriptNoteContent(id, value) { const note = (ensureScriptFlow().scriptNotes || []).find(item => item.id === id); if (!note) return; note.content = value; const length = document.querySelector(`[data-script-note-length="${CSS.escape(id)}"]`); if (length) length.textContent = `${value.length} 字`; scheduleSave(); }
-function startScriptNoteResize(event) { const id = event.currentTarget.dataset.scriptNoteResize; const note = (ensureScriptFlow().scriptNotes || []).find(item => item.id === id); if (!note) return; event.preventDefault(); event.stopPropagation(); selectScriptItem(id); scriptNoteResizeSession = { id, start: scriptPoint(event.clientX, event.clientY), origin: { width: note.width, height: note.height }, before: snapshot(), moved: false, element: scriptItemElement(id) }; if (scriptNoteResizeSession.element) scriptNoteResizeSession.element.style.willChange = "width, height"; }
-function renderScriptFlow() { if (!state || !scriptFlowStage) return; const flow = ensureScriptFlow(); syncEmotionLevels(flow); scriptNodeLayer.innerHTML = `${flow.storyFrames.map(frame => renderScriptFrame(frame, flow)).join("")}${(flow.characterArcs || []).map(arc => characterArcMarkup(arc, flow)).join("")}${(flow.characterGoals || []).map(goal => characterGoalMarkup(goal, flow)).join("")}${(flow.aiAssistants || []).map(assistant => scriptAssistantMarkup(assistant, flow)).join("")}${(flow.scriptNotes || []).map(note => scriptNoteMarkup(note, flow)).join("")}${(flow.emotionBoards || []).map(board => emotionBoardMarkup(flow, board)).join("")}${flow.storyCards.map(card => renderStoryCard(card, flow)).join("")}${flow.characters.map(role => { const selected = flow.selectedIds.includes(role.id) ? " is-selected" : ""; return `<article class="script-character-node ${role.gender}${selected}" data-script-character="${role.id}" style="left:${role.x}px;top:${role.y}px" aria-label="${escapeHtml(scriptCharacterLabel(role))}">${scriptAvatarHtml(role, false, true)}<input class="script-name-input script-interactive" data-script-name="${role.id}" value="${escapeHtml(role.name || "")}" placeholder="角色名称" aria-label="角色名称"><input class="script-identity-input script-interactive" data-script-identity="${role.id}" value="${escapeHtml(role.identity || "")}" placeholder="身份 / 关系" aria-label="角色身份"></article>`; }).join("")}${flow.storyFrames.map(frame => renderScriptFrameResizeControls(frame)).join("")}`; renderScriptEdges(); updateScriptViewport(); renderEmotionBoardLabels(flow); bindScriptFlowEvents(); renderCharacterManagementPanels(flow); refreshIcons(); }
-function scriptEdgeById(flow, id) { return flow.relationships.find(link => link.id === id) || flow.storyLinks.find(link => link.id === id) || (flow.emotionLinks || []).find(link => link.id === id) || null; }function requestScriptEdgeRender() {
-  if (scriptEdgeRenderFrame) return;
-  scriptEdgeRenderFrame = requestAnimationFrame(() => { scriptEdgeRenderFrame = 0; renderScriptEdges(); });
-}
-function renderScriptEdges() {
-  if (!state || !scriptEdgeLayer) return;
-  const flow = ensureScriptFlow(); const itemsById = new Map([...flow.characters, ...flow.storyCards, ...(flow.emotionBoards || [])].map(item => [item.id, item])); const getItem = id => itemsById.get(id); const specs = [];
-  const appendLink = (link, kind, colorClass) => { const source = getItem(link.source); const target = getItem(link.target); if (!source || !target) return; specs.push({ id: link.id, d: scriptRelationshipPath(scriptItemCenter(source), scriptItemCenter(target)), className: `script-relationship-edge ${colorClass}${flow.selectedEdgeId === link.id ? " is-selected" : ""}`, label: kind === "story" ? "故事卡连接" : kind === "emotion" ? "情绪曲线关联" : "角色关系连接" }); };
-  flow.relationships.forEach(link => appendLink(link, "role", getItem(link.source)?.gender === "female" ? "female" : "male")); flow.storyLinks.forEach(link => appendLink(link, "story", "story")); (flow.emotionLinks || []).forEach(link => appendLink(link, "emotion", "emotion"));
-  const existing = new Map([...scriptEdgeLayer.querySelectorAll("[data-script-edge-group]")].map(group => [group.dataset.scriptEdgeGroup, group]));
-  specs.forEach(spec => { let group = existing.get(spec.id); if (!group) { group = document.createElementNS("http://www.w3.org/2000/svg", "g"); group.dataset.scriptEdgeGroup = spec.id; const visual = document.createElementNS("http://www.w3.org/2000/svg", "path"); const hit = document.createElementNS("http://www.w3.org/2000/svg", "path"); hit.dataset.scriptEdge = spec.id; group.append(visual, hit); scriptEdgeLayer.append(group); } existing.delete(spec.id); const [visual, hit] = group.children; visual.setAttribute("class", spec.className); visual.setAttribute("d", spec.d); hit.setAttribute("class", "script-edge-hit"); hit.setAttribute("d", spec.d); hit.setAttribute("aria-label", spec.label); });
-  existing.forEach(group => group.remove()); const draftSource = scriptConnectionDraft ? getItem(scriptConnectionDraft.sourceId) : null; let draft = scriptEdgeLayer.querySelector("[data-script-draft-edge]");
-  if (draftSource && scriptConnectionDraft) { if (!draft) { draft = document.createElementNS("http://www.w3.org/2000/svg", "path"); draft.dataset.scriptDraftEdge = "true"; scriptEdgeLayer.append(draft); } const draftClass = scriptConnectionDraft.kind === "story" ? "story" : scriptConnectionDraft.kind === "emotion" ? "emotion" : draftSource.gender; draft.setAttribute("class", `script-relationship-edge is-draft ${draftClass}`); draft.setAttribute("d", scriptRelationshipPath(scriptItemCenter(draftSource), scriptConnectionDraft.current)); } else draft?.remove();
-}function updateScriptCharacterField(id, field, value) {
-  const flow = ensureScriptFlow(); const role = flow.characters.find(item => item.id === id); if (!role) return;
-  role[field] = field === "tags" ? value.split(/[,，]/).map(item => item.trim()).filter(Boolean).slice(0, 12) : value;
-  const safeId = CSS.escape(id);
-  const selectors = ["[data-script-" + field + "=\"" + safeId + "\"]", "[data-manager-role-" + field + "=\"" + safeId + "\"]", "[data-character-notes-" + field + "=\"" + safeId + "\"]"];
-  scriptNodeLayer.querySelectorAll(selectors.join(",")).forEach(input => { if ("value" in input && input.value !== value) input.value = value; });
-  const noteIdentity = scriptNodeLayer.querySelector("[data-character-notes-identity=\"" + safeId + "\"]");
-  if (noteIdentity && field === "identity") noteIdentity.textContent = value || "未填写身份";
-  if (field === "name" || field === "identity") {
-    const node = scriptNodeLayer.querySelector("[data-script-character=\"" + safeId + "\"]");
-    if (node) node.setAttribute("aria-label", scriptCharacterLabel(role));
-  }
-  scheduleSave();
-}
-function updateStoryCardField(id, field, value) { const card = ensureScriptFlow().storyCards.find(item => item.id === id); if (!card) return; card[field] = value; scheduleSave(); }
-function updateStoryCardNumber(id, value) { const card = ensureScriptFlow().storyCards.find(item => item.id === id); if (!card) return; card.displayNumber = String(value || "").replace(/[^0-9]/g, "").slice(0, 4); scheduleSave(); }
-function bindScriptFlowEvents() { const scriptGoalAll = selector => [...document.querySelectorAll(selector)]; scriptGoalAll("[data-script-note]").forEach(element => element.addEventListener("pointerdown", startScriptDrag)); scriptGoalAll("[data-script-note] .script-interactive").forEach(control => control.addEventListener("pointerdown", event => event.stopPropagation())); scriptGoalAll("[data-script-note-drag]").forEach(header => header.addEventListener("pointerdown", event => startScriptDrag(event, header.dataset.scriptNoteDrag))); scriptGoalAll("[data-script-note-resize]").forEach(handle => handle.addEventListener("pointerdown", startScriptNoteResize)); scriptGoalAll("[data-script-note-content]").forEach(input => input.addEventListener("input", event => updateScriptNoteContent(input.dataset.scriptNoteContent, event.target.value))); scriptGoalAll('[data-ai-assistant]').forEach(element => element.addEventListener("pointerdown", startScriptDrag)); scriptGoalAll('[data-ai-assistant] .script-interactive').forEach(control => control.addEventListener("pointerdown", event => event.stopPropagation())); scriptGoalAll('[data-script-ai-drag]').forEach(header => header.addEventListener("pointerdown", event => startScriptDrag(event, header.dataset.scriptAiDrag))); scriptGoalAll('[data-script-ai-resize]').forEach(handle => handle.addEventListener("pointerdown", startScriptAssistantResize)); scriptGoalAll('[data-script-ai-target]').forEach(select => select.addEventListener("change", event => { recordHistory(); updateScriptAssistantField(select.dataset.scriptAiTarget, "targetId", event.target.value); renderScriptFlow(); renderInspector(); })); scriptGoalAll('[data-script-ai-request]').forEach(input => input.addEventListener("input", event => updateScriptAssistantField(input.dataset.scriptAiRequest, "instruction", event.target.value))); scriptGoalAll('[data-script-ai-model]').forEach(select => select.addEventListener("change", event => { recordHistory(); updateScriptAssistantField(select.dataset.scriptAiModel, "model", event.target.value); })); scriptGoalAll('[data-script-ai-run]').forEach(button => button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); runScriptAssistant(button.dataset.scriptAiRun); })); scriptGoalAll('[data-script-ai-copy]').forEach(button => button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); copyScriptAssistantOutput(button.dataset.scriptAiCopy); })); scriptGoalAll('[data-character-goal]').forEach(element => element.addEventListener("pointerdown", startScriptDrag)); scriptGoalAll('[data-character-goal] .script-interactive').forEach(control => control.addEventListener("pointerdown", event => event.stopPropagation())); scriptGoalAll('[data-character-goal-resize]').forEach(handle => handle.addEventListener("pointerdown", startCharacterGoalResize)); scriptGoalAll('[data-character-goal-point]').forEach(handle => handle.addEventListener("pointerdown", startCharacterGoalPointDrag)); scriptGoalAll('[data-character-goal-role-toggle]').forEach(button => button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); characterGoalRolePickerId = characterGoalRolePickerId === button.dataset.characterGoalRoleToggle ? "" : button.dataset.characterGoalRoleToggle; renderScriptFlow(); })); scriptGoalAll('[data-character-goal-pick-role]').forEach(button => button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); addCharacterGoalRole(button.dataset.characterGoalPickRole, button.dataset.roleId); })); scriptGoalAll('[data-character-goal-remove-role]').forEach(button => button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); removeCharacterGoalRole(button.dataset.characterGoalRemoveRole, button.dataset.roleId); })); scriptGoalAll('[data-character-goal-add-entry]').forEach(button => button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); addCharacterGoalEntry(button.dataset.characterGoalAddEntry, button.dataset.goalKind); })); scriptGoalAll('[data-character-goal-text]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("input", event => updateCharacterGoalText(input.dataset.characterGoalText, input.dataset.goalKind, input.dataset.goalEntry, event.target.value)); }); scriptGoalAll('[data-character-goal-entry]').forEach(entry => entry.addEventListener("contextmenu", event => { event.preventDefault(); event.stopPropagation(); removeCharacterGoalEntry(entry.dataset.characterGoalId, entry.dataset.goalKind, entry.dataset.characterGoalEntry); })); scriptGoalAll('[data-character-arc]').forEach(element => element.addEventListener("pointerdown", startScriptDrag)); scriptGoalAll('[data-character-arc] .script-interactive').forEach(control => control.addEventListener("pointerdown", event => event.stopPropagation())); scriptGoalAll('[data-character-arc-resize]').forEach(handle => handle.addEventListener("pointerdown", startCharacterArcResize)); scriptGoalAll('[data-character-arc-point]').forEach(point => point.addEventListener("pointerdown", startCharacterArcPointDrag)); scriptGoalAll('[data-character-arc-role-toggle]').forEach(button => button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); characterArcRolePickerId = characterArcRolePickerId === button.dataset.characterArcRoleToggle ? "" : button.dataset.characterArcRoleToggle; renderScriptFlow(); })); scriptGoalAll('[data-character-arc-pick-role]').forEach(button => button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); addCharacterArcRole(button.dataset.characterArcPickRole, button.dataset.roleId); })); scriptGoalAll('[data-character-arc-remove-role]').forEach(button => button.addEventListener("click", event => { event.stopPropagation(); removeCharacterArcRole(button.dataset.characterArcRemoveRole, button.dataset.roleId); })); scriptGoalAll('[data-character-arc-text]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("input", event => updateCharacterArcStage(input.dataset.characterArcText, input.dataset.stageKey, event.target.value)); }); scriptGoalAll('[data-script-character]').forEach(element => { element.addEventListener("pointerdown", startScriptDrag); element.addEventListener("dblclick", event => { if (event.target.closest(".script-interactive")) return; event.preventDefault(); event.stopPropagation(); summonCharacterFunction(element.dataset.scriptCharacter); }); }); scriptGoalAll('[data-script-link]').forEach(button => button.addEventListener("pointerdown", startScriptAvatarInteraction)); scriptGoalAll('[data-script-frame]').forEach(element => element.addEventListener("pointerdown", startScriptDrag)); scriptGoalAll('[data-emotion-board]').forEach(element => element.addEventListener("pointerdown", startEmotionBoardInteraction)); scriptGoalAll('[data-story-card]').forEach(element => element.addEventListener("pointerdown", startStoryCardInteraction)); scriptGoalAll('[data-script-frame-resize]').forEach(handle => handle.addEventListener("pointerdown", startScriptFrameResize)); scriptGoalAll('[data-script-frame-name]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("input", event => { const frame = ensureScriptFlow().storyFrames.find(item => item.id === input.dataset.scriptFrameName); if (frame) { frame.name = event.target.value; event.target.style.width = `${scriptFrameTitleWidth(frame.name)}px`; scheduleSave(); } }); }); scriptGoalAll('[data-story-dialog-open]').forEach(button => { button.addEventListener("pointerdown", event => event.stopPropagation()); button.addEventListener("dblclick", event => { event.preventDefault(); event.stopPropagation(); openStoryDialogue(button.dataset.storyDialogOpen); }); }); scriptGoalAll('[data-emotion-drag]').forEach(header => header.addEventListener("pointerdown", startEmotionBoardDrag)); scriptGoalAll('[data-emotion-resize]').forEach(handle => handle.addEventListener("pointerdown", startEmotionBoardResize)); scriptGoalAll('[data-story-resize]').forEach(handle => handle.addEventListener("pointerdown", startStoryCardResize)); scriptGoalAll('[data-story-number]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("input", event => updateStoryCardNumber(input.dataset.storyNumber, event.target.value)); }); scriptGoalAll('[data-story-field]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("input", event => updateStoryCardField(input.dataset.storyField, input.dataset.storyKey, event.target.value)); }); scriptGoalAll('[data-story-type-toggle]').forEach(button => { button.addEventListener("pointerdown", event => event.stopPropagation()); button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); storyTypePickerId = storyTypePickerId === button.dataset.storyTypeToggle ? "" : button.dataset.storyTypeToggle; renderScriptFlow(); }); }); scriptGoalAll('[data-story-type-pick]').forEach(button => { button.addEventListener("pointerdown", event => event.stopPropagation()); button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); const card = ensureScriptFlow().storyCards.find(item => item.id === button.dataset.storyTypePick); if (!card) return; recordHistory(); card.storyTypeMode = "preset"; card.storyType = button.dataset.storyTypeValue; storyTypePickerId = ""; renderScriptFlow(); scheduleSave(); }); }); scriptGoalAll('[data-story-type-custom]').forEach(button => { button.addEventListener("pointerdown", event => event.stopPropagation()); button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); const card = ensureScriptFlow().storyCards.find(item => item.id === button.dataset.storyTypeCustom); if (!card) return; recordHistory(); card.storyTypeMode = "custom"; card.storyType = ""; storyTypePickerId = ""; renderScriptFlow(); scheduleSave(); }); }); scriptGoalAll('[data-emotion-point]').forEach(point => point.addEventListener("pointerdown", startEmotionPointDrag)); scriptGoalAll('[data-script-name], [data-script-identity]').forEach(input => { input.addEventListener("pointerdown", event => event.stopPropagation()); input.addEventListener("input", event => { const field = input.dataset.scriptName ? "name" : "identity"; const id = input.dataset.scriptName || input.dataset.scriptIdentity; updateScriptCharacterField(id, field, event.target.value); renderLibrary(); renderInspector(); }); }); }function moveScriptItem(flow, id, x, y) { if (id === "character-manager") { flow.characterManager.x = x; flow.characterManager.y = y; return flow.characterManager; } if (id === "character-notes") { flow.characterNotes.x = x; flow.characterNotes.y = y; return flow.characterNotes; } const item = scriptItemById(flow, id); if (!item) return null; item.x = x; item.y = y; return item; }
-function startScriptDrag(event, itemId = "") { if (!itemId && event.target.closest(".script-interactive")) return; const flow = ensureScriptFlow(); const id = itemId || event.currentTarget.dataset.scriptCharacter || event.currentTarget.dataset.storyCard || event.currentTarget.dataset.scriptFrame || event.currentTarget.dataset.emotionBoard || event.currentTarget.dataset.characterArc || event.currentTarget.dataset.characterGoal || event.currentTarget.dataset.scriptNote || event.currentTarget.dataset.aiAssistant; const item = scriptItemById(flow, id); if (!item) return; event.preventDefault(); event.stopPropagation(); const selected = flow.selectedIds.includes(id); if (event.shiftKey) flow.selectedIds = selected ? flow.selectedIds.filter(itemId => itemId !== id) : [...flow.selectedIds, id]; else if (!selected) flow.selectedIds = [id]; flow.selectedEdgeId = null; let movingIds = flow.selectedIds.includes(id) ? [...flow.selectedIds] : [id]; if (item.type === "story-frame") movingIds = [...new Set([item.id, ...scriptFrameContainedItems(item, flow).map(child => child.id)])]; scriptFlowStage.classList.add("is-interacting"); scriptDragSession = { start: scriptPoint(event.clientX, event.clientY), moved: false, before: snapshot(), origins: movingIds.map(itemId => { const current = scriptItemById(flow, itemId); return current ? { id: current.id, x: current.x, y: current.y } : null; }).filter(Boolean), elements: [] }; renderScriptFlow(); renderLibrary(); renderInspector(); scriptDragSession.elements = movingIds.map(itemId => ({ id: itemId, element: scriptItemElement(itemId) })); scriptDragSession.elements.forEach(entry => { if (entry.element) entry.element.style.willChange = "left, top"; }); }
-function startCharacterGoalResize(event) { const id = event.currentTarget.dataset.characterGoalResize; const goal = (ensureScriptFlow().characterGoals || []).find(item => item.id === id); if (!goal) return; event.preventDefault(); event.stopPropagation(); selectScriptItem(id); scriptGoalResizeSession = { id, start: scriptPoint(event.clientX, event.clientY), origin: { width: goal.width, height: goal.height }, before: snapshot(), moved: false, element: scriptItemElement(id) }; if (scriptGoalResizeSession.element) scriptGoalResizeSession.element.style.willChange = "width, height"; }
-function startCharacterGoalPointDrag(event) { const goalId = event.currentTarget.dataset.characterGoalPoint; const kind = event.currentTarget.dataset.goalKind; const entryId = event.currentTarget.dataset.goalEntry; const goal = (ensureScriptFlow().characterGoals || []).find(item => item.id === goalId); const track = event.currentTarget.closest("[data-character-goal-track]"); const entry = event.currentTarget.closest("[data-character-goal-entry]"); if (!goal || !track || !entry) return; event.preventDefault(); event.stopPropagation(); const rect = track.getBoundingClientRect(); const current = (goal[kind === "core" ? "coreGoals" : "surfaceGoals"] || []).find(item => item.id === entryId); scriptGoalPointSession = { id: goalId, kind, entryId, track, startClientX: event.clientX, startPosition: Number(current?.position || 50), halfWidthPercent: (entry.getBoundingClientRect().width / Math.max(1, rect.width)) * 50, before: snapshot(), moved: false }; }
-function startCharacterArcResize(event) { const id = event.currentTarget.dataset.characterArcResize; const arc = ensureScriptFlow().characterArcs.find(item => item.id === id); if (!arc) return; event.preventDefault(); event.stopPropagation(); selectScriptItem(id); scriptCharacterArcResizeSession = { id, start: scriptPoint(event.clientX, event.clientY), origin: { width: arc.width, height: arc.height }, before: snapshot(), moved: false, element: scriptItemElement(id) }; if (scriptCharacterArcResizeSession.element) scriptCharacterArcResizeSession.element.style.willChange = "width, height"; }
-function startCharacterArcPointDrag(event) { const arcId = event.currentTarget.dataset.characterArcPoint; const key = event.currentTarget.dataset.stageKey; const arc = ensureScriptFlow().characterArcs.find(item => item.id === arcId); const track = event.currentTarget.closest("[data-character-arc-track]"); if (!arc || !track || !arc.stages[key]) return; event.preventDefault(); event.stopPropagation(); scriptCharacterArcPointSession = { id: arcId, key, track, before: snapshot(), moved: false }; }function startScriptAvatarInteraction(event) { const avatar = event.currentTarget; const rect = avatar.getBoundingClientRect(); const distance = Math.hypot(event.clientX - (rect.left + rect.width / 2), event.clientY - (rect.top + rect.height / 2)); const moveRadius = Math.max(0, Math.min(rect.width, rect.height) / 2 - 16); if (distance <= moveRadius) return startScriptDrag(event, avatar.dataset.scriptLink); startScriptConnection(event, "character"); }
-function startStoryCardInteraction(event) { if (event.target.closest(".story-card-field, [data-story-resize]")) return; const card = event.currentTarget; const rect = card.getBoundingClientRect(); const edgeDistance = Math.min(event.clientX - rect.left, rect.right - event.clientX, event.clientY - rect.top, rect.bottom - event.clientY); if (edgeDistance <= 14) return startScriptConnection(event, "story"); startScriptDrag(event, card.dataset.storyCard); }
-function startEmotionBoardInteraction(event) { if (event.target.closest("[data-emotion-drag], [data-emotion-resize], [data-emotion-point], [data-emotion-label]")) return; const board = event.currentTarget; const rect = board.getBoundingClientRect(); const edgeDistance = Math.min(event.clientX - rect.left, rect.right - event.clientX, event.clientY - rect.top, rect.bottom - event.clientY); if (edgeDistance <= 14) return startScriptConnection(event, "emotion"); startEmotionBoardDrag(event); }
-function startScriptConnection(event, kind = "character") { const flow = ensureScriptFlow(); const sourceId = event.currentTarget.dataset.scriptLink || event.currentTarget.dataset.storyCard || event.currentTarget.dataset.emotionBoard; const source = scriptItemById(flow, sourceId); if (!source || scriptItemKind(source) !== kind) return; scriptFlowStage.classList.add("is-interacting"); event.preventDefault(); event.stopPropagation(); flow.selectedIds = kind === "emotion" ? [] : [sourceId]; flow.selectedEdgeId = null; scriptConnectionDraft = { sourceId, kind, current: scriptPoint(event.clientX, event.clientY), before: snapshot() }; renderScriptEdges(); renderLibrary(); renderInspector(); }
-function startStoryCardResize(event) { scriptFlowStage.classList.add("is-interacting"); const id = event.currentTarget.dataset.storyResize; const card = ensureScriptFlow().storyCards.find(item => item.id === id); if (!card) return; event.preventDefault(); event.stopPropagation(); scriptStoryResizeSession = { id, start: scriptPoint(event.clientX, event.clientY), origin: { width: card.width, height: card.height }, before: snapshot(), moved: false, element: scriptItemElement(id) }; if (scriptStoryResizeSession.element) scriptStoryResizeSession.element.style.willChange = "width, height"; }
-function startEmotionPointDrag(event) { const id = event.currentTarget.dataset.emotionPoint; const boardId = event.currentTarget.dataset.emotionBoardId; const flow = ensureScriptFlow(); const board = (flow.emotionBoards || []).find(item => item.id === boardId); if (!board || !emotionBoardCards(flow, board).some(card => card.id === id)) return; event.preventDefault(); event.stopPropagation(); scriptEmotionPointSession = { id, boardId, before: snapshot(), moved: false }; }
-function startScriptFrameResize(event) { const id = event.currentTarget.dataset.scriptFrameResize; const frame = ensureScriptFlow().storyFrames.find(item => item.id === id); if (!frame) return; event.preventDefault(); event.stopPropagation(); scriptFrameResizeSession = { id, corner: event.currentTarget.dataset.scriptFrameResizeCorner || "se", start: scriptPoint(event.clientX, event.clientY), origin: { x: frame.x, y: frame.y, width: frame.width, height: frame.height }, before: snapshot(), moved: false, element: scriptItemElement(id) }; if (scriptFrameResizeSession.element) scriptFrameResizeSession.element.style.willChange = "left, width, height"; }
-function startEmotionBoardDrag(event) { const id = event.currentTarget.dataset.emotionDrag || event.currentTarget.dataset.emotionBoard; if (!id) return; return startScriptDrag(event, id); }
-function startEmotionBoardResize(event) { const id = event.currentTarget.dataset.emotionResize; const board = (ensureScriptFlow().emotionBoards || []).find(item => item.id === id); if (!board) return; event.preventDefault(); event.stopPropagation(); scriptEmotionResizeSession = { id, start: scriptPoint(event.clientX, event.clientY), origin: { width: board.width, height: board.height }, before: snapshot(), moved: false, element: scriptItemElement(id) }; if (scriptEmotionResizeSession.element) scriptEmotionResizeSession.element.style.willChange = "width, height"; }
-function startScriptPan(event) { if (!state || state.flowMode !== "script" || ![0, 1].includes(event.button)) return; scriptFlowStage.classList.add("is-interacting"); event.preventDefault(); const viewport = scriptViewport(); scriptPanSession = { clientX: event.clientX, clientY: event.clientY, x: viewport.x, y: viewport.y, moved: false }; workspace.classList.add("is-panning"); }
-function startScriptSelection(event) { if (!state || state.flowMode !== "script" || event.button !== 0) return; const rect = scriptFlowStage.getBoundingClientRect(); const start = { x: event.clientX - rect.left, y: event.clientY - rect.top }; scriptSelectionSession = { start, current: start, before: [...ensureScriptFlow().selectedIds], additive: event.shiftKey, moved: false }; selectionRect.hidden = false; selectionRect.style.left = `${start.x}px`; selectionRect.style.top = `${start.y}px`; selectionRect.style.width = "0px"; selectionRect.style.height = "0px"; }
-function updateScriptSelection(event) { if (!scriptSelectionSession) return false; const rect = scriptFlowStage.getBoundingClientRect(); const point = { x: event.clientX - rect.left, y: event.clientY - rect.top }; const session = scriptSelectionSession; const left = Math.min(session.start.x, point.x); const top = Math.min(session.start.y, point.y); const width = Math.abs(point.x - session.start.x); const height = Math.abs(point.y - session.start.y); session.current = point; session.moved = width > 4 || height > 4; selectionRect.style.left = `${left}px`; selectionRect.style.top = `${top}px`; selectionRect.style.width = `${width}px`; selectionRect.style.height = `${height}px`; if (!session.moved) return true; const selection = { left: rect.left + left, right: rect.left + left + width, top: rect.top + top, bottom: rect.top + top + height }; const hitIds = [...scriptNodeLayer.querySelectorAll("[data-script-character], [data-story-card], [data-script-frame], [data-emotion-board], [data-character-arc], [data-character-goal], [data-ai-assistant]")].filter(element => { const box = element.getBoundingClientRect(); return box.left < selection.right && box.right > selection.left && box.top < selection.bottom && box.bottom > selection.top; }).map(element => element.dataset.scriptCharacter || element.dataset.storyCard || element.dataset.scriptFrame || element.dataset.emotionBoard || element.dataset.characterArc || element.dataset.characterGoal || element.dataset.aiAssistant); const flow = ensureScriptFlow(); flow.selectedIds = session.additive ? [...new Set([...session.before, ...hitIds])] : hitIds; flow.selectedEdgeId = null; $('[data-script-character], [data-story-card], [data-script-frame], [data-emotion-board], [data-character-arc], [data-character-goal], [data-ai-assistant]').forEach(element => element.classList.toggle("is-selected", flow.selectedIds.includes(element.dataset.scriptCharacter || element.dataset.storyCard || element.dataset.scriptFrame || element.dataset.emotionBoard || element.dataset.characterArc || element.dataset.characterGoal || element.dataset.aiAssistant))); return true; }
-function requestScriptSelectionUpdate(event) {
-  pendingScriptSelectionPoint = { clientX: event.clientX, clientY: event.clientY };
-  if (scriptSelectionFrame) return true;
-  scriptSelectionFrame = requestAnimationFrame(() => {
-    scriptSelectionFrame = 0; const point = pendingScriptSelectionPoint; pendingScriptSelectionPoint = null;
-    if (point && scriptSelectionSession) updateScriptSelection(point);
-  });
-  return true;
-}
-function flushScriptSelectionUpdate() {
-  if (!pendingScriptSelectionPoint) return;
-  if (scriptSelectionFrame) { cancelAnimationFrame(scriptSelectionFrame); scriptSelectionFrame = 0; }
-  const point = pendingScriptSelectionPoint; pendingScriptSelectionPoint = null;
-  if (scriptSelectionSession) updateScriptSelection(point);
-}
-function finishScriptSelection() { flushScriptSelectionUpdate(); if (!scriptSelectionSession) return false; const session = scriptSelectionSession; scriptSelectionSession = null; selectionRect.hidden = true; const flow = ensureScriptFlow(); if (!session.moved && !session.additive) flow.selectedIds = []; flow.selectedEdgeId = null; renderScriptFlow(); renderLibrary(); renderInspector(); scheduleSave(); return true; }function handleScriptPointerMove(event) { if (handleScriptFloatingPanels(event)) return true; if (scriptPanelResizeSession) return handlePanelResize(event); if (scriptGoalResizeSession) { const session = scriptGoalResizeSession; const goal = (ensureScriptFlow().characterGoals || []).find(item => item.id === session.id); if (!goal) return true; const point = scriptPoint(event.clientX, event.clientY); goal.width = Math.max(680, Math.round(session.origin.width + point.x - session.start.x)); goal.height = Math.max(360, Math.round(session.origin.height + point.y - session.start.y)); session.moved = goal.width !== session.origin.width || goal.height !== session.origin.height; if (session.element) { session.element.style.width = `${goal.width}px`; session.element.style.height = `${goal.height}px`; } return true; } if (scriptGoalPointSession) { const session = scriptGoalPointSession; const goal = (ensureScriptFlow().characterGoals || []).find(item => item.id === session.id); const key = session.kind === "core" ? "coreGoals" : "surfaceGoals"; const entry = goal?.[key]?.find(item => item.id === session.entryId); if (!entry) return true; const rect = session.track.getBoundingClientRect(); const min = Math.min(48, Math.max(1, session.halfWidthPercent + .5)); const max = 100 - min; const delta = ((event.clientX - session.startClientX) / Math.max(1, rect.width)) * 100; const value = Math.min(max, Math.max(min, session.startPosition + delta)); entry.position = value; session.moved = Math.abs(value - session.startPosition) > .05; const element = scriptNodeLayer.querySelector(`[data-character-goal-entry="${CSS.escape(session.entryId)}"]`); if (element) element.style.left = `${value}%`; return true; } if (scriptNoteResizeSession) { const session = scriptNoteResizeSession; const note = (ensureScriptFlow().scriptNotes || []).find(item => item.id === session.id); if (!note) return true; const point = scriptPoint(event.clientX, event.clientY); note.width = Math.min(720, Math.max(200, Math.round(session.origin.width + point.x - session.start.x))); note.height = Math.min(720, Math.max(160, Math.round(session.origin.height + point.y - session.start.y))); session.moved = note.width !== session.origin.width || note.height !== session.origin.height; if (session.element) { session.element.style.width = `${note.width}px`; session.element.style.height = `${note.height}px`; } return true; } if (scriptAssistantResizeSession) { const session = scriptAssistantResizeSession; const assistant = (ensureScriptFlow().aiAssistants || []).find(item => item.id === session.id); if (!assistant) return true; const point = scriptPoint(event.clientX, event.clientY); assistant.width = Math.min(900, Math.max(360, Math.round(session.origin.width + point.x - session.start.x))); assistant.height = Math.min(760, Math.max(320, Math.round(session.origin.height + point.y - session.start.y))); session.moved = assistant.width !== session.origin.width || assistant.height !== session.origin.height; if (session.element) { session.element.style.width = `${assistant.width}px`; session.element.style.height = `${assistant.height}px`; } return true; } if (scriptCharacterArcResizeSession) { const session = scriptCharacterArcResizeSession; const arc = ensureScriptFlow().characterArcs.find(item => item.id === session.id); if (!arc) return true; const point = scriptPoint(event.clientX, event.clientY); arc.width = Math.min(1200, Math.max(620, Math.round(session.origin.width + point.x - session.start.x))); arc.height = Math.min(700, Math.max(320, Math.round(session.origin.height + point.y - session.start.y))); session.moved = arc.width !== session.origin.width || arc.height !== session.origin.height; if (session.element) { session.element.style.width = `${arc.width}px`; session.element.style.height = `${arc.height}px`; } return true; } if (scriptCharacterArcPointSession) { const session = scriptCharacterArcPointSession; const arc = ensureScriptFlow().characterArcs.find(item => item.id === session.id); if (!arc) return true; const rect = session.track.getBoundingClientRect(); const value = Math.min(96, Math.max(4, ((event.clientX - rect.left) / Math.max(1, rect.width)) * 100)); arc.stages[session.key].position = value; session.moved = true; const point = scriptNodeLayer.querySelector(`[data-character-arc-point="${CSS.escape(session.id)}"][data-stage-key="${CSS.escape(session.key)}"]`); if (point) point.style.left = `${value}%`; return true; } if (scriptFrameResizeSession) { const session = scriptFrameResizeSession; const frame = ensureScriptFlow().storyFrames.find(item => item.id === session.id); if (!frame) return true; const point = scriptPoint(event.clientX, event.clientY); const dx = Math.round(point.x - session.start.x); const dy = Math.round(point.y - session.start.y); if (session.corner === "sw") { frame.width = Math.max(300, session.origin.width - dx); frame.x = frame.width === 300 ? session.origin.x + session.origin.width - 300 : session.origin.x + dx; frame.height = Math.max(230, session.origin.height + dy); } else { frame.width = Math.max(300, session.origin.width + dx); frame.height = Math.max(230, session.origin.height + dy); } session.moved = frame.x !== session.origin.x || frame.width !== session.origin.width || frame.height !== session.origin.height; if (session.element) { session.element.style.left = `${frame.x}px`; session.element.style.width = `${frame.width}px`; session.element.style.height = `${frame.height}px`; } positionScriptFrameResizeControls(frame); return true; } if (scriptEmotionResizeSession) { const session = scriptEmotionResizeSession; const board = (ensureScriptFlow().emotionBoards || []).find(item => item.id === session.id); if (!board) return true; const point = scriptPoint(event.clientX, event.clientY); board.width = Math.min(1000, Math.max(420, Math.round(session.origin.width + point.x - session.start.x))); board.height = Math.min(520, Math.max(210, Math.round(session.origin.height + point.y - session.start.y))); session.moved = board.width !== session.origin.width || board.height !== session.origin.height; if (session.element) { session.element.style.width = `${board.width}px`; session.element.style.height = `${board.height}px`; } return true; } if (scriptEmotionBoardDragSession) { const session = scriptEmotionBoardDragSession; const board = (ensureScriptFlow().emotionBoards || []).find(item => item.id === session.id); if (!board) return true; const point = scriptPoint(event.clientX, event.clientY); board.x = Math.round(session.origin.x + point.x - session.start.x); board.y = Math.round(session.origin.y + point.y - session.start.y); session.moved = board.x !== session.origin.x || board.y !== session.origin.y; if (session.element) { session.element.style.left = `${board.x}px`; session.element.style.top = `${board.y}px`; } requestScriptEdgeRender(); return true; } if (scriptStoryResizeSession) { const session = scriptStoryResizeSession; const card = ensureScriptFlow().storyCards.find(item => item.id === session.id); if (!card) return true; const point = scriptPoint(event.clientX, event.clientY); card.width = Math.min(440, Math.max(185, Math.round(session.origin.width + point.x - session.start.x))); card.height = Math.min(620, Math.max(250, Math.round(session.origin.height + point.y - session.start.y))); session.moved = card.width !== session.origin.width || card.height !== session.origin.height; if (session.element) { session.element.style.width = `${card.width}px`; session.element.style.height = `${card.height}px`; } requestScriptEdgeRender(); return true; } if (scriptEmotionPointSession) { const flow = ensureScriptFlow(); const session = scriptEmotionPointSession; const board = (flow.emotionBoards || []).find(item => item.id === session.boardId); if (!board) return true; const point = scriptPoint(event.clientX, event.clientY); const top = board.y + 76; const height = Math.max(1, board.height - 118); board.levels[session.id] = Math.min(1, Math.max(0, 1 - (point.y - top) / height)); session.moved = true; const circle = scriptNodeLayer.querySelector(`[data-emotion-point="${CSS.escape(session.id)}"][data-emotion-board-id="${CSS.escape(session.boardId)}"]`); if (circle) circle.setAttribute("cy", String(76 + (1 - board.levels[session.id]) * height)); const label = scriptNodeLayer.querySelector("[data-emotion-label=" + JSON.stringify(session.id) + "][data-emotion-board-id=" + JSON.stringify(session.boardId) + "]"); if (label) label.style.top = Math.max(84, Math.round(76 + (1 - board.levels[session.id]) * height - 66)) + "px"; return true; } if (scriptConnectionDraft) { scriptConnectionDraft.current = scriptPoint(event.clientX, event.clientY); requestScriptEdgeRender(); return true; } if (scriptPanSession) { const viewport = scriptViewport(); const dx = event.clientX - scriptPanSession.clientX; const dy = event.clientY - scriptPanSession.clientY; if (Math.abs(dx) + Math.abs(dy) > 1) scriptPanSession.moved = true; viewport.x = scriptPanSession.x + dx; viewport.y = scriptPanSession.y + dy; updateScriptViewport(); return true; } if (scriptSelectionSession) return requestScriptSelectionUpdate(event); if (!scriptDragSession) return false; const flow = ensureScriptFlow(); const point = scriptPoint(event.clientX, event.clientY); const dx = point.x - scriptDragSession.start.x; const dy = point.y - scriptDragSession.start.y; if (Math.abs(dx) + Math.abs(dy) > 1) scriptDragSession.moved = true; scriptDragSession.origins.forEach(origin => { const item = moveScriptItem(flow, origin.id, Math.round(origin.x + dx), Math.round(origin.y + dy)); if (!item) return; const entry = scriptDragSession.elements.find(candidate => candidate.id === origin.id); if (entry?.element) { entry.element.style.left = `${item.x}px`; entry.element.style.top = `${item.y}px`; } if (item.type === "story-frame") positionScriptFrameResizeControls(item); }); requestScriptEdgeRender(); return true; }
-function finishScriptPointerUp(event) { scriptFlowStage.classList.remove("is-interacting"); const flow = ensureScriptFlow(); if (finishScriptFloatingPanels()) return true; if (finishPanelResize()) return true; const finishLooseSession = session => { if (session.element) session.element.style.willChange = ""; if (session.moved) { undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); } renderScriptFlow(); renderLibrary(); renderInspector(); updateHistoryButtons(); return true; }; if (scriptGoalResizeSession) { const session = scriptGoalResizeSession; scriptGoalResizeSession = null; return finishLooseSession(session); } if (scriptGoalPointSession) { const session = scriptGoalPointSession; scriptGoalPointSession = null; if (session.moved) { undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); } renderScriptFlow(); updateHistoryButtons(); return true; } if (scriptNoteResizeSession) { const session = scriptNoteResizeSession; scriptNoteResizeSession = null; return finishLooseSession(session); } if (scriptAssistantResizeSession) { const session = scriptAssistantResizeSession; scriptAssistantResizeSession = null; return finishLooseSession(session); } if (scriptCharacterArcResizeSession) { const session = scriptCharacterArcResizeSession; scriptCharacterArcResizeSession = null; return finishLooseSession(session); } if (scriptCharacterArcPointSession) { const session = scriptCharacterArcPointSession; scriptCharacterArcPointSession = null; if (session.moved) { undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); } renderScriptFlow(); updateHistoryButtons(); return true; } if (scriptFrameResizeSession) { const session = scriptFrameResizeSession; scriptFrameResizeSession = null; return finishLooseSession(session); } if (scriptEmotionResizeSession) { const session = scriptEmotionResizeSession; scriptEmotionResizeSession = null; return finishLooseSession(session); } if (scriptEmotionBoardDragSession) { const session = scriptEmotionBoardDragSession; scriptEmotionBoardDragSession = null; return finishLooseSession(session); } if (scriptStoryResizeSession) { const session = scriptStoryResizeSession; scriptStoryResizeSession = null; if (session.element) session.element.style.willChange = ""; if (session.moved) { undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); } renderScriptFlow(); renderLibrary(); renderInspector(); updateHistoryButtons(); return true; } if (scriptEmotionPointSession) { const session = scriptEmotionPointSession; scriptEmotionPointSession = null; if (session.moved) { undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); } renderScriptFlow(); updateHistoryButtons(); return true; } if (scriptPanSession) { const session = scriptPanSession; scriptPanSession = null; workspace.classList.remove("is-panning"); if (session.moved) scheduleSave(); else { flow.selectedIds = []; flow.selectedEdgeId = null; renderScriptFlow(); renderLibrary(); renderInspector(); } return true; } if (scriptConnectionDraft) { const draft = scriptConnectionDraft; scriptConnectionDraft = null; const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-script-character], [data-story-card], [data-emotion-board]"); const targetId = targetElement?.dataset.scriptCharacter || targetElement?.dataset.storyCard || targetElement?.dataset.emotionBoard; const target = scriptItemById(flow, targetId); const targetKind = scriptItemKind(target); let changed = false; if (target && targetId !== draft.sourceId) { if ((draft.kind === "emotion" && targetKind === "story") || (draft.kind === "story" && targetKind === "emotion")) { const boardId = draft.kind === "emotion" ? draft.sourceId : targetId; const storyId = draft.kind === "story" ? draft.sourceId : targetId; const existing = (flow.emotionLinks || []).find(link => link.source === boardId && link.target === storyId); if (!existing) { flow.emotionLinks = (flow.emotionLinks || []).filter(link => link.target !== storyId); flow.emotionLinks.push({ id: uid("emotion-link"), source: boardId, target: storyId, createdAt: Date.now() }); changed = true; } } else if (targetKind === draft.kind && ["story", "character"].includes(draft.kind)) { const links = draft.kind === "story" ? flow.storyLinks : flow.relationships; const duplicate = draft.kind === "story" ? links.some(link => link.source === draft.sourceId && link.target === targetId) : links.some(link => (link.source === draft.sourceId && link.target === targetId) || (link.source === targetId && link.target === draft.sourceId)); if (!duplicate) { links.push({ id: uid(draft.kind === "story" ? "story-link" : "rel"), source: draft.sourceId, target: targetId }); changed = true; } } } if (changed) { undoStack.push(draft.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; flow.selectedIds = draft.kind === "emotion" ? [targetId] : targetKind === "emotion" ? [draft.sourceId] : [draft.sourceId, targetId]; flow.selectedEdgeId = null; syncEmotionLevels(flow); scheduleSave(); } renderScriptFlow(); renderLibrary(); renderInspector(); updateHistoryButtons(); return true; } if (finishScriptSelection()) return true; if (scriptDragSession) { const session = scriptDragSession; scriptDragSession = null; session.elements.forEach(item => { if (item.element) item.element.style.willChange = ""; }); if (session.moved) { undoStack.push(session.before); if (undoStack.length > 18) undoStack.shift(); redoStack = []; scheduleSave(); updateHistoryButtons(); } renderScriptFlow(); renderLibrary(); renderInspector(); return true; } return false; }
-function duplicateScriptCharacter() { const flow = ensureScriptFlow(); const source = flow.selectedIds.length === 1 ? flow.characters.find(role => role.id === flow.selectedIds[0]) : null; if (!source) return; recordHistory(); const copy = { ...structuredClone(source), id: uid("role"), name: source.name ? `${source.name} · 副本` : "", x: source.x + 48, y: source.y + 48, createdAt: Date.now() }; flow.characters.push(copy); flow.selectedIds = [copy.id]; renderWorkspace(); scheduleSave(); }
-function deleteEmotionBoard(id) { const flow = ensureScriptFlow(); if (!(flow.emotionBoards || []).some(board => board.id === id)) return; recordHistory(); flow.emotionBoards = flow.emotionBoards.filter(board => board.id !== id); flow.emotionLinks = (flow.emotionLinks || []).filter(link => link.source !== id); flow.selectedIds = []; flow.selectedEdgeId = null; syncEmotionLevels(flow); renderWorkspace(); scheduleSave(); }
-function deleteScriptEdge(id) { const flow = ensureScriptFlow(); if (!scriptEdgeById(flow, id)) return; recordHistory(); flow.relationships = flow.relationships.filter(link => link.id !== id); flow.storyLinks = flow.storyLinks.filter(link => link.id !== id); flow.emotionLinks = (flow.emotionLinks || []).filter(link => link.id !== id); flow.selectedEdgeId = null; syncEmotionLevels(flow); renderWorkspace(); scheduleSave(); }
-function deleteScriptSelection() { const flow = ensureScriptFlow(); if (flow.selectedEdgeId) return deleteScriptEdge(flow.selectedEdgeId); if (!flow.selectedIds.length) return; recordHistory(); const ids = new Set(flow.selectedIds); flow.characters = flow.characters.filter(role => !ids.has(role.id)); flow.storyCards = flow.storyCards.filter(card => !ids.has(card.id)); flow.storyFrames = flow.storyFrames.filter(frame => !ids.has(frame.id)); flow.emotionBoards = (flow.emotionBoards || []).filter(board => !ids.has(board.id)); flow.characterArcs = (flow.characterArcs || []).filter(arc => !ids.has(arc.id)); flow.characterGoals = (flow.characterGoals || []).filter(goal => !ids.has(goal.id)); flow.scriptNotes = (flow.scriptNotes || []).filter(note => !ids.has(note.id)); flow.aiAssistants = (flow.aiAssistants || []).filter(assistant => !ids.has(assistant.id)); flow.relationships = flow.relationships.filter(link => !ids.has(link.source) && !ids.has(link.target)); flow.storyLinks = flow.storyLinks.filter(link => !ids.has(link.source) && !ids.has(link.target)); flow.emotionLinks = (flow.emotionLinks || []).filter(link => !ids.has(link.source) && !ids.has(link.target)); flow.selectedIds = []; syncEmotionLevels(flow); renderWorkspace(); scheduleSave(); }
-function renderScriptLibrary() {
-  const flow = ensureScriptFlow(); $("#libraryPanel .eyebrow").textContent = "SCRIPT FLOW"; $("#libraryPanel h2").textContent = "人物与故事";
-  const genderTools = [{ id: "male-1", gender: "male", label: "男性角色" }, { id: "female-1", gender: "female", label: "女性角色" }];
-  libraryContent.innerHTML = `<div class="script-tool-section"><div class="section-label"><span>人物工具</span><span>${flow.characters.length}</span></div><div class="script-library-grid script-gender-tools">${genderTools.map(role => `<button class="script-library-role ${role.gender}" type="button" data-add-script-role="${role.id}" onclick="window.__image2CanvasAddScriptRole?.(this.dataset.addScriptRole)">${scriptAvatarHtml(role, true)}<strong>${role.label}</strong></button>`).join("")}</div></div><div class="script-tool-section script-story-section"><div class="section-label"><span>故事元素</span><span>${flow.storyCards.length} 张卡</span></div><div class="script-story-grid"><button class="script-story-tool is-active" type="button" data-add-story-card>${icon("book-open")}<span>故事卡</span></button><button class="script-story-tool is-active" type="button" data-add-emotion>${icon("chart-no-axes-combined")}<span>情绪曲线</span></button><button class="script-story-tool is-active" type="button" data-toggle-character-manager>${icon("users-round")}<span>角色管理</span></button><button class="script-story-tool is-active" type="button" data-add-character-arc>${icon("route")}<span>角色转变</span></button><button class="script-story-tool is-active" type="button" data-add-character-goal>${icon("target")}<span>角色目标</span></button><button class="script-story-tool is-active" type="button" data-add-script-assistant>${icon("sparkles")}<span>AI助手</span></button><button class="script-story-tool is-active" type="button" data-add-script-note>${icon("sticky-note")}<span>便签</span></button><button class="script-story-tool" type="button" disabled>${icon("target")}<span>叙事目标</span></button><button class="script-story-tool" type="button" disabled>${icon("zap")}<span>冲突</span></button></div></div><p class="field-note script-field-note">故事卡外沿可连接下一张故事卡或情绪曲线；点击关联线后可在右侧删除。情绪曲线中的故事卡编号按各自分组的关联顺序自动更新。</p>`;
-  $("[data-add-story-card]")?.addEventListener("click", addStoryCard); $("[data-add-emotion]")?.addEventListener("click", addEmotionBoard); $("[data-add-character-arc]")?.addEventListener("click", addCharacterArc); $("[data-add-character-goal]")?.addEventListener("click", addCharacterGoal); $("[data-add-script-assistant]")?.addEventListener("click", addScriptAssistant); $("[data-add-script-note]")?.addEventListener("click", addScriptNote); $("[data-toggle-character-manager]")?.addEventListener("click", toggleCharacterManager); refreshIcons();
-}function scriptInspectorField(label, field, value, placeholder, multiline = false) { return `<label class="script-detail-field"><span>${label}</span>${multiline ? `<textarea data-script-detail="${field}" placeholder="${placeholder}">${escapeHtml(value || "")}</textarea>` : `<input type="text" data-script-detail="${field}" value="${escapeHtml(value || "")}" placeholder="${placeholder}">`}</label>`; }
-function renderScriptInspector() {
-  const flow = ensureScriptFlow(); const selected = flow.selectedIds.length === 1 ? scriptItemById(flow, flow.selectedIds[0]) : null; const selectedEdge = flow.selectedEdgeId ? scriptEdgeById(flow, flow.selectedEdgeId) : null;
-  $("#inspectorEyebrow").textContent = "SCRIPT FLOW";
-  if (selectedEdge) {
-    const source = scriptItemById(flow, selectedEdge.source); const target = scriptItemById(flow, selectedEdge.target); const isStory = flow.storyLinks.some(link => link.id === selectedEdge.id); const isEmotion = (flow.emotionLinks || []).some(link => link.id === selectedEdge.id);
-    $("#inspectorTitle").textContent = "连接属性";
-    inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">${isEmotion ? "情绪曲线关联" : isStory ? "故事顺序连接" : "角色关系连接"}</div><div class="summary-row"><span>来源</span><strong>${escapeHtml(scriptItemLabel(source))}</strong></div><div class="summary-row"><span>目标</span><strong>${escapeHtml(scriptItemLabel(target))}</strong></div>${isEmotion ? `<p class="field-note">该连接决定此曲线卡显示这张故事卡对应的情绪点。</p>` : isStory ? `<p class="field-note">该连接决定故事卡编号与情绪曲线的排列顺序。</p>` : ""}</section><section class="control-section"><button class="button button-quiet danger-action" id="deleteScriptEdgeButton" type="button">${icon("unlink")} 删除连接</button></section>`;
-    $("#deleteScriptEdgeButton").addEventListener("click", () => deleteScriptEdge(selectedEdge.id)); return refreshIcons();
-  }
-  if (!selected) { $("#inspectorTitle").textContent = "故事概览"; inspectorContent.innerHTML = `<section class="control-section script-overview"><div class="control-title">关系网络 <span>${flow.relationships.length + flow.storyLinks.length + (flow.emotionLinks || []).length} 条</span></div><div class="summary-row"><span>角色数量</span><strong>${flow.characters.length}</strong></div><div class="summary-row"><span>故事卡</span><strong>${flow.storyCards.length}</strong></div><div class="summary-row"><span>情绪曲线</span><strong>${(flow.emotionBoards || []).length ? `${flow.emotionBoards.length} 张曲线卡` : "未创建"}</strong></div><p class="field-note">选择角色或故事卡可编辑内容；点击任意连接线可删除并重新连接。</p></section>`; return refreshIcons(); }
-  if (selected.type === "emotion-board") { const cards = emotionBoardCards(flow, selected); $("#inspectorTitle").textContent = "情绪曲线"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">曲线分组</div><div class="summary-row"><span>关联故事卡</span><strong>${cards.length} 张</strong></div><div class="summary-row"><span>曲线尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">拖动曲线卡可调整位置；按 Delete 或 Backspace 可删除整张曲线卡及其关联线。</p></section>`; return refreshIcons(); } if (selected.type === "story-frame") { $("#inspectorTitle").textContent = "分组画板"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">分组内容</div><div class="summary-row"><span>包含角色与故事卡</span><strong>${scriptFrameContainedItems(selected, flow).length}</strong></div><div class="summary-row"><span>画板尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">拖动画板可整体移动其中元素；右下角可调整范围。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteScriptFrameButton" type="button">${icon("trash-2")} 删除分组画板</button></section>`; $("#deleteScriptFrameButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); } if (selected.type === "story-card") { const number = storyCardNumber(flow, selected); $("#inspectorTitle").textContent = `故事卡 ${number}`; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">顺序与尺寸</div><div class="summary-row"><span>自动编号</span><strong>${number}</strong></div><div class="summary-row"><span>卡片尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">卡片可自由拖动；外边缘可连故事卡或情绪曲线；右下角可自由调整尺寸。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteStoryCardButton" type="button">${icon("trash-2")} 删除故事卡</button></section>`; $("#deleteStoryCardButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); }
-  if (selected.type === "character-arc") { const roles = selected.roleIds.map(id => flow.characters.find(role => role.id === id)).filter(Boolean); $("#inspectorTitle").textContent = "角色转变"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">关联角色 <span>${roles.length} 位</span></div>${roles.length ? roles.map(role => `<div class="summary-row"><span>${escapeHtml(scriptCharacterLabel(role))}</span><strong>${escapeHtml(role.identity || "未填写身份")}</strong></div>`).join("") : `<p class="field-note">从模块上方的添加角色中选择画布已有角色。</p>`}<div class="summary-row"><span>模块尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">拖动底部三个圆点可调整起点、转折与结果的时间位置；右下角可调整模块尺寸。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteCharacterArcButton" type="button">${icon("trash-2")} 删除角色转变</button></section>`; $("#deleteCharacterArcButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); }
-  if (selected.type === "character-goal") { const roles = (selected.roleIds || []).map(id => flow.characters.find(role => role.id === id)).filter(Boolean); $("#inspectorTitle").textContent = "角色目标"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">关联角色 <span>${roles.length} 位</span></div>${roles.length ? roles.map(role => `<div class="summary-row"><span>${escapeHtml(scriptCharacterLabel(role))}</span><strong>${escapeHtml(role.identity || "未填写身份")}</strong></div>`).join("") : `<p class="field-note">从模块上方的添加角色中选择画布已有角色。</p>`}<div class="summary-row"><span>表层目标</span><strong>${(selected.surfaceGoals || []).length} 条</strong></div><div class="summary-row"><span>核心目标</span><strong>${(selected.coreGoals || []).length} 条</strong></div><div class="summary-row"><span>模块尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">拖动每个目标卡左侧的握柄可改变横向位置；右键目标卡可删除，右下角可自由调整模块大小。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteCharacterGoalButton" type="button">${icon("trash-2")} 删除角色目标</button></section>`; $("#deleteCharacterGoalButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); }
-  if (selected.type === "ai-assistant") { const target = scriptAssistantTargetLabel(flow, selected.targetId); $("#inspectorTitle").textContent = "AI助手"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">工作状态</div><div class="summary-row"><span>处理模块</span><strong>${escapeHtml(target)}</strong></div><div class="summary-row"><span>模型</span><strong>${escapeHtml("GPT-5.6")}</strong></div><div class="summary-row"><span>模块尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">选择目标模块、输入需求后，AI 会围绕该模块内容输出建议。右下角可自由调整大小。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteScriptAssistantButton" type="button">${icon("trash-2")} 删除 AI 助手</button></section>`; $("#deleteScriptAssistantButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); }  if (selected.type === "script-note") { $("#inspectorTitle").textContent = "便签"; inspectorContent.innerHTML = `<section class="control-section"><div class="control-title">便签内容</div><div class="summary-row"><span>文本长度</span><strong data-script-note-length="${selected.id}">${(selected.content || "").length} 字</strong></div><div class="summary-row"><span>便签尺寸</span><strong>${Math.round(selected.width)} × ${Math.round(selected.height)}</strong></div><p class="field-note">直接在便签中记录内容；可自由移动、拉伸、复制粘贴，按 Delete 或 Backspace 删除。</p></section><section class="control-section"><button class="button button-quiet danger-action" id="deleteScriptNoteButton" type="button">${icon("trash-2")} 删除便签</button></section>`; $("#deleteScriptNoteButton").addEventListener("click", deleteScriptSelection); return refreshIcons(); }  $("#inspectorTitle").textContent = "角色功能"; const links = flow.relationships.filter(link => link.source === selected.id || link.target === selected.id).length;
-  inspectorContent.innerHTML = `<section class="script-character-summary ${selected.gender}">${scriptAvatarHtml(selected)}<div><strong>${escapeHtml(scriptCharacterLabel(selected))}</strong><span>${escapeHtml(selected.identity || (selected.gender === "female" ? "女性角色" : "男性角色"))} · ${links} 条关系</span></div></section><section class="control-section script-details">${scriptInspectorField("名称", "name", selected.name, "输入角色名称")}${scriptInspectorField("身份", "identity", selected.identity, "如：主角、恋人、反派")}${scriptInspectorField("年龄", "age", selected.age, "如：28 岁")}${scriptInspectorField("职业", "occupation", selected.occupation, "如：摄影师")}${scriptInspectorField("性格", "personality", selected.personality, "如：冷静、执着")}${scriptInspectorField("目标", "goal", selected.goal, "角色想实现的目标")}${scriptInspectorField("人物简介", "bio", selected.bio, "记录成长经历、动机与秘密", true)}${scriptInspectorField("标签", "tags", selected.tags.join("，"), "用逗号分隔，如：主角，坚韧")}</section><section class="control-section"><div class="action-list"><button class="action-row" type="button" id="duplicateScriptRoleButton">${icon("copy")}<strong>复制角色</strong><small>复制资料与标签</small></button><button class="action-row danger-action" type="button" id="deleteScriptRoleButton">${icon("trash-2")}<strong>删除角色</strong><small>同时删除关系线</small></button></div></section>`;
-  $$('[data-script-detail]').forEach(input => input.addEventListener("input", event => { updateScriptCharacterField(selected.id, event.target.dataset.scriptDetail, event.target.value); if (["name", "identity"].includes(event.target.dataset.scriptDetail)) { renderScriptFlow(); renderLibrary(); } })); $("#duplicateScriptRoleButton")?.addEventListener("click", duplicateScriptCharacter); $("#deleteScriptRoleButton")?.addEventListener("click", deleteScriptSelection); refreshIcons();
-}function formatClipTime(value) { const seconds = Math.max(0, Number(value) || 0); const minutes = Math.floor(seconds / 60); return `${String(minutes).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}.${String(Math.round((seconds % 1) * 100)).padStart(2, "0")}`; }
+   function formatClipTime(value) { const seconds = Math.max(0, Number(value) || 0); const minutes = Math.floor(seconds / 60); return `${String(minutes).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}.${String(Math.round((seconds % 1) * 100)).padStart(2, "0")}`; }
 function videoTimelineEntries(node) {
   const clips = videoEditorClips(node); let cursor = 0;
   const entries = clips.map((clip, index) => {
@@ -3530,7 +2667,7 @@ function connectPorts(first, second, trackHistory = true) {
   state.edges.push({ id: uid("edge"), source: output.nodeId, sourcePort: output.portId, target: input.nodeId, targetPort: input.portId, type: output.dataType }); if (output.dataType === "composition") applyCompositionToLinkedPrompts(output.nodeId); syncAllVideoEditorClips(); selectedEdgeId = null; scheduleSave();
 }
 function handlePointerMove(event) {
-  if (handleScriptPointerMove(event)) return;
+  if (handlePanelResize(event)) return;
   if (connectionDraft) { connectionDraft.current = screenToScene(event.clientX, event.clientY); requestEdgeRender(); return; }
   if (selectionSession) { updateSelectionBox(event); return; }
   if (panSession) { const dx = event.clientX - panSession.clientX; const dy = event.clientY - panSession.clientY; if (Math.abs(dx) + Math.abs(dy) > 1) panSession.moved = true; state.viewport.x = panSession.x + dx; state.viewport.y = panSession.y + dy; updateViewport(); return; }
@@ -3549,7 +2686,7 @@ function handlePointerMove(event) {
   requestEdgeRender();
 }
 function handlePointerUp(event) {
-  if (finishScriptPointerUp(event)) return;
+  if (finishPanelResize()) return;
   workspace.classList.remove("is-flow-interacting");
   if (connectionDraft) finishConnection(event);
   if (selectionSession) finishSelectionBox();
@@ -3605,16 +2742,9 @@ function handleWheel(event) {
   const nextScale = Math.min(WORKFLOW_ZOOM_MAX, Math.max(WORKFLOW_ZOOM_MIN, state.viewport.scale * Math.exp(-event.deltaY * 0.0015)));
   state.viewport.x = mouseX - beforeX * nextScale; state.viewport.y = mouseY - beforeY * nextScale; state.viewport.scale = nextScale; updateViewport(); scheduleSave();
 }
-function handleScriptWheel(event) {
-  if (shouldUseNativeWheelScroll(event)) return;
-  event.preventDefault();
-  const rect = scriptFlowStage.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const mouseY = event.clientY - rect.top;
-  const viewport = scriptViewport(); const beforeX = (mouseX - viewport.x) / viewport.scale; const beforeY = (mouseY - viewport.y) / viewport.scale;
-  const nextScale = Math.min(SCRIPT_ZOOM_MAX, Math.max(SCRIPT_ZOOM_MIN, viewport.scale * Math.exp(-event.deltaY * 0.0015)));
-  viewport.x = mouseX - beforeX * nextScale; viewport.y = mouseY - beforeY * nextScale; viewport.scale = nextScale; updateScriptViewport(); scheduleSave();
-}
-function updateViewport() { if (!state) return; canvasScene.style.transform = `translate(${state.viewport.x}px, ${state.viewport.y}px) scale(${state.viewport.scale})`; canvasScene.getBoundingClientRect(); if (state.flowMode !== "script") $("#zoomButton").textContent = `${Math.round(state.viewport.scale * 100)}%`; }
+function updateViewport() { if (!state) return; canvasScene.style.transform = `translate(${state.viewport.x}px, ${state.viewport.y}px) scale(${state.viewport.scale})`; canvasScene.getBoundingClientRect(); if (state.flowMode !== "templates") $("#zoomButton").textContent = `${Math.round(state.viewport.scale * 100)}%`; }
 function syncViewportAfterWorkspaceResize(rect) {
+  if (state?.flowMode === "templates") return;
   if (!rect || rect.width <= 0 || rect.height <= 0) { observedWorkspaceSize = null; return; }
   const previous = observedWorkspaceSize;
   observedWorkspaceSize = { width: rect.width, height: rect.height };
@@ -3622,14 +2752,8 @@ function syncViewportAfterWorkspaceResize(rect) {
   const dx = rect.width - previous.width;
   const dy = rect.height - previous.height;
   if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
-  if (state.flowMode === "script") {
-    const viewport = scriptViewport();
-    viewport.x += dx / 2; viewport.y += dy / 2;
-    updateScriptViewport(); requestScriptEdgeRender();
-  } else {
-    state.viewport.x += dx / 2; state.viewport.y += dy / 2;
-    updateViewport(); syncVideoGeneratorPortPositions(); requestEdgeRender();
-  }
+  state.viewport.x += dx / 2; state.viewport.y += dy / 2;
+  updateViewport(); syncVideoGeneratorPortPositions(); requestEdgeRender();
   scheduleSave();
 }
 function initCanvasResizeObserver() {
@@ -3637,17 +2761,8 @@ function initCanvasResizeObserver() {
   canvasResizeObserver = new ResizeObserver(() => syncViewportAfterWorkspaceResize(workspace.getBoundingClientRect()));
   canvasResizeObserver.observe(workspace);
 }
-function fitScriptContent() {
-  const flow = ensureScriptFlow(); const rect = scriptFlowStage.getBoundingClientRect(); const viewport = scriptViewport();
-  const bounds = [...flow.characters.map(role => ({ x: role.x, y: role.y, width: 148, height: 183 })), ...flow.storyCards.map(card => ({ x: card.x, y: card.y, width: card.width, height: card.height })), ...flow.storyFrames.map(frame => ({ x: frame.x, y: frame.y, width: frame.width, height: frame.height }))];
-  bounds.push(...(flow.emotionBoards || []).map(board => ({ x: board.x, y: board.y, width: board.width, height: board.height })), ...(flow.characterArcs || []).map(arc => ({ x: arc.x, y: arc.y, width: arc.width, height: arc.height })), ...(flow.characterGoals || []).map(goal => ({ x: goal.x, y: goal.y, width: goal.width, height: goal.height })), ...(flow.aiAssistants || []).map(assistant => ({ x: assistant.x, y: assistant.y, width: assistant.width, height: assistant.height })), ...(flow.scriptNotes || []).map(note => ({ x: note.x, y: note.y, width: note.width, height: note.height })));
-  if (!bounds.length) { viewport.x = 0; viewport.y = 0; viewport.scale = 1; updateScriptViewport(); scheduleSave(); return; }
-  const minX = Math.min(...bounds.map(item => item.x)); const minY = Math.min(...bounds.map(item => item.y)); const maxX = Math.max(...bounds.map(item => item.x + item.width)); const maxY = Math.max(...bounds.map(item => item.y + item.height));
-  const width = Math.max(148, maxX - minX); const height = Math.max(183, maxY - minY); const scale = Math.min(1.4, Math.max(SCRIPT_ZOOM_MIN, Math.min((rect.width - 180) / width, (rect.height - 150) / height)));
-  viewport.scale = scale; viewport.x = rect.width / 2 - (minX + width / 2) * scale; viewport.y = rect.height / 2 - (minY + height / 2) * scale; updateScriptViewport(); scheduleSave();
-}
 function fitContent() {
-  if (state?.flowMode === "script") return fitScriptContent();
+  if (state?.flowMode === "templates") return;
   if (!state?.nodes.length) return; const rect = workspace.getBoundingClientRect();
   const minX = Math.min(...state.nodes.map(node => node.x)); const minY = Math.min(...state.nodes.map(node => node.y));
   const maxX = Math.max(...state.nodes.map(node => node.x + node.width)); const maxY = Math.max(...state.nodes.map(node => node.y + node.height));
@@ -3722,7 +2837,7 @@ function duplicateSelected() {
   state.nodes.push(...copies); state.selectedIds = copies.map(node => node.id); renderWorkspace(); scheduleSave();
 }
 function renderLibrary() {
-  if (state?.flowMode === "script") return renderScriptLibrary();
+  if (state?.flowMode === "templates") return;
   if (state.libraryTab === "assets") return renderAssetsLibrary(); if (state.libraryTab === "history") return renderHistoryLibrary();
   const counts = type => state.nodes.filter(node => node.type === type).length;
   libraryContent.innerHTML = `<div class="section-label"><span>创建模块</span><span>${state.nodes.filter(node => node.type !== "frame").length}</span></div><div class="module-list">
@@ -3821,9 +2936,9 @@ function bindImageUniformScaleControl() {
   $(`[data-confirm-image-uniform-scale]`)?.addEventListener("click", event => { event.stopPropagation(); applyImageUniformScale(slider?.value); });
 }
 function renderInspector() {
-  if (state?.flowMode === "script") return renderScriptInspector();
+  if (state?.flowMode === "templates") return;
   if (selectedEdgeId) return renderEdgeInspector(); const selectedNodes = state.selectedIds.map(findNode).filter(Boolean); if (selectedNodes.length > 1) return renderMultiSelectionInspector(selectedNodes); const node = selectedNode(); if (node) return renderNodeInspector(node);
-  $("#inspectorEyebrow").textContent = "PROJECT"; $("#inspectorTitle").textContent = "工作流概览";
+  $("#inspectorEyebrow").textContent = "PROJECT"; $("#inspectorTitle").textContent = "自由画布概览";
   inspectorContent.innerHTML = `${crossProjectImageLibraryHtml()}
     ${imageUniformScaleControl()}
     <section class="control-section"><div class="control-title">界面基调 <span>${themeLabels[state.theme]}</span></div><div class="settings-theme-switch">${themeButtonsHtml()}</div></section>`;
@@ -3864,7 +2979,7 @@ async function handleCanvasPaste(event) {
   if (document.querySelector('#layerEditor[open], #localEditDialog[open]')) return;
   const target = event.target instanceof Element ? event.target : null;
   const isEditable = Boolean(target?.closest("input, textarea, select, [contenteditable=true]"));
-  if (!state || isEditable) return;
+  if (!state || state.flowMode === "templates" || isEditable) return;
   const clipboardFiles = [...(event.clipboardData?.files || [])];
   const videoFiles = [...(event.clipboardData?.items || [])]
     .filter(item => item.kind === "file" && isSupportedVideoFile(item.getAsFile?.()))
@@ -3875,7 +2990,6 @@ async function handleCanvasPaste(event) {
     .slice(0, 24);
   if (pastedVideos.length) {
     event.preventDefault();
-    if (state.flowMode === "script") return toast("请切换到工作流画布粘贴视频", true);
     try { await importVideosAsPreviewNodes(pastedVideos, { source: "剪贴板", placeAtViewport: true }); }
     catch (error) { toast(`粘贴视频失败：${error?.message || "无法保存视频"}`, true); }
     return;
@@ -3886,14 +3000,12 @@ async function handleCanvasPaste(event) {
     .filter(Boolean);
   if (imageFiles.length) {
     event.preventDefault();
-    if (state.flowMode === "script") return toast("请切换到工作流画布粘贴图片", true);
     try { await importImages(imageFiles, { source: "剪贴板", placeAtViewport: true }); }
     catch (error) { toast(`粘贴图片失败：${error?.message || "无法保存图片"}`, true); }
     return;
   }
   event.preventDefault();
-  if (state.flowMode === "script") pasteScriptSelection();
-  else pasteWorkflowSelection();
+  pasteWorkflowSelection();
 }
 async function importImages(files, options = {}) {
   const accepted = [...files].filter(file => /^image\/(png|jpeg|webp)$/i.test(file.type)); if (!accepted.length) return;
@@ -4805,7 +3917,7 @@ function bindStaticEvents() {
 
   workspace.addEventListener("pointerdown", event => {
     closeConnectionMenu();
-    if (state?.flowMode === "script") return;
+    if (state?.flowMode === "templates") return;
     if (event.target.closest(".flow-switch, .canvas-status, .mobile-panel-button")) return;
     if (event.target.closest(".canvas-node, .node-port, .node-interactive")) return;
     if (event.button === 2) return;
@@ -4814,20 +3926,14 @@ function bindStaticEvents() {
     if (state.tool === "hand" || spacePressed || [0, 1].includes(event.button)) return startPan(event);
   });
   workspace.addEventListener("selectstart", event => { if (!allowsCanvasTextSelection(event.target)) event.preventDefault(); });
-  workspace.addEventListener("wheel", event => { if (state?.flowMode === "script") return handleScriptWheel(event); handleWheel(event); }, { passive: false });
-  scriptEdgeLayer.addEventListener("pointerdown", event => {
-    const path = event.target.closest("[data-script-edge]"); if (!path) return;
-    event.preventDefault(); event.stopPropagation();
-    const flow = ensureScriptFlow(); flow.selectedEdgeId = path.dataset.scriptEdge; flow.selectedIds = [];
-    renderScriptEdges(); renderLibrary(); renderInspector(); scheduleSave();
-  });
+  workspace.addEventListener("wheel", event => { if (state?.flowMode === "workflow") handleWheel(event); }, { passive: false });
   window.addEventListener("pointermove", handlePointerMove);
   window.addEventListener("pointerup", handlePointerUp);
   window.addEventListener("pointercancel", resetInterruptedInteractionState);
   $("#undoButton").addEventListener("click", undo);
   $("#redoButton").addEventListener("click", redo);
   $("#fitButton").addEventListener("click", fitContent);
-  $("#zoomButton").addEventListener("click", () => { if (state.flowMode === "script") { const viewport = scriptViewport(); viewport.x = 0; viewport.y = 0; viewport.scale = 1; updateScriptViewport(); } else { state.viewport.scale = 1; updateViewport(); } scheduleSave(); });
+  $("#zoomButton").addEventListener("click", () => { state.viewport.scale = 1; updateViewport(); scheduleSave(); });
   $$("[data-flow-mode]").forEach(button => button.addEventListener("click", () => setFlowMode(button.dataset.flowMode)));
   $("#importButton").addEventListener("click", () => imageFileInput.click());
   imageFileInput.addEventListener("change", async event => { const files = [...event.target.files || []]; const pending = pendingImageUploadNodeId; pendingImageUploadNodeId = null; if (pending) { if (files[0]) await uploadImageIntoNode(pending, files[0]); event.target.value = ""; return; } await importImages(event.target.files); event.target.value = ""; });
@@ -4916,25 +4022,7 @@ function bindStaticEvents() {
     settingsDialog.close(); checkApiStatus(); toast(kimiMoyuKey || kimiMoonshotKey ? "Kimi K3 双网关密钥已安全保存" : claudeKey ? "Claude 密钥已安全保存" : deepseekKey ? "DeepSeek 密钥已安全保存" : runningHubKey ? "RunningHub 密钥已安全保存" : midjourneyKey ? "Midjourney 密钥已安全保存" : seedreamKey ? "Seedream 密钥已安全保存" : (apiKey ? "临时 Image2 API Key 已启用" : "设置已保存"));
   });
   $("#projectName").addEventListener("click", () => { const next = window.prompt("项目名称", state.projectName)?.trim(); if (!next || next === state.projectName) return; recordHistory(); state.projectName = next; renderWorkspace(); scheduleSave(); });
-  $("#closeDialogueScriptButton").addEventListener("click", closeStoryDialogue);
-$("#toggleDialogueFullscreenButton").addEventListener("click", toggleDialogueFullscreen);
-$("#dialogueRoleSelect").addEventListener("change", event => { if (dialogueEditor) { recordDialogueDraftHistory(); dialogueEditor.roleId = event.target.value; dialogueEditor.analysisHiddenRoles = (dialogueEditor.analysisHiddenRoles || []).filter(id => id !== event.target.value); renderDialogueEditor(); } });
-$("#addDialogueSpeechButton").addEventListener("click", addDialogueSpeech);
-$("#addDialogueActionButton").addEventListener("click", () => addDialogueMarker("action"));
-$("#addDialogueNarrationButton").addEventListener("click", () => addDialogueMarker("narration"));
-$("#saveDialogueCardButton").addEventListener("click", saveStoryDialogue);
-$("#downloadDialogueTextButton").addEventListener("click", downloadDialogueText);
-  $("#deleteDialogueEntryButton").addEventListener("click", deleteDialogueEntry);
-  $("#deleteDialogueAnalysisRoleButton").addEventListener("click", deleteDialogueAnalysisRole);
-  $$('[data-dialogue-drag]').forEach(header => header.addEventListener("pointerdown", event => startDialoguePanelGesture(event, "drag")));
-  $$('[data-dialogue-resize]').forEach(handle => handle.addEventListener("pointerdown", event => startDialoguePanelGesture(event, "resize"))); $$('[data-dialogue-analysis-resize]').forEach(handle => handle.addEventListener("pointerdown", startDialogueAnalysisResize));
-  document.addEventListener("pointerdown", event => { if (!event.target.closest("#dialogueEntryMenu, [data-dialogue-delete]")) closeDialogueEntryMenu(); if (!event.target.closest("#dialogueAnalysisMenu, [data-dialogue-analysis-role]")) closeDialogueAnalysisMenu(); if (!event.target.closest("#managerSegmentMenu, [data-manager-segment]")) closeManagerSegmentMenu(); });
-  window.addEventListener("pointermove", moveDialoguePanelGesture);
-  window.addEventListener("pointerup", endDialoguePanelGesture);
-  window.addEventListener("resize", () => { if (dialogueScriptDialog.open) applyDialoguePanelLayout(); });
-$("#dialogueSpeechInput").addEventListener("keydown", event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); addDialogueSpeech(); } });
-dialogueScriptDialog.addEventListener("cancel", event => { event.preventDefault(); closeStoryDialogue(); });
-dialogueScriptDialog.addEventListener("click", event => event.stopPropagation());$("#previewCloseButton").addEventListener("click", () => { previewVideo.pause(); previewVideo.removeAttribute("src"); previewDialog.close(); });
+  $("#previewCloseButton").addEventListener("click", () => { previewVideo.pause(); previewVideo.removeAttribute("src"); previewDialog.close(); });
   $("#closeCropButton").addEventListener("click", closeCropDialog);
   $("#cancelCropButton").addEventListener("click", closeCropDialog);
   $("#confirmCropButton").addEventListener("click", confirmCrop);
@@ -4956,10 +4044,10 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   $("#openGeneratedFolderButton").addEventListener("click", () => void openGeneratedFolder());
 
   window.addEventListener("paste", handleCanvasPaste);
-  document.addEventListener("focusin", event => { beginEditableHistory(event.target); beginDialogueEditableHistory(event.target); }, true);
-  document.addEventListener("input", event => { scheduleEditableHistory(event.target); scheduleDialogueEditableHistory(event.target); }, true);
-  document.addEventListener("change", event => { scheduleEditableHistory(event.target); scheduleDialogueEditableHistory(event.target); }, true);
-  document.addEventListener("focusout", event => { commitEditableHistory(event.target); commitDialogueEditableHistory(event.target); }, true);
+  document.addEventListener("focusin", event => { beginEditableHistory(event.target); }, true);
+  document.addEventListener("input", event => { scheduleEditableHistory(event.target); }, true);
+  document.addEventListener("change", event => { scheduleEditableHistory(event.target); }, true);
+  document.addEventListener("focusout", event => { commitEditableHistory(event.target); }, true);
   window.addEventListener("keydown", event => {
     if (document.querySelector('#layerEditor[open], #localEditDialog[open], .speech-dialog[open]')) return;
     const target = event.target instanceof Element ? event.target : null;
@@ -4968,21 +4056,20 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
     const historyShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y");
     const clipboardShortcut = (event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "c" || event.key.toLowerCase() === "v");
     const selectAllShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a";
+    if (state?.flowMode === "templates" && !historyShortcut) return;
     if (selectAllShortcut && !isEditable) { event.preventDefault(); selectAnswerResponse(selectedAnswerResponse()); return; }
     if (clipboardShortcut && isEditable) return;
-    if (clipboardShortcut && state?.flowMode === "script") { event.preventDefault(); if (event.key.toLowerCase() === "c") copyScriptSelection(); else pasteScriptSelection(); return; }
-    if (clipboardShortcut && state?.flowMode !== "script") { const selection = window.getSelection(); const answerTextSelected = Boolean(selection?.toString().trim() && selection.anchorNode?.parentElement?.closest(".answer-response")); if (event.key.toLowerCase() === "c" && answerTextSelected) return; if (event.key.toLowerCase() === "c") { event.preventDefault(); copyWorkflowSelection(); } return; }
-    if (historyShortcut && editableTarget?.matches("[data-prompt-content]")) { commitEditableHistory(editableTarget); discardDialogueEditableHistory(editableTarget); event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
-    if (historyShortcut && isEditable) { discardEditableHistory(editableTarget); discardDialogueEditableHistory(editableTarget); return; }
-    if (historyShortcut && dialogueEditor && dialogueScriptDialog.open) { const handled = event.shiftKey || event.key.toLowerCase() === "y" ? redoDialogueDraft() : undoDialogueDraft(); if (handled) { event.preventDefault(); return; } }
+    if (clipboardShortcut && state?.flowMode !== "templates") { const selection = window.getSelection(); const answerTextSelected = Boolean(selection?.toString().trim() && selection.anchorNode?.parentElement?.closest(".answer-response")); if (event.key.toLowerCase() === "c" && answerTextSelected) return; if (event.key.toLowerCase() === "c") { event.preventDefault(); copyWorkflowSelection(); } return; }
+    if (historyShortcut && editableTarget?.matches("[data-prompt-content]")) { commitEditableHistory(editableTarget); event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
+    if (historyShortcut && isEditable) { discardEditableHistory(editableTarget); return; }
     if (historyShortcut && state && !settingsDialog.open && !newProjectDialog.open) { event.preventDefault(); if (event.shiftKey || event.key.toLowerCase() === "y") redo(); else undo(); return; }
-    if (event.key === "Escape") { closeConnectionMenu(); closeCanvasContextMenu(); connectionDraft = null; workspace.classList.remove("is-flow-interacting"); renderEdges(); scriptConnectionDraft = null; scriptFlowStage.classList.remove("is-interacting"); renderScriptEdges(); }
+    if (event.key === "Escape") { closeConnectionMenu(); closeCanvasContextMenu(); connectionDraft = null; workspace.classList.remove("is-flow-interacting"); renderEdges(); }
     if (!state || isEditable || settingsDialog.open || newProjectDialog.open) return;
     if (event.code === "Space") { spacePressed = true; workspace.style.cursor = "grab"; event.preventDefault(); }
     if (event.key.toLowerCase() === "v") setActiveTool("select");
     if (event.key.toLowerCase() === "h") setActiveTool("hand");
-    if (state.flowMode !== "script" && event.key.toLowerCase() === "f") addFrame();
-    if (event.key === "Delete" || event.key === "Backspace") { state.flowMode === "script" ? deleteScriptSelection() : deleteSelection(); }
+    if (state.flowMode !== "templates" && event.key.toLowerCase() === "f") addFrame();
+    if (event.key === "Delete" || event.key === "Backspace") { deleteSelection(); }
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { const node = selectedNode(); if (node?.type === "generator") runGeneratorNode(node.id); }
   });
   window.addEventListener("blur", resetInterruptedInteractionState);
@@ -4992,7 +4079,7 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
   workspace.addEventListener("dragover", event => { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"; });
   workspace.addEventListener("drop", async event => {
     event.preventDefault();
-    if (state?.flowMode === "script") return;
+    if (state?.flowMode === "templates") return;
     const files = [...event.dataTransfer.files || []];
     if (!files.length) return;
     const hasImages = files.some(file => /^image\/(png|jpeg|webp)$/i.test(file.type));
@@ -5001,9 +4088,8 @@ dialogueScriptDialog.addEventListener("click", event => event.stopPropagation())
     if (hasVideos) await importVideosAsPreviewNodes(files, { clientX: event.clientX, clientY: event.clientY });
     if (!hasImages && !hasVideos) toast("画布拖入支持 PNG、JPEG、WebP、MP4、WebM 和 MOV", true);
   });
-  $$("#scriptToolRail [data-script-quick]").forEach(button => button.addEventListener("click", () => { const action = button.dataset.scriptQuick; if (action === "select" || action === "hand") return setActiveTool(action); if (action === "male") return addScriptCharacter("male-1"); if (action === "female") return addScriptCharacter("female-1"); if (action === "story") return addStoryCard(); if (action === "emotion") return addEmotionBoard(); if (action === "character-arc") return addCharacterArc(); if (action === "character-goal") return addCharacterGoal(); if (action === "ai-assistant") return addScriptAssistant(); if (action === "note") return addScriptNote(); if (action === "frame") return addScriptFrame(); }));  $("#libraryResizer").addEventListener("pointerdown", event => startPanelResize(event, "library"));
+  $("#libraryResizer").addEventListener("pointerdown", event => startPanelResize(event, "library"));
   $("#inspectorResizer").addEventListener("pointerdown", event => startPanelResize(event, "inspector"));
-  scriptFlowStage.addEventListener("pointerdown", event => { if (!state || state.flowMode !== "script") return; if (event.target.closest(".script-character-node, .script-note-card, .flow-switch, .canvas-status")) return; if (event.button === 2) return; if (event.shiftKey && state.tool !== "hand" && !spacePressed && event.button === 0) return startScriptSelection(event); if (state.tool === "hand" || spacePressed || [0, 1].includes(event.button)) return startScriptPan(event); });
 }
 async function init() {
   applyLineMotionPreference();

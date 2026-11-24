@@ -7,7 +7,7 @@
   <title>万物维 · Image2 节点画布</title>
   <link rel="icon" type="image/svg+xml" href="/wanwuwei-mark.svg">
   <link rel="alternate icon" href="/favicon.ico">
-  <link rel="stylesheet" href="/styles.css?v=20260801-03">
+  <link rel="stylesheet" href="/styles.css?v=20261124-template">
   <link rel="stylesheet" href="/speech.css">
 </head>
 <body>
@@ -95,29 +95,12 @@
       <div class="panel-resizer panel-resizer-right" id="libraryResizer" role="separator" aria-label="调整左侧栏宽度" aria-orientation="vertical"></div>
     </aside>
 
-    <main class="workspace" id="workspace" aria-label="节点工作流画布">
-      <div class="flow-switch" id="flowSwitch" role="tablist" aria-label="工作流模式切换">
-        <button type="button" data-flow-mode="workflow" class="is-active"><i data-lucide="workflow"></i> 工作流</button>
-        <button type="button" data-flow-mode="script"><i data-lucide="notebook-pen"></i> 剧本流</button>
+    <main class="workspace" id="workspace" aria-label="项目画布">
+      <div class="flow-switch" id="flowSwitch" role="group" aria-label="画布模式切换">
+        <button type="button" data-flow-mode="workflow" class="is-active"><i data-lucide="workflow"></i> 自由画布</button>
+        <button type="button" data-flow-mode="templates"><i data-lucide="layout-template"></i> 一键模板</button>
       </div>
-      <div class="script-flow-stage" id="scriptFlowStage" hidden>
-        <svg class="script-edge-layer" id="scriptEdgeLayer" aria-label="角色关系线"></svg>
-        <div class="script-node-layer" id="scriptNodeLayer"></div>
-      </div>
-      <div class="script-tool-rail" id="scriptToolRail" role="toolbar" aria-label="剧本流工具">
-        <button type="button" data-script-quick="select" aria-label="选择" data-tooltip="选择"><i data-lucide="mouse-pointer-2"></i></button>
-        <button type="button" data-script-quick="hand" aria-label="移动画布" data-tooltip="移动画布"><i data-lucide="hand"></i></button>
-        <span></span>
-        <button type="button" data-script-quick="male" aria-label="添加男性角色" data-tooltip="男性角色"><i data-lucide="user-round"></i></button>
-        <button type="button" data-script-quick="female" aria-label="添加女性角色" data-tooltip="女性角色"><i data-lucide="user-round"></i></button>
-        <button type="button" data-script-quick="story" aria-label="添加故事卡" data-tooltip="故事卡"><i data-lucide="book-open"></i></button>
-        <button type="button" data-script-quick="emotion" aria-label="新建情绪曲线" data-tooltip="新建情绪曲线"><i data-lucide="activity"></i></button>
-        <button type="button" data-script-quick="character-arc" aria-label="角色转变" data-tooltip="角色转变"><i data-lucide="route"></i></button>
-        <button type="button" data-script-quick="character-goal" aria-label="角色目标" data-tooltip="角色目标"><i data-lucide="target"></i></button>
-        <button type="button" data-script-quick="ai-assistant" aria-label="添加 AI 助手" data-tooltip="AI助手"><i data-lucide="sparkles"></i></button>
-        <button type="button" data-script-quick="note" aria-label="添加便签" data-tooltip="便签"><i data-lucide="sticky-note"></i></button>
-        <button type="button" data-script-quick="frame" aria-label="添加分组画板" data-tooltip="分组画板"><i data-lucide="frame"></i></button>
-      </div>      <div class="selection-rect" id="selectionRect" hidden></div>
+      <div class="selection-rect" id="selectionRect" hidden></div>
       <div class="canvas-scene" id="canvasScene">
         <div class="frame-layer" id="frameLayer"></div>
         <svg class="edge-layer" id="edgeLayer" aria-label="节点连接线"></svg>
@@ -136,7 +119,7 @@
 
     <aside class="inspector-panel" id="inspectorPanel">
       <div class="panel-heading inspector-heading">
-        <div><span class="eyebrow" id="inspectorEyebrow">PROJECT</span><h2 id="inspectorTitle">工作流概览</h2></div>
+        <div><span class="eyebrow" id="inspectorEyebrow">PROJECT</span><h2 id="inspectorTitle">自由画布概览</h2></div>
         <div class="inspector-heading-actions">
           <button class="icon-button" id="openGeneratedFolderButton" type="button" aria-label="打开生成图片文件夹" data-tooltip="打开生成图片文件夹"><i data-lucide="folder-open"></i></button>
           <button class="icon-button panel-toggle-button" id="toggleInspectorButton" type="button" aria-label="收起右侧栏" data-tooltip="收起右侧栏" aria-expanded="true"><i data-lucide="panel-right-close"></i></button>
@@ -219,34 +202,6 @@
     </form>
   </dialog>
 
-  <dialog class="dialogue-script-dialog" id="dialogueScriptDialog" aria-labelledby="dialogueScriptTitle">
-    <section class="dialogue-script-shell">
-      <header class="dialogue-script-heading" data-dialogue-drag>
-        <div><span class="eyebrow">DIALOGUE SCRIPT</span><h2 id="dialogueScriptTitle">对话脚本编辑</h2><p id="dialogueCardLabel">故事卡</p></div>
-        <div class="dialogue-heading-actions"><button class="icon-button" id="toggleDialogueFullscreenButton" type="button" aria-label="全屏编辑" title="全屏编辑"><i data-lucide="maximize-2"></i></button><button class="icon-button" id="saveDialogueCardButton" type="button" aria-label="保存卡片" title="保存卡片"><i data-lucide="save"></i></button><button class="icon-button" id="downloadDialogueTextButton" type="button" aria-label="下载对话文本" title="下载对话文本"><i data-lucide="download"></i></button><button class="icon-button" id="closeDialogueScriptButton" type="button" aria-label="关闭对话脚本"><i data-lucide="x"></i></button></div>
-      </header>
-      <section class="dialogue-script-body" id="dialogueScriptBody">
-        <section class="dialogue-main-column">
-          <section class="dialogue-thread" id="dialogueThread" aria-label="对话内容"></section>
-          <section class="dialogue-composer">
-            <div class="dialogue-composer-top">
-              <label class="dialogue-role-picker" for="dialogueRoleSelect"><div id="dialogueRolePreview"></div><select id="dialogueRoleSelect" aria-label="说话角色"></select></label>
-              <div class="dialogue-marker-actions"><button class="button button-subtle" id="addDialogueActionButton" type="button"><i data-lucide="box"></i> 添加动作</button><button class="button button-subtle" id="addDialogueNarrationButton" type="button"><i data-lucide="book-open"></i> 添加旁白</button></div>
-            </div>
-            <div class="dialogue-speech-entry"><textarea id="dialogueSpeechInput" placeholder="输入角色台词，可输入较长内容…" aria-label="台词内容"></textarea><button class="button button-primary" id="addDialogueSpeechButton" type="button"><i data-lucide="send"></i> 添加台词</button></div>
-          </section>
-          
-        </section>
-        <aside class="dialogue-analysis-panel" id="dialogueAnalysisPanel" aria-label="人物分析">
-          <header><span class="eyebrow">CHARACTER NOTES</span><h3>人物分析</h3></header>
-          <div class="dialogue-analysis-tabs" id="dialogueAnalysisTabs" aria-label="对话角色"></div>
-          <div class="dialogue-analysis-content" id="dialogueAnalysisContent"></div>
-        </aside>
-        <span class="dialogue-analysis-resize" data-dialogue-analysis-resize aria-label="调整人物分析栏宽度" role="separator"></span>
-      </section>
-      <span class="dialogue-panel-resize" data-dialogue-resize aria-hidden="true"></span>
-    </section>
-  </dialog>
 
   <dialog class="settings-dialog generated-cleanup-dialog" id="generatedCleanupDialog" aria-labelledby="generatedCleanupTitle">
     <section class="generated-cleanup-shell">
@@ -259,12 +214,6 @@
       <div class="dialog-actions"><button class="button button-subtle" id="cancelGeneratedCleanupButton" type="button">取消</button><button class="button button-primary danger-button" id="confirmGeneratedCleanupButton" type="button" disabled><i data-lucide="trash-2"></i> 删除未使用图片</button></div>
     </section>
   </dialog>
-  <div class="dialogue-entry-menu" id="dialogueEntryMenu" hidden>
-    <button id="deleteDialogueEntryButton" type="button"><i data-lucide="trash-2"></i> 删除此条内容</button>
-  </div>
-  <div class="dialogue-entry-menu" id="dialogueAnalysisMenu" hidden>
-    <button id="deleteDialogueAnalysisRoleButton" type="button"><i data-lucide="user-minus"></i> 移除人物分析标签</button>
-  </div>
   <dialog class="preview-dialog" id="previewDialog">
     <button class="preview-close" id="previewCloseButton" type="button" aria-label="关闭预览"><i data-lucide="x"></i></button>
     <img id="previewImage" alt="画布图片预览">
@@ -281,7 +230,7 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
   <script src="/vendor/lucide.min.js?v=20260724-8"></script>
-  <script type="module" src="/app.js?v=20260808-1"></script>
+  <script type="module" src="/app.js?v=20261124-template"></script>
 </body>
 </html>
 
