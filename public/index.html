@@ -9,6 +9,7 @@
   <link rel="alternate icon" href="/favicon.ico">
   <link rel="stylesheet" href="/styles.css?v=20261124-home">
   <link rel="stylesheet" href="/speech.css">
+  <link rel="stylesheet" href="/video-remake.css">
 </head>
 <body>
   <section class="home-view" id="homeView">
@@ -26,7 +27,7 @@
         <button class="icon-button" id="homeSettingsButton" type="button" aria-label="生图设置" data-tooltip="生图设置"><i data-lucide="settings-2"></i></button>
       </div>
     </header>
-    <main class="home-main">
+    <main class="home-main" id="homeLibrary">
       <div class="home-mode-switch" role="group" aria-label="画布模式切换">
         <button type="button" data-home-mode="workflow" class="is-active" aria-pressed="true"><i data-lucide="workflow"></i> 自由画布</button>
         <button type="button" data-home-mode="templates" aria-pressed="false"><i data-lucide="layout-template"></i> 一键模板</button>
@@ -45,7 +46,48 @@
         </div>
         <div class="project-grid" id="projectGrid"></div>
       </section>
-      <section id="homeTemplates" aria-label="一键模板" hidden><p class="template-empty">暂无模板</p></section>
+      <section id="homeTemplates" aria-label="一键模板" hidden>
+        <h1 class="template-title">模板库</h1>
+        <div class="template-shelf">
+          <button class="template-card" id="openRemake" type="button">
+            <span class="template-cover film-cover" aria-hidden="true"><span class="film-strip"><i></i><i></i><i></i></span></span>
+            <span class="template-caption"><strong>短视频复刻</strong><i data-lucide="arrow-up-right"></i></span>
+          </button>
+          <button class="template-card" type="button" disabled>
+            <span class="template-cover pack-cover" aria-hidden="true"><i data-lucide="package"></i></span>
+            <span class="template-caption"><strong>电商包装</strong><small>待开放</small></span>
+          </button>
+        </div>
+      </section>
+    </main>
+    <main class="home-main remake-view" id="remakeView" hidden>
+      <button class="remake-back" id="remakeBack" type="button"><i data-lucide="arrow-left"></i> 返回模板库</button>
+      <h1 class="template-title" id="remakeTitle" tabindex="-1">短视频复刻</h1>
+      <div class="remake-layout">
+        <div class="remake-inputs">
+          <section class="remake-panel"><h2><span class="remake-step">01</span> 添加素材</h2>
+            <div class="remake-sources">
+              <div><h3>参考视频</h3><div class="remake-drop" data-drop="video">
+                <button type="button" data-pick="video"><i data-lucide="film"></i><strong>选择或拖入视频</strong><small>MP4 · WebM · MOV</small></button>
+                <video id="remakeSource" controls playsinline preload="metadata" aria-label="参考视频" hidden></video>
+              </div><div id="remakeVideoMeta" class="remake-file" hidden><span></span><button type="button" data-pick="video">替换</button><button type="button" id="removeRemakeVideo">移除</button></div></div>
+              <div><h3>参考图片 <small>可选</small></h3><div class="remake-drop" data-drop="images"><button type="button" data-pick="images"><i data-lucide="images"></i><strong>选择或拖入图片</strong><small>JPG · PNG · WebP，可多选</small></button></div><ul class="remake-thumbs" id="remakeThumbs" aria-label="参考图片"></ul></div>
+            </div>
+            <input id="remakeVideoFile" type="file" accept="video/mp4,video/webm,video/quicktime,.mov" hidden>
+            <input id="remakeImageFiles" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+          </section>
+          <section class="remake-panel"><h2><span class="remake-step">02</span> <label for="remakePrompt">填写复刻提示词</label></h2>
+            <textarea id="remakePrompt" rows="4" placeholder="例如：保留开场的推进镜头，把主体换成参考图中的产品，结尾停留在包装特写。"></textarea>
+            <div class="remake-actions"><button class="button button-primary" id="remakeBuild" type="button" disabled><i data-lucide="clapperboard"></i> 制作预览样片</button><button class="button button-subtle" id="remakeCancel" type="button" hidden>取消</button></div>
+            <p class="remake-feedback" id="remakeFeedback" role="status">添加视频并填写提示词后即可预览。</p>
+          </section>
+        </div>
+        <section class="remake-panel remake-result"><h2><span class="remake-step">03</span> 查看输出视频</h2>
+          <div class="remake-monitor"><div id="remakeEmpty"><i data-lucide="monitor-play"></i><span>等待预览样片</span></div><video id="remakeOutput" controls playsinline aria-label="输出预览样片" hidden></video></div>
+          <p class="remake-note">原型样片将参考视频片段与图片顺序拼接成无声短片。提示词用于记录复刻要求，后续接入模型。</p>
+          <a class="button button-subtle" id="remakeDownload" download hidden>下载样片</a>
+        </section>
+      </div>
     </main>
   </section>
 
@@ -221,6 +263,7 @@
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
   <script src="/vendor/lucide.min.js?v=20260724-8"></script>
   <script type="module" src="/app.js?v=20261124-home"></script>
+  <script type="module" src="/video-remake.js"></script>
 </body>
 </html>
 
