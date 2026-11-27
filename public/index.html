@@ -9,7 +9,7 @@
   <link rel="alternate icon" href="/favicon.ico">
   <link rel="stylesheet" href="/styles.css?v=20261124-home">
   <link rel="stylesheet" href="/speech.css">
-  <link rel="stylesheet" href="/video-remake.css?v=square-covers">
+  <link rel="stylesheet" href="/video-remake.css?v=remake-gallery-source-fallback-20261127">
 </head>
 <body>
   <section class="home-view" id="homeView">
@@ -63,37 +63,76 @@
     <main class="home-main remake-view" id="remakeView" hidden>
       <header class="workshop-mast">
         <div class="workshop-name"><span class="workshop-camera" aria-hidden="true"></span><div><h1 id="remakeTitle" tabindex="-1">短视频复刻</h1><small>复古影像工坊</small></div></div>
-        <button class="remake-back" id="remakeBack" type="button"><i data-lucide="arrow-left"></i> 返回模板库</button>
+        <div class="workshop-header-actions"><button class="remake-back" id="remakeGalleryButton" type="button"><i data-lucide="images"></i> 画布图库</button><button class="remake-back" id="remakeHistoryButton" type="button"><i data-lucide="history"></i> 历史记录</button><button class="remake-back" id="remakeBack" type="button"><i data-lucide="arrow-left"></i> 返回模板库</button></div>
       </header>
       <div class="remake-layout">
           <section class="remake-panel workshop-media" aria-label="参考素材">
             <div class="remake-sources">
-              <div><h3><i data-lucide="film"></i> 上传视频</h3><div class="remake-drop" data-drop="video">
+              <div><h3><i data-lucide="film"></i> 上传视频 <small>可选</small></h3><div class="remake-drop" data-drop="video">
                 <button type="button" data-pick="video"><i data-lucide="film"></i><strong>选择或拖入视频</strong><small>MP4 · WebM · MOV</small></button>
                 <video id="remakeSource" controls playsinline preload="auto" aria-label="参考视频" hidden></video>
               </div><div id="remakeVideoMeta" class="remake-file" hidden><span></span><button type="button" data-pick="video">替换</button><button type="button" id="removeRemakeVideo">移除</button></div></div>
-              <div><h3><i data-lucide="image"></i> 上传图片 <small>可选</small></h3><div class="remake-drop" data-drop="images"><button type="button" data-pick="images"><i data-lucide="images"></i><strong>选择或拖入图片</strong><small>JPG · PNG · WebP，可多选</small></button></div><ul class="remake-thumbs" id="remakeThumbs" aria-label="参考图片"></ul></div>
+              <div><h3><i data-lucide="image"></i> 上传图片 <small id="remakeCount">0/9</small></h3><div class="remake-drop" data-drop="images"><button type="button" data-pick="images"><i data-lucide="images"></i><strong>选择或拖入图片</strong><small>JPG · PNG · WebP，可多选</small></button></div><ul class="remake-thumbs" id="remakeThumbs" aria-label="参考图片"></ul></div>
             </div>
             <input id="remakeVideoFile" type="file" accept="video/mp4,video/webm,video/quicktime,.mov" hidden>
             <input id="remakeImageFiles" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
           </section>
         <div class="workshop-split" data-split="0" role="separator" tabindex="0" aria-orientation="vertical" aria-label="素材栏分隔边" title="左右拖动调整，双击复位"></div>
-          <section class="remake-panel workshop-editor"><h2><i data-lucide="feather"></i><label for="remakePrompt">提示词</label></h2>
-            <textarea id="remakePrompt" rows="4" placeholder="例如：保留开场的推进镜头，把主体换成参考图中的产品，结尾停留在包装特写。"></textarea>
+          <section class="remake-panel workshop-editor"><h2><i data-lucide="feather"></i><span id="remakePromptLabel">提示词</span></h2>
+            <div class="remake-prompt-wrap"><div id="remakePrompt" class="remake-prompt" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="remakePromptLabel" data-placeholder="例如：保留开场的推进镜头，把主体换成参考图中的产品，结尾停留在包装特写。"></div><div id="remakeMentionMenu" class="remake-mention-menu" role="listbox" aria-label="选择参考图片" hidden></div></div>
             <div class="workshop-settings">
-              <label>风格<select id="remakeStyle"><option value="natural">原片质感</option><option value="warm">暖调胶片</option><option value="mono">黑白电影</option></select></label>
-              <label>时长<select id="remakeDuration"><option value="5">5 秒</option><option value="10" selected>10 秒</option><option value="15">15 秒</option></select></label>
-              <label>比例<select id="remakeRatio"><option>16:9</option><option>9:16</option><option>1:1</option></select></label>
-              <label>分辨率<select id="remakePixels"><option value="720">720p</option><option value="1080">1080p</option></select></label>
+              <label>提示词模型<select id="remakeModel"></select></label>
+              <label>时长（秒）<input id="remakeDuration" type="number" min="5" max="30" step="1" value="10" inputmode="numeric" aria-label="视频时长秒数"></label>
+              <label>比例<select id="remakeRatio"><option>16:9</option><option>9:16</option><option>1:1</option><option>4:3</option><option>3:4</option></select></label>
+              <label>生成规格<select id="remakeMP"><option value="0.9">0.9 MP</option><option value="1.5" selected>1.5 MP</option><option value="2">2 MP</option></select></label>
             </div>
-            <div class="remake-actions"><button class="button button-primary" id="remakeBuild" type="button" disabled><i data-lucide="clapperboard"></i> 制作预览样片</button><button class="button button-subtle" id="remakeCancel" type="button" hidden>取消</button></div>
-            <p class="remake-feedback" id="remakeFeedback" role="status">添加视频并填写提示词后即可预览。</p>
+            <small id="remakeEstimate"></small>
+            <div class="remake-actions"><button class="button button-primary" id="remakeBuild" type="button" disabled><i data-lucide="clapperboard"></i> 生成视频</button><button class="button button-subtle" id="remakeCancel" type="button" hidden>取消</button></div>
+            <p class="remake-feedback" id="remakeFeedback" role="status">填写提示词或添加素材即可生成。</p>
           </section>
         <div class="workshop-split" data-split="1" role="separator" tabindex="0" aria-orientation="vertical" aria-label="成片栏分隔边" title="左右拖动调整，双击复位"></div>
         <section class="remake-panel remake-result"><h2><i data-lucide="projector"></i> 成片预览</h2>
-          <div class="remake-monitor"><div id="remakeEmpty"><i data-lucide="monitor-play"></i><span>等待预览样片</span></div><video id="remakeOutput" controls playsinline aria-label="输出预览样片" hidden></video></div>
-          <p class="remake-note">本地无声样片按素材顺序拼接，提示词供后续模型使用。</p>
-          <div class="workshop-exports"><a class="button button-subtle" id="remakeDownload" download hidden>下载样片</a><button class="button button-subtle" type="button" id="remakeDelete" hidden>移除样片</button><small id="remakeLength"></small></div>
+          <div class="remake-monitor"><div id="remakeEmpty"><i data-lucide="monitor-play"></i><span>等待成片</span></div><video id="remakeOutput" controls playsinline aria-label="输出视频" hidden></video></div>
+          <div class="remake-result-inspector"><details id="remakeRewrite" hidden><summary>实际使用的 H3 提示词</summary><pre></pre></details><small id="remakeElapsed" aria-live="polite"></small></div>
+          <div class="workshop-exports"><a class="button button-subtle" id="remakeDownload" download hidden>下载视频</a><button class="button button-subtle" type="button" id="remakeOpenFolder" title="打开生成文件夹"><i data-lucide="folder-open"></i> 打开文件夹</button><small id="remakeLength"></small></div>
+          <p class="remake-note">所选模型按 MiniMax H3 结构整理提示词，再由文武双全生成视频。</p>
+        </section>
+      </div>
+    </main>
+    <dialog class="remake-gallery-dialog" id="remakeGalleryDialog" aria-labelledby="remakeGalleryTitle">
+      <div class="remake-gallery-shell">
+        <header class="remake-gallery-header">
+          <div><span class="remake-gallery-eyebrow">CANVAS GALLERY</span><h2 id="remakeGalleryTitle">画布图库</h2></div>
+          <button class="remake-back" id="remakeGalleryClose" type="button" aria-label="关闭画布图库"><i data-lucide="x"></i> 关闭</button>
+        </header>
+        <div class="remake-gallery-content">
+          <section class="remake-gallery-projects" aria-label="画布项目">
+            <h3><i data-lucide="folder-kanban"></i> 选择项目</h3>
+            <div id="remakeGalleryProjectList" class="remake-gallery-project-list" role="listbox" aria-label="自由画布项目"></div>
+          </section>
+          <section class="remake-gallery-images" aria-label="项目图片">
+            <div class="remake-gallery-images-heading"><button id="remakeGalleryProjectBack" class="remake-gallery-back" type="button" hidden><i data-lucide="arrow-left"></i> 项目列表</button><h3 id="remakeGalleryProjectName">选择一个项目查看图片</h3><small id="remakeGalleryImageCount"></small></div>
+            <div id="remakeGalleryImageGrid" class="remake-gallery-image-grid" role="listbox" aria-label="项目中的图片"></div>
+            <p id="remakeGalleryFeedback" class="remake-gallery-feedback" role="status">选择画布项目，再点击要加入模板的图片。</p>
+          </section>
+        </div>
+      </div>
+    </dialog>
+    <main class="home-main remake-view" id="remakeHistoryView" hidden>
+      <header class="workshop-mast">
+        <div class="workshop-name"><span class="workshop-camera" aria-hidden="true"></span><div><h1 id="remakeHistoryTitle" tabindex="-1">生成历史</h1><small>复古影像工坊</small></div></div>
+        <button class="remake-back" id="remakeHistoryBack" type="button"><i data-lucide="arrow-left"></i> 返回短视频复刻</button>
+      </header>
+      <div class="remake-history-layout">
+        <section class="remake-panel remake-history-panel">
+          <h2><i data-lucide="library"></i> 历史成片 <small id="remakeHistoryCount"></small></h2>
+          <div class="remake-history-list" id="remakeHistoryList" role="list" aria-label="历史生成视频"></div>
+        </section>
+        <section class="remake-panel remake-history-preview">
+          <h2><i data-lucide="projector"></i> 视频预览</h2>
+          <div class="remake-monitor"><div id="remakeHistoryEmpty"><i data-lucide="monitor-play"></i><span>选择一条历史成片</span></div><video id="remakeHistoryOutput" controls playsinline aria-label="历史视频预览" hidden></video></div>
+          <div class="remake-history-details" id="remakeHistoryDetails" hidden><strong id="remakeHistoryDuration"></strong><span id="remakeHistoryElapsed"></span><time id="remakeHistoryDate"></time><a class="button button-subtle" id="remakeHistoryDownload" download>下载视频</a></div>
+          <p class="remake-feedback" id="remakeHistoryFeedback" role="status">点击左侧视频记录即可预览。</p>
         </section>
       </div>
     </main>
@@ -273,8 +312,8 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
   <script src="/vendor/lucide.min.js?v=20260724-8"></script>
-  <script type="module" src="/app.js?v=20261124-home"></script>
-  <script type="module" src="/video-remake.js?v=workshop2"></script>
+  <script type="module" src="/app.js?v=wenwu-remake-gallery-source-fallback-20261127"></script>
+  <script type="module" src="/video-remake.js?v=wenwu-remake-gallery-source-fallback-20261127"></script>
 </body>
 </html>
 

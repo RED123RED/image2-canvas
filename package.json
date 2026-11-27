@@ -14,7 +14,9 @@
     "build:layer-export": "node scripts/build-layer-export.mjs",
     "test:local-edit": "node --test tests/local-edit.test.mjs tests/local-edit-api.test.mjs tests/local-edit-apply.test.mjs",
     "test:speech": "node --test tests/voice-clone.test.mjs",
-    "test:moss": "node --test tests/runninghub-moss.test.mjs"
+    "test:moss": "node --test tests/runninghub-moss.test.mjs",
+    "test:h3": "node --test tests/h3-wenwu.test.mjs",
+    "test:gemini-neon": "node --test tests/gemini-neon-api.test.mjs"
   },
   "engines": {
     "node": ">=20"

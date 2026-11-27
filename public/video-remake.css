@@ -25,6 +25,36 @@
   box-shadow: 0 5px 12px #000a; min-width: 0;
 }
 .workshop-mast { margin: 0 -8px 14px; min-height: 87px; display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 0 clamp(12px,2vw,34px); background: #241c14 url('/assets/workshop/iron.webp') center/cover; }
+.workshop-header-actions { display:flex;align-items:center;gap:8px; }
+.remake-gallery-dialog { width:min(1120px,calc(100vw - 32px));max-width:none;max-height:min(820px,calc(100dvh - 32px));padding:0;overflow:hidden;color:#f2dfc3;background:#211a15 url('/assets/workshop/iron.webp') center/cover;border:12px solid #5b402a;border-image:url('/assets/workshop/panel.webp') 19 stretch;box-shadow:0 18px 60px #000d; }
+.remake-gallery-dialog::backdrop { background:#080604d9;backdrop-filter:blur(4px); }
+.remake-gallery-shell { display:flex;flex-direction:column;min-height:min(650px,calc(100dvh - 80px));max-height:calc(100dvh - 80px);background:linear-gradient(110deg,#211a15ed,#1a1511f2); }
+.remake-gallery-header { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid #8c673e;background:#2118119e; }
+.remake-gallery-header h2 { margin:2px 0 0;color:#f5d39b;font:clamp(22px,2.2vw,32px) 'STSong','SimSun','Songti SC',serif; }
+.remake-gallery-eyebrow { color:#b99465;font-size:10px;letter-spacing:.2em; }
+.remake-gallery-content { display:grid;grid-template-columns:minmax(210px,.7fr) minmax(0,1.7fr);gap:12px;min-height:0;flex:1;padding:14px; }
+.remake-gallery-projects,.remake-gallery-images { display:flex;flex-direction:column;gap:10px;min-width:0;min-height:0;padding:12px;background:#231d18aa;border:1px solid #725436;box-shadow:inset 0 0 0 3px #110e0bb0,inset 0 0 0 4px #68513d; }
+.remake-gallery-projects h3,.remake-gallery-images h3 { margin:0;color:#e8c18a;font:18px 'STSong','SimSun','Songti SC',serif; }
+.remake-gallery-projects h3 { display:flex;align-items:center;gap:7px; }
+.remake-gallery-project-list { display:grid;align-content:start;gap:7px;overflow:auto;min-height:0; }
+.remake-gallery-project { display:grid;grid-template-columns:52px minmax(0,1fr);align-items:center;gap:9px;width:100%;padding:7px;text-align:left;color:#f2dfc3;background:#241d18d9;border:1px solid #725436;cursor:pointer; }
+.remake-gallery-project:hover,.remake-gallery-project[aria-selected="true"] { border-color:#e6b56f;background:#49331f;box-shadow:inset 0 0 10px #e6b56f22; }
+.remake-gallery-project img,.remake-gallery-project .remake-gallery-unavailable { width:52px;height:52px;object-fit:cover;border:1px solid #886642;background:#100e0d; }
+.remake-gallery-project span { display:grid;gap:4px;min-width:0; }
+.remake-gallery-project strong { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px; }
+.remake-gallery-project small,.remake-gallery-image small { color:#c3b29c;font-size:11px; }
+.remake-gallery-images-heading { display:flex;align-items:center;gap:10px;min-height:32px; }
+.remake-gallery-images-heading h3 { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.remake-gallery-images-heading small { margin-left:auto;color:#c3b29c;white-space:nowrap; }
+.remake-gallery-back { display:inline-flex;align-items:center;gap:4px;padding:5px 8px;color:#f4d9ae;background:#30251c;border:1px solid #8c673e;cursor:pointer;white-space:nowrap; }
+.remake-gallery-image-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));align-content:start;gap:9px;overflow:auto;min-height:0;flex:1;padding:2px; }
+.remake-gallery-image { display:flex;flex-direction:column;gap:5px;min-width:0;padding:5px;text-align:left;color:#f2dfc3;background:#241d18d9;border:1px solid #725436;cursor:pointer; }
+.remake-gallery-image:hover,.remake-gallery-image:focus-visible { border-color:#ffc377;box-shadow:0 0 12px #e6b56f55; }
+.remake-gallery-image img,.remake-gallery-image .remake-gallery-unavailable { width:100%;aspect-ratio:1;object-fit:cover;background:#100e0d; }
+.remake-gallery-unavailable { display:grid;place-items:center;box-sizing:border-box;padding:6px;color:#c3b29c;text-align:center;font-size:11px; }
+.remake-gallery-image strong { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:500; }
+.remake-gallery-feedback { margin:0;color:#c3b29c;font-size:12px; }
+.remake-gallery-empty { grid-column:1/-1;align-self:center;margin:auto;color:#c3b29c;text-align:center; }
 .workshop-name { display: flex; align-items: center; gap: 17px; }
 .workshop-camera { width: 80px; height: 61px; background: url('/assets/workshop/camera.webp') center/contain no-repeat; mix-blend-mode: lighten; }
 .workshop-name h1,.remake-panel h2,.remake-panel h3,#remakeBuild { font-family: 'STSong','SimSun','Songti SC',serif; }
@@ -33,6 +63,31 @@
 .remake-back,.workshop-exports .button,.remake-actions #remakeCancel,.remake-file button { color: #f4d9ae; background: linear-gradient(#51402d,#2d231c); border: 1px solid var(--edge); border-radius: 4px; cursor: pointer; }
 .remake-back { display:inline-flex;align-items:center;gap:6px;padding:7px 12px; }
 .remake-layout { display: grid; grid-template-columns: minmax(0,var(--media,24fr)) 10px minmax(0,var(--editor,40fr)) 10px minmax(0,var(--result,36fr)); align-items: stretch; min-height: clamp(580px,calc(100dvh - 125px),920px); }
+.remake-history-layout { display:grid;grid-template-columns:minmax(280px,.8fr) minmax(0,1.5fr);gap:12px;min-height:clamp(580px,calc(100dvh - 125px),920px); }
+.remake-history-panel,.remake-history-preview { display:flex;flex-direction:column;gap:14px; }
+.remake-history-panel h2 small { margin-left:auto;color:#c3b29c;font:12px Inter,"Microsoft YaHei",sans-serif; }
+.remake-history-list { display:grid;align-content:start;gap:8px;overflow:auto;min-height:0; }
+.remake-history-item { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:8px;padding:0;background:#241d18d9;border:1px solid #725436;color:#f2dfc3; }
+.remake-history-item:hover,.remake-history-item.selected { border-color:#e6b56f;background:#49331f;box-shadow:inset 0 0 10px #e6b56f22; }
+.remake-history-select { display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:9px;padding:10px;background:transparent;border:0;color:inherit;text-align:left;cursor:pointer;min-width:0; }
+.remake-history-select:focus-visible,.remake-history-remove:focus-visible { outline:2px solid #ffc377;outline-offset:-2px; }
+.remake-history-remove { display:inline-flex;align-items:center;justify-content:center;gap:4px;align-self:center;margin:0 8px 0 0;padding:6px 8px;background:#301d15;border:1px solid #8c6040;color:#e9bb7d;cursor:pointer;font-size:12px;white-space:nowrap; }
+.remake-history-remove:hover { background:#5a2b1d;border-color:#efae61;color:#ffe0b2; }
+.remake-history-remove:disabled { opacity:.55;cursor:wait; }
+.remake-history-remove svg { width:15px;height:15px; }
+.remake-history-icon { display:grid;place-items:center;width:38px;height:38px;color:#d7aa70;border:1px solid #886642;background:#17110d; }
+.remake-history-icon svg { width:23px;height:23px; }
+.remake-history-summary { display:grid;gap:4px;min-width:0; }
+.remake-history-summary strong { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.remake-history-summary small,.remake-history-item-elapsed { color:#c3b29c;font-size:11px; }
+.remake-history-duration { color:#f0c27f;font-size:13px;white-space:nowrap; }
+.remake-history-item-elapsed { grid-column:2 / -1; }
+.remake-history-empty { padding:16px;color:#c3b29c;text-align:center; }
+.remake-history-preview .remake-monitor { flex:1;min-height:300px;aspect-ratio:auto; }
+#remakeHistoryOutput { position:absolute;width:100%;height:100%;object-fit:contain; }
+.remake-history-details { display:flex;align-items:center;gap:16px;flex-wrap:wrap;color:#e5c99e;font-size:12px; }
+.remake-history-details time { margin-left:auto;color:#c3b29c; }
+.remake-history-preview .remake-feedback { text-align:left; }
 .remake-panel { padding: clamp(8px,1.05vw,19px); position: relative; }
 .workshop-split { position:relative;cursor:col-resize;touch-action:none;user-select:none;background:linear-gradient(90deg,#0c0908,#624427 44%,#2b2118 57%,#100d0a); }
 .workshop-split::after { content:'';position:absolute;top:45%;left:2px;width:6px;height:57px;border-radius:4px;background:repeating-linear-gradient(#ae8857 0 1px,#503c29 2px 5px); }
@@ -56,12 +111,22 @@
 .remake-thumbs img { display:block;width:100%;aspect-ratio:3/4;object-fit:cover;border:1px solid #b39670;border-radius:4px; }
 .remake-thumbs button { position:absolute;right:2px;top:2px;background:#211811eb;color:white;border:1px solid #a78861;border-radius:50%;cursor:pointer; }
 .workshop-editor,.remake-result { display:flex;flex-direction:column;gap:15px; }
+.remake-prompt-wrap { position:relative;display:flex;flex:0 0 auto;min-height:0; }
+.remake-prompt { box-sizing:border-box;flex:1 1 0;min-width:0;height:clamp(230px,54vh,620px);min-height:0;max-height:none;width:100%;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;outline:none;resize:none;color:#fff2d8;background:linear-gradient(120deg,#302720,#241f1c);padding:18px;font:inherit;font-size:16px;line-height:1.75;border:3px ridge #907048;border-radius:6px; }
+.remake-prompt:empty::before { content:attr(data-placeholder);color:#ae9e8b;pointer-events:none; }
+.remake-image-mention { display:inline-flex;vertical-align:middle;align-items:center;gap:4px;margin:0 2px;padding:2px 5px 2px 2px;color:#f5ddba;background:#34271b;border:1px solid #b08a59;border-radius:4px;white-space:nowrap;user-select:all; }
+.remake-image-mention img { width:24px;height:24px;object-fit:cover;border-radius:2px; }
+.remake-image-mention strong { color:#f2bf77;font-size:12px; }
+.remake-mention-menu { position:absolute;z-index:20;left:10px;top:10px;width:min(340px,calc(100% - 20px));max-height:min(300px,45%);overflow:auto;padding:7px;background:#211811f5;border:1px solid #c49a68;border-radius:6px;box-shadow:0 8px 24px #0009; }
+.remake-mention-menu[hidden] { display:none; }
+.remake-mention-menu button { width:100%;display:flex;align-items:center;gap:10px;padding:6px;background:transparent;color:#f1ddc1;text-align:left;border:0;border-radius:4px;cursor:pointer; }
+.remake-mention-menu button:hover,.remake-mention-menu button[aria-selected="true"] { background:#735434; }
+.remake-mention-menu img { width:38px;height:42px;object-fit:cover;border:1px solid #b39670;border-radius:3px; }
+.remake-mention-menu strong { min-width:30px;color:#e9b76e; }
 .remake-panel h2 { display:flex;align-items:center;gap:12px;margin:0;color:var(--gold);font-size:clamp(20px,2vw,32px);padding:0 4px 10px;border-bottom:1px solid var(--edge);text-shadow:0 2px #160e07; }
-#remakePrompt { flex:1;min-height:190px;width:100%;resize:none;color:#fff2d8;background:linear-gradient(120deg,#302720,#241f1c);padding:18px;font:inherit;font-size:16px;line-height:1.75;border:3px ridge #907048;border-radius:6px; }
-#remakePrompt::placeholder { color:#ae9e8b; }
 .workshop-settings { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:13px 9px; }
 .workshop-settings label { display:grid;gap:6px;font-size:12px;color:#dbc4a4; }
-.workshop-settings select { min-width:0;width:100%;color:#f2dfc4;background:#33281e;border:1px solid #896842;border-radius:4px;padding:6px 2px; }
+.workshop-settings select,.workshop-settings input { min-width:0;width:100%;color:#f2dfc4;background:#33281e;border:1px solid #896842;border-radius:4px;padding:6px 8px; }
 .remake-actions { justify-content:center; }
 #remakeBuild { border:0;background:#432811 url("/assets/workshop/button.webp") center / 100% 100% no-repeat;box-shadow:inset 0 0 12px #ec943455,0 2px 8px #cd813d55;color:#ffe0a0;min-height:66px;min-width:78%;font-size:clamp(18px,1.6vw,26px);letter-spacing:.05em; }
 #remakeBuild:disabled { filter:saturate(.5);opacity:.65; }
@@ -69,6 +134,12 @@
 .remake-feedback,.remake-note,.workshop-exports small { font-size:12px;color:#c3b29c;line-height:1.6;margin:0; }
 .remake-feedback { text-align:center; }
 .remake-result { isolation:isolate; }
+.remake-result-inspector { position:relative;display:block;flex:1;min-height:80px; }
+.remake-result-inspector #remakeRewrite { position:relative;z-index:2;width:100%;min-width:0;min-height:24px;height:100%; }
+.remake-result-inspector #remakeRewrite[open] { z-index:5; }
+.remake-result-inspector #remakeRewrite summary { padding-right:125px;cursor:pointer; }
+.remake-result-inspector #remakeRewrite pre { position:absolute;inset:30px 0 0;box-sizing:border-box;width:100%;overflow:auto;margin:0;padding:12px;color:#fff2d8;background:#211a15;border:1px solid #a27a4c;border-radius:4px;box-shadow:0 8px 20px #000b;white-space:pre-wrap;overflow-wrap:anywhere; }
+.remake-result-inspector #remakeElapsed { position:absolute;top:0;right:0;z-index:3;text-align:right;color:#e5c99e;font-size:12px; }
 .remake-result::after { content:'';position:absolute;z-index:-1;inset:auto 0 0 auto;width:83%;height:24%;background:url('/assets/workshop/gears.webp') bottom right/contain no-repeat;mask-image:linear-gradient(to right,transparent,#000 38%);opacity:.85; }
 .remake-monitor { display:grid;place-items:center;position:relative;overflow:hidden;aspect-ratio:4/3;min-height:180px;background:radial-gradient(#241f1a,#080706 85%);border:6px ridge #9a7346;border-radius:7px;box-shadow:0 4px 12px #060403; }
 #remakeEmpty { display:grid;gap:10px;justify-items:center;color:#b79a74; }
@@ -78,5 +149,6 @@
 .remake-note { order:2;max-width:38em; }
 .workshop-exports small { margin-left:auto; }
 @media(min-width:901px) and (max-width:1180px) { .workshop-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-@media(max-width:900px) { .remake-layout { display:flex;flex-direction:column;gap:12px; } .workshop-split { display:none; } .remake-sources { grid-template-columns:repeat(2,minmax(0,1fr));gap:10px; } .remake-result::after { display:none; } .remake-monitor { aspect-ratio:16/9; } }
-@media(max-width:540px) { .workshop-camera { width:44px;height:42px; } .workshop-name { gap:5px; } .remake-sources { grid-template-columns:1fr; } .workshop-mast { padding:0 2px; } .workshop-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:900px) { .remake-layout { display:flex;flex-direction:column;gap:12px; } .remake-history-layout { grid-template-columns:1fr;min-height:0; } .remake-history-panel { max-height:45vh; } .remake-history-preview .remake-monitor { min-height:clamp(230px,48vh,500px); } .workshop-split { display:none; } .remake-sources { grid-template-columns:repeat(2,minmax(0,1fr));gap:10px; } .remake-result::after { display:none; } .remake-monitor { aspect-ratio:16/9; } }
+@media(max-width:700px) { .remake-gallery-dialog { width:calc(100vw - 16px);max-height:calc(100dvh - 16px);border-width:7px; } .remake-gallery-shell { min-height:calc(100dvh - 54px);max-height:calc(100dvh - 54px); } .remake-gallery-content { grid-template-columns:1fr;grid-template-rows:minmax(125px,.55fr) minmax(0,1.45fr);padding:8px; } .remake-gallery-project-list { grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); } .remake-gallery-project { grid-template-columns:40px minmax(0,1fr); } .remake-gallery-project img { width:40px;height:40px; } }
+@media(max-width:540px) { .workshop-camera { width:44px;height:42px; } .workshop-name { gap:5px; } .remake-sources { grid-template-columns:1fr; } .workshop-mast { padding:0 2px; } .workshop-header-actions { gap:4px; } .workshop-header-actions .remake-back { padding:6px 7px;font-size:11px; } .workshop-settings { grid-template-columns:repeat(2,minmax(0,1fr)); } .remake-history-details { gap:8px; } .remake-history-details time { width:100%;margin-left:0; } .remake-gallery-header { padding:10px; } .remake-gallery-image-grid { grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:6px; } }

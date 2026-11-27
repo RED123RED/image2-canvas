@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import os from "node:os";
-import {createHash} from 'node:crypto';
+import {createHash, randomBytes} from 'node:crypto';
 import {localEditProtocol,buildLocalEditPayload} from './public/local-edit-document.js';
 import { layerProtocol, buildLayerPayload, createLayerDocument } from './public/layer-document.js';
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,7 @@ const maxAudioUploadBytes = 512 * 1024 * 1024;
 const jobsPath = path.join(outputDir, "image2-generation-jobs.json");
 const generationLogPath = path.join(outputDir, "image2-generation.log");
 const port = Number(process.env.PORT || 45173);
+const internalAnswerToken = randomBytes(32).toString("hex");
 const baseUrl = (process.env.IMAGE2_BASE_URL || "https://rehdasu.cn/v1").replace(/\/$/, "");
 const image2Models = Object.freeze([
   "gpt-image-2",
@@ -1149,6 +1150,67 @@ async function uploadRunningHubResource(apiKey, sourceValue, index, kind) {
   return fileName;
 }
 
+async function rewriteRemakePrompt(job) {
+  const { prompt, references, videoReference, frames, seconds, aspect, rewriterModel, rewriterKey, rewriterHeader } = job.request;
+  const mode = job.remakeMode;
+  const promptWithSettings = JSON.stringify({
+    request: prompt,
+    aspect,
+    seconds,
+    imageReferenceSyntax: 'In the user request, @1, @2, and so on refer to the matching uploaded image labels <Picture 1>, <Picture 2>, and so on. Preserve this mapping exactly when describing which reference controls a subject or object.'
+  });
+  const allReferences = [...references, ...frames.map(frame => frame.image)];
+  const referenceLabels = [
+    ...references.map((_, index) => `<Picture ${index + 1}>`),
+    ...frames.map(frame => `<Video 1> sample at ${frame.seconds} seconds`)
+  ];
+  const videoGuide = videoReference ? ' The timestamped stills are samples of one reference video, not additional reference pictures. Infer only visible action and composition. Do not claim to have heard its audio or transcribe it.' : '';
+  const address = server.address();
+  if (!address || typeof address === "string") throw gatewayError(503, "本机模型回答服务尚未就绪");
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/respond`, {
+    method: 'POST',
+    body: JSON.stringify({ model: rewriterModel, prompt: promptWithSettings + videoGuide, references: allReferences, referenceLabels, skill: "minimax-h3", h3Mode: mode, durationSeconds: seconds, videoRemake: true }),
+    headers: { "Content-Type": "application/json", [rewriterHeader]: rewriterKey, "x-image2-internal-token": internalAnswerToken },
+    signal: AbortSignal.timeout(210_000)
+  });
+  const responseBody = await response.json().catch(() => ({}));
+  if (!response.ok) throw gatewayError(response.status, responseBody.error || `${rewriterModel} 整理提示词失败（HTTP ${response.status}）`);
+  const answer = String(responseBody.answer || "").trim();
+  if (!answer) throw gatewayError(502, `${rewriterModel} 没有返回 H3 提示词`);
+  if (job.cancelRequested) throw Object.assign(Error('任务已取消'), { code: 'CANCELED' });
+  job.h3Prompt = answer;
+  job.request.prompt = answer;
+  job.remakeStage = 'generating';
+  await persistJobs();
+}
+
+async function createRemakeJob(req, res) {
+  let body;
+  try { body = await readJson(req); } catch { return sendJson(res, 400, { error: '请求过大或格式错误' }); }
+  if (!body || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.requestId)) return sendJson(res, 400, { error: '任务编号无效' });
+  const image = value => typeof value === 'string' && value.length <= 4 * 1024 * 1024 && /^data:image\/(jpeg|png|webp);base64,[a-z0-9+/=]+$/i.test(value);
+  if (!Array.isArray(body.references) || body.references.length > 9 || !body.references.every(image)) return sendJson(res, 400, { error: '最多 9 张有效参考图，每张编码后须在 4 MiB 内' });
+  if (!Array.isArray(body.frames) || body.frames.length > 3 || Boolean(body.frames.length) !== Boolean(body.videoReference) || !body.frames.every(f => f && Number.isFinite(f.seconds) && f.seconds >= 0 && image(f.image))) return sendJson(res, 400, { error: '参考视频需要有效的带时间戳抽帧' });
+  if (!Number.isInteger(body.seconds) || body.seconds < 5 || body.seconds > 30) return sendJson(res, 400, { error: '视频时长无效' });
+  const rewriterModels = new Map([
+    ["gpt-6-astra", { vision: true, header: "x-image2-api-key", resolve: () => resolveApiKey(req) }],
+    [geminiNeonModel, { vision: false, header: "x-gemini-neon-api-key", resolve: () => resolveGeminiNeonApiKey(req) }],
+    [deepseekVisionModel, { vision: true, header: "x-deepseek-api-key", resolve: () => resolveDeepseekApiKey(req) }],
+    [deepseekModels.find(model => model !== deepseekVisionModel), { vision: false, header: "x-deepseek-api-key", resolve: () => resolveDeepseekApiKey(req) }],
+    ...claudeModels.map(model => [model, { vision: true, header: "x-claude-api-key", resolve: () => resolveClaudeApiKey(req) }]),
+    ["kimi-k3-moyu", { vision: true, header: "x-kimi-moyu-api-key", resolve: () => resolveKimiApiKey(req, "kimi-k3-moyu") }],
+    ["kimi-k3-moonshot", { vision: true, header: "x-kimi-api-key", resolve: () => resolveKimiApiKey(req, "kimi-k3-moonshot") }],
+    [kimiPlanModel, { vision: true, header: "x-ark-plan-api-key", resolve: () => resolveArkApiKey(req, "ark-plan") }]
+  ]);
+  const rewriter = rewriterModels.get(String(body.rewriterModel || ""));
+  if (!rewriter) return sendJson(res, 400, { error: '请选择画布中的文本模型' });
+  if ((body.references.length || body.frames.length) && !rewriter.vision) return sendJson(res, 400, { error: '所选文本模型不支持图片参考，请改用支持视觉输入的模型' });
+  const rewriterKey = await rewriter.resolve();
+  if (!rewriterKey) return sendJson(res, 401, { error: `未配置 ${body.rewriterModel} 的 API Key，请在设置中保存密钥` });
+  if (!String(body.prompt || '').trim() && !body.references.length && !body.videoReference) return sendJson(res, 400, { error: '请填写提示词或添加参考素材' });
+  return createRunningHubJob(req, res, { ...body, videoMode: 'wenwu', multiple: 32, prompt: String(body.prompt || '').trim() || '根据参考素材创作短视频。' }, true, { key: rewriterKey, header: rewriter.header });
+}
+
 async function requestRunningHubGeneration(job) {
   const { apiKey, prompt, seconds, workflowId, imageNodes, videoNode, audioNode, aspect, megapixels, references = [], videoReference = "", audioReference = "" } = job.request;
   const wenwu = workflowId === runningHubVideoWorkflows.wenwu.id;
@@ -1183,6 +1245,8 @@ async function requestRunningHubGeneration(job) {
     nodeInfoList.push(runningHubNodeInfo(runningHubVideoWorkflows.wenwu.secondAudioNode, "audio", uploaded));
   }
   const headers = { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": job.id };
+  if (job.cancelRequested) throw Object.assign(Error('任务已取消'), { code: 'CANCELED' });
+  if (job.remakeStage) job.remakeStage = 'submitting';
   const submitResponse = await fetch(`${runningHubBaseUrl}/openapi/v2/run/workflow/${workflowId}`, {
     method: "POST",
     headers,
@@ -1327,6 +1391,12 @@ async function executeJob(job) {
   await persistJobs();
   await writeJobLog(job, "started");
   try {
+    if (job.remakeStage === 'rewriting') await rewriteRemakePrompt(job);
+    if (job.cancelRequested) throw Object.assign(Error('任务已取消'), { code: 'CANCELED' });
+    if (job.remakeStage === 'generating') {
+      job.videoStartedAt = Date.now();
+      await persistJobs();
+    }
     const result = isArkProvider(job.provider) ? await requestArkGeneration(job) : job.provider === "runninghub-h3" ? await requestRunningHubGeneration(job) : job.provider === "runninghub-krea2" ? await requestRunningHubKrea2Generation(job) : job.provider === "runninghub-moss" ? await requestRunningHubMossGeneration(job) : job.kind === "midjourney-upscale" ? await requestMjUpscale(job) : job.provider === "midjourney" ? await requestMjGeneration(job) : job.provider === "moyu" ? await requestSeedreamGeneration(job) : await requestImage2Generation(job);
     if (result.mediaType === "video") job.media = await Promise.all(result.items.map((item, index) => persistGeneratedMedia(job, item, index)));
     else job.images = await Promise.all(result.items.map((item, index) => persistGeneratedImage(job, item, index)));
@@ -1347,6 +1417,7 @@ async function executeJob(job) {
     job.error = job.status === "canceled" ? (job.provider === "runninghub-krea2" ? "K2 白玉任务已停止" : job.provider === "runninghub-moss" ? "MOSS 任务已停止" : "视频任务已停止") : failure.message;
     job.finishedAt = Date.now();
   } finally {
+    if (job.videoStartedAt && job.finishedAt) job.videoElapsedMs = Math.max(0, job.finishedAt - job.videoStartedAt);
     delete job.request;
     await persistJobs();
     await writeJobLog(job, job.status === "succeeded" ? "completed" : job.status === "canceled" ? "canceled" : "failed");
@@ -1359,6 +1430,7 @@ async function cancelJob(req, res, jobId) {
   const taskLabel = job?.provider === "runninghub-krea2" ? "K2 白玉" : job?.provider === "runninghub-moss" ? "MOSS" : "视频";
   if (!job || !cancelable) return sendJson(res, 404, { error: `${taskLabel}任务不存在` });
   if (["succeeded", "failed", "canceled"].includes(job.status)) return sendJson(res, 200, { job: jobView(job), canceled: job.status === "canceled" });
+  if (job.remakeStage === 'submitting' && !job.remoteTaskId && !job.runningHub?.taskId) return sendJson(res, 409, { error: '正在接收远端任务编号，请稍后再取消' });
   job.cancelRequested = true;
   const remoteTaskId = job.remoteTaskId || job.runningHub?.taskId || "";
   try {
@@ -1369,6 +1441,7 @@ async function cancelJob(req, res, jobId) {
       if (!response.ok || Number(result?.code) !== 0) throw runningHubRequestError("取消任务", response.status, result, raw, "RunningHub 任务取消失败");
     }
     job.status = "canceled"; job.errorCode = "CANCELED"; job.error = `${taskLabel}任务已停止`; job.finishedAt = Date.now();
+    if (job.videoStartedAt) job.videoElapsedMs = Math.max(0, job.finishedAt - job.videoStartedAt);
     await persistJobs(); await writeJobLog(job, "canceled");
     return sendJson(res, 200, { job: jobView(job), canceled: true });
   } catch (error) {
@@ -1541,7 +1614,7 @@ async function createMjUpscaleJob(req, res, parentJobId) {
   }
 }
 
-async function createRunningHubJob(req, res, body) {
+async function createRunningHubJob(req, res, body, remake = false, remakeAuth = {}) {
   try {
     const apiKey = await resolveRunningHubApiKey(req);
     if (!apiKey) return sendJson(res, 401, { error: "未配置 RunningHub API Key，请在设置中保存密钥" });
@@ -1574,6 +1647,16 @@ async function createRunningHubJob(req, res, body) {
     }
     if (wenwu && body.videoReference && !videoReference) return sendJson(res, 400, { error: "参考视频地址无效，请重新选择视频" });
     const job = { id: `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, status: "queued", createdAt: Date.now(), provider: "runninghub-h3", model: `H3 workflow ${workflow.id}`, mediaType: "video", imageCount: 1, videoMode, videoAspect: aspect, videoMegapixels: megapixels, videoSeconds: seconds, request: { apiKey, prompt, seconds, workflowId: workflow.id, imageNodes: workflow.imageNodes, videoNode: workflow.videoNode, audioNode: workflow.audioNode, aspect, aspectLabel, megapixels, multiple, references, videoReference, audioReference, secondAudioReference } };
+    if (remake) {
+      job.id = 'job-remake-' + body.requestId;
+      job.requestHash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+      const previous = jobs.get(job.id);
+      if (previous) return previous.requestHash === job.requestHash ? sendJson(res, 200, { job: jobView(previous) }) : sendJson(res, 409, { error: '该任务编号已用于另一组素材' });
+      job.remakeStage = 'rewriting';
+      job.remakeMode = references.length || videoReference ? 'ref2va' : 't2va';
+      job.rewriterModel = body.rewriterModel;
+      Object.assign(job.request, { rewriterModel: body.rewriterModel, rewriterKey: remakeAuth.key, rewriterHeader: remakeAuth.header, frames: body.frames });
+    }
     jobs.set(job.id, job); pendingJobIds.push(job.id); await persistJobs(); await writeJobLog(job, "queued"); sendJson(res, 202, { job: jobView(job) }); void drainJobs();
   } catch (error) {
     const failure = classifyError(error); sendJson(res, failure.code === "REQUEST" ? 400 : 500, { error: failure.message, code: failure.code });
@@ -2027,6 +2110,8 @@ function h3PromptSystemInstruction(mode, durationSeconds) {
 async function createResponse(req, res) {
   try {
     const body = await readJson(req);
+    const internalVideoRemake = body.videoRemake === true && req.headers["x-image2-internal-token"] === internalAnswerToken;
+    if (body.videoRemake === true && !internalVideoRemake) return sendJson(res, 403, { error: "模板提示词整理请求无效" });
     const prompt = String(body.prompt || "").trim();
     if (!prompt) return sendJson(res, 400, { error: "请连接并填写至少一个提示词节点" });
     const rawRequestedModel = String(body.model || "gpt-5.6");
@@ -2042,10 +2127,10 @@ async function createResponse(req, res) {
     const apiKey = isKimiPlan ? await resolveArkApiKey(req, 'ark-plan') : isGeminiNeon ? await resolveGeminiNeonApiKey(req) : isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : isKimi ? await resolveKimiApiKey(req, selectedModel) : await resolveApiKey(req);
     if (isKimiPlan && !apiKey) return sendJson(res, 401, {error: "未配置火山 Agent Plan 套餐密钥，请在设置中保存"});
     if (isGeminiNeon && !apiKey) return sendJson(res, 401, {error: "未配置 Gemini 4 Neon API Key，请在设置中保存"});
-    if (isKimiPlan && (body.references !== undefined && !Array.isArray(body.references) || (body.references || []).length > 8)) return sendJson(res, 400, {error: "火山套餐 Kimi 节点最多支持 8 张参考图"});
+    if (isKimiPlan && (body.references !== undefined && !Array.isArray(body.references) || (body.references || []).length > (internalVideoRemake ? 12 : 8))) return sendJson(res, 400, {error: internalVideoRemake ? "模板最多支持 12 张图片参考" : "火山套餐 Kimi 节点最多支持 8 张参考图"});
     if (isKimiPlan && (body.references || []).some(value => typeof value !== 'string' || !/^data:image[/](png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value) || value.length > 4 * 1024 * 1024)) return sendJson(res, 400, {error: "Kimi 参考图需为 PNG/JPEG/WebP，编码后每张不超过 4MB；请刷新画布后重试"});
     if (!apiKey) return sendJson(res, 401, { error: isDeepseek ? "未配置 DeepSeek API Key，请在设置中保存密钥" : isClaude ? "未配置 Claude API Key，请在设置中保存密钥" : isKimi ? `未配置 ${kimiGatewayForModel(selectedModel) === "moyu" ? "魔芋 AI" : "Moonshot 官方"} Kimi API Key，请在设置中保存密钥` : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
-    const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, 8);
+    const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, internalVideoRemake ? 12 : 8);
     if (isGeminiNeon && references.length) return sendJson(res, 400, { error: "当前 Gemini 4 Neon 网关尚未通过图片输入验证，请使用文本问答" });
     if (isDeepseek && references.length && textModel !== deepseekVisionModel) return sendJson(res, 400, { error: "当前 DeepSeek 模型不支持图片输入，请切换到 DeepSeek V4.1 Flash" });
     const usingH3Skill = body.skill === "minimax-h3";
@@ -2059,9 +2144,20 @@ async function createResponse(req, res) {
     const durationSeconds = Math.min(30, Math.max(3, Math.round(Number(body.durationSeconds) || 6)));
     const adDurationSeconds = Math.min(usingBrandPromoVideoSkill ? 30 : 15, Math.max(3, Math.round(Number(body.adDurationSeconds) || (usingMinimalistProductAdSkill ? 10 : 15))));
     const content = [{ type: "text", text: prompt }];
-    references.forEach(url => content.push({ type: "image_url", image_url: isKimi || isKimiPlan ? { url } : { url, detail: "auto" } }));
+    references.forEach((url, index) => {
+      const label = internalVideoRemake ? String(body.referenceLabels?.[index] || `<Picture ${index + 1}>`) : "";
+      if (label) content.push({ type: "text", text: label });
+      content.push({ type: "image_url", image_url: isKimi || isKimiPlan ? { url } : { url, detail: "auto" } });
+    });
     if (isClaude) {
-      const claudeContent = [...references.map(claudeImageContentFromDataUrl).filter(Boolean), { type: "text", text: prompt }];
+      const claudeContent = [];
+      references.forEach((url, index) => {
+        const label = internalVideoRemake ? String(body.referenceLabels?.[index] || `<Picture ${index + 1}>`) : "";
+        if (label) claudeContent.push({ type: "text", text: label });
+        const image = claudeImageContentFromDataUrl(url);
+        if (image) claudeContent.push(image);
+      });
+      claudeContent.push({ type: "text", text: prompt });
       const claudeRequestBody = {
         model: textModel,
         max_tokens: 16_384,
@@ -2191,6 +2287,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/local-edit/status') return sendJson(res,200,{protocol:localEditProtocol,ready:Boolean(await resolveArkApiKey(req,'ark-plan'))});
   if (req.method === 'POST' && url.pathname === '/api/local-edit') return createLocalEditJob(req,res);
   if (req.method === "POST" && url.pathname === "/api/layers/decompose") return createLayerJob(req, res);
+  if (req.method === "POST" && url.pathname === "/api/templates/video-remake") return createRemakeJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/generate") return createJob(req, res);
   if (req.method === "POST" && url.pathname === "/api/respond") return createResponse(req, res);
   if (req.method === "POST" && url.pathname === "/api/generated/delete") return deleteGeneratedImages(req, res);

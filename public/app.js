@@ -135,6 +135,28 @@ const answerModelOptions = Object.freeze([
   { value: "kimi-k3-moonshot", label: "Kimi K3 · Moonshot 官方", provider: "kimi", vision: true },
   { value: "kimi-k3.1-pro", label: "火山套餐 · Kimi K3.1 Pro", provider: "ark-plan-answer", vision: true }
 ]);
+export const videoRemakeModelOptions = Object.freeze(answerModelOptions.map(({ value, label, vision }) => ({ value, label, vision })));
+
+export async function readVideoRemakeGalleryProjects() {
+  const projects = await dbGetAll("projects");
+  return projects.filter(project => project?.id).map(project => ({
+    id: String(project.id),
+    name: String(project.projectName || "未命名项目"),
+    updatedAt: Number(project.updatedAt) || 0,
+    images: (Array.isArray(project.nodes) ? project.nodes : [])
+      .filter(node => node?.type === "image" && typeof (node.src || node.previewSrc) === "string" && (node.src || node.previewSrc))
+      .map(node => ({
+        id: String(node.id || ""),
+        name: String(node.name || "画布图片"),
+        src: String(node.src || node.previewSrc),
+        previewSrc: String(node.previewSrc || node.src),
+        originalSrc: String(node.originalSrc || ""),
+        sources: [...new Set([node.previewSrc, node.src, node.originalSrc].filter(value => typeof value === "string" && value))],
+        width: Number(node.imageWidth || node.width) || 0,
+        height: Number(node.imageHeight || node.height) || 0
+      }))
+  })).filter(project => project.images.length).sort((a, b) => b.updatedAt - a.updatedAt);
+}
 const deepseekAnswerModels = Object.freeze(answerModelOptions.filter(option => option.provider === "deepseek").map(option => option.value));
 const deepseekVisionAnswerModel = "deepseek-flash";
 const deepseekModelAliases = Object.freeze({
@@ -407,6 +429,9 @@ const generationPollFailures = new Map();
 let generationElapsedClock = null;
 let apiKey = "";
 let runningHubApiKey = "";
+export function remakeAuthHeaders() {
+  return { ...(apiKey && { 'x-image2-api-key': apiKey }), ...(runningHubApiKey && { 'x-runninghub-api-key': runningHubApiKey }) };
+}
 let isGenerating = false;
 let projectSearch = "";
 let projectOpeningId = null;
