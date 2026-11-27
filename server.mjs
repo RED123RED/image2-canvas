@@ -72,6 +72,8 @@ const kimiModels = Object.freeze(["kimi-k3-moyu", "kimi-k3-moonshot"]);
 const kimiDefaultModel = "kimi-k3-moonshot";
 const kimiModelAliases = Object.freeze({ "kimi-k3": kimiDefaultModel });
 const openAiChatModels = Object.freeze(["gpt-5.6", "gpt-6-astra"]);
+const geminiNeonBaseUrl = (process.env.GEMINI_NEON_BASE_URL || "https://sapi.zly168.cn/v1").replace(/\/$/, "");
+const geminiNeonModel = "gemini-4-neon";
 function normalizeKimiModel(value) {
   const candidate = String(value || "").trim();
   return kimiModelAliases[candidate] || candidate;
@@ -669,6 +671,14 @@ async function resolveKimiApiKey(req, model = kimiDefaultModel) {
   const config = await readProviderConfig();
   const configuredKey = gateway === "moyu" ? config?.kimi?.moyuApiKey : config?.kimi?.moonshotApiKey || config?.kimi?.apiKey;
   return typeof configuredKey === "string" ? configuredKey.trim() : "";
+}
+
+async function resolveGeminiNeonApiKey(req) {
+  const explicit = req.headers["x-gemini-neon-api-key"];
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  if (process.env.GEMINI_NEON_API_KEY) return process.env.GEMINI_NEON_API_KEY.trim();
+  const config = await readProviderConfig();
+  return typeof config?.geminiNeon?.apiKey === "string" ? config.geminiNeon.apiKey.trim() : "";
 }
 
 function normalizeKimiBaseUrl(value) {
@@ -1640,6 +1650,35 @@ async function checkDeepseekGateway(req, res) {
   }
 }
 
+async function checkGeminiNeonGateway(req, res) {
+  const apiKey = await resolveGeminiNeonApiKey(req);
+  if (!apiKey) return sendJson(res, 401, { ready: false, gateway: "missing_key", message: "未配置 Gemini 4 Neon API Key" });
+  try {
+    const response = await fetch(`${geminiNeonBaseUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw gatewayError(response.status, "Gemini 4 Neon 网关鉴权失败");
+    const result = await response.json().catch(() => ({}));
+    const listedModels = Array.isArray(result.data) ? new Set(result.data.map(item => item?.id)) : null;
+    const available = !listedModels || listedModels.has(geminiNeonModel) || listedModels.has(`${geminiNeonModel}-enterprise`);
+    return sendJson(res, available ? 200 : 502, { ready: available, gateway: available ? "ready" : "model_unavailable", model: geminiNeonModel, baseUrl: geminiNeonBaseUrl, checkedAt: Date.now() });
+  } catch (error) {
+    const failure = classifyError(error);
+    return sendJson(res, 502, { ready: false, gateway: failure.code.toLowerCase(), message: failure.message, checkedAt: Date.now() });
+  }
+}
+
+async function saveGeminiNeonProvider(req, res) {
+  try {
+    const body = await readJson(req, 64 * 1024);
+    const apiKey = String(body.apiKey || "").trim();
+    if (!apiKey) return sendJson(res, 400, { error: "Gemini 4 Neon API Key 不能为空" });
+    const previous = await readProviderConfig();
+    await saveProviderConfig({ ...previous, geminiNeon: { ...(previous.geminiNeon || {}), apiKey, baseUrl: geminiNeonBaseUrl, model: geminiNeonModel, updatedAt: Date.now() } });
+    return sendJson(res, 200, { ready: true, provider: "gemini-neon", model: geminiNeonModel, baseUrl: geminiNeonBaseUrl });
+  } catch (error) {
+    return sendJson(res, 400, { error: error?.message || "Gemini 4 Neon 设置保存失败" });
+  }
+}
+
 async function checkClaudeGateway(req, res) {
   const apiKey = await resolveClaudeApiKey(req);
   if (!apiKey) return sendJson(res, 401, { ready: false, gateway: "missing_key", message: "未配置 Claude API Key" });
@@ -1997,14 +2036,17 @@ async function createResponse(req, res) {
     const isClaude = claudeModels.includes(requestedModel);
     const isKimi = kimiModels.includes(normalizedKimiModel);
     const isKimiPlan = requestedModel === kimiPlanModel;
+    const isGeminiNeon = requestedModel === geminiNeonModel;
     const selectedModel = isKimi ? normalizedKimiModel : requestedModel;
-    const textModel = isKimiPlan ? kimiPlanModel : isKimi ? kimiApiModel : isDeepseek || isClaude ? requestedModel : openAiChatModels.includes(requestedModel) ? requestedModel : "gpt-5.6";
-    const apiKey = isKimiPlan ? await resolveArkApiKey(req, 'ark-plan') : isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : isKimi ? await resolveKimiApiKey(req, selectedModel) : await resolveApiKey(req);
+    const textModel = isKimiPlan ? kimiPlanModel : isGeminiNeon ? geminiNeonModel : isKimi ? kimiApiModel : isDeepseek || isClaude ? requestedModel : openAiChatModels.includes(requestedModel) ? requestedModel : "gpt-5.6";
+    const apiKey = isKimiPlan ? await resolveArkApiKey(req, 'ark-plan') : isGeminiNeon ? await resolveGeminiNeonApiKey(req) : isDeepseek ? await resolveDeepseekApiKey(req) : isClaude ? await resolveClaudeApiKey(req) : isKimi ? await resolveKimiApiKey(req, selectedModel) : await resolveApiKey(req);
     if (isKimiPlan && !apiKey) return sendJson(res, 401, {error: "未配置火山 Agent Plan 套餐密钥，请在设置中保存"});
+    if (isGeminiNeon && !apiKey) return sendJson(res, 401, {error: "未配置 Gemini 4 Neon API Key，请在设置中保存"});
     if (isKimiPlan && (body.references !== undefined && !Array.isArray(body.references) || (body.references || []).length > 8)) return sendJson(res, 400, {error: "火山套餐 Kimi 节点最多支持 8 张参考图"});
     if (isKimiPlan && (body.references || []).some(value => typeof value !== 'string' || !/^data:image[/](png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value) || value.length > 4 * 1024 * 1024)) return sendJson(res, 400, {error: "Kimi 参考图需为 PNG/JPEG/WebP，编码后每张不超过 4MB；请刷新画布后重试"});
     if (!apiKey) return sendJson(res, 401, { error: isDeepseek ? "未配置 DeepSeek API Key，请在设置中保存密钥" : isClaude ? "未配置 Claude API Key，请在设置中保存密钥" : isKimi ? `未配置 ${kimiGatewayForModel(selectedModel) === "moyu" ? "魔芋 AI" : "Moonshot 官方"} Kimi API Key，请在设置中保存密钥` : "未找到 API Key，请在设置中临时输入，或在启动前设置 OPENAI_API_KEY" });
     const references = (Array.isArray(body.references) ? body.references : []).filter(item => /^data:image\/(png|jpeg|webp);base64,/i.test(String(item || ""))).slice(0, 8);
+    if (isGeminiNeon && references.length) return sendJson(res, 400, { error: "当前 Gemini 4 Neon 网关尚未通过图片输入验证，请使用文本问答" });
     if (isDeepseek && references.length && textModel !== deepseekVisionModel) return sendJson(res, 400, { error: "当前 DeepSeek 模型不支持图片输入，请切换到 DeepSeek V4.1 Flash" });
     const usingH3Skill = body.skill === "minimax-h3";
     const usingNuyoahSkill = body.skill === "nuyoah-reverse";
@@ -2058,10 +2100,10 @@ async function createResponse(req, res) {
       requestBody.reasoning_effort = ["low", "high", "max"].includes(body.kimiReasoningEffort) ? body.kimiReasoningEffort : "high";
       requestBody.max_tokens = 16_384;
     }
-    const responseBaseUrl = isKimiPlan ? arkPlanBaseUrl : isDeepseek ? deepseekBaseUrl : isKimi ? await resolveKimiBaseUrl(selectedModel) : baseUrl;
+    const responseBaseUrl = isKimiPlan ? arkPlanBaseUrl : isGeminiNeon ? geminiNeonBaseUrl : isDeepseek ? deepseekBaseUrl : isKimi ? await resolveKimiBaseUrl(selectedModel) : baseUrl;
     let response;
     let raw = "";
-    for (let attempt = 0; attempt < (isKimiPlan ? 1 : 2); attempt += 1) {
+    for (let attempt = 0; attempt < (isKimiPlan || isGeminiNeon ? 1 : 2); attempt += 1) {
       response = await fetch(`${responseBaseUrl}/chat/completions`, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
@@ -2069,7 +2111,7 @@ async function createResponse(req, res) {
         signal: AbortSignal.timeout(isKimiPlan ? 210_000 : 150_000)
       });
       raw = await response.text();
-      if (isKimiPlan || response.ok || ![502, 503, 504].includes(response.status) || attempt === 1) break;
+      if (isKimiPlan || isGeminiNeon || response.ok || ![502, 503, 504].includes(response.status) || attempt === 1) break;
       let retrySeconds = Number(response.headers.get("retry-after")) || 0;
       try {
         const retryPayload = JSON.parse(raw);
@@ -2082,7 +2124,7 @@ async function createResponse(req, res) {
     if (!response.ok) throw gatewayError(response.status, result?.error?.message || result?.message || diagnosticText(raw) || `模型回答失败 (${response.status})`);
     const answer = usingNuyoahSkill ? removeNuyoahSignature(responseTextFrom(result)) : responseTextFrom(result);
     if (!answer) throw gatewayError(502, "接口没有返回可显示的文本回答");
-    return sendJson(res, 200, { answer, model: selectedModel, provider: isKimiPlan ? "ark-plan" : isDeepseek ? "deepseek" : isKimi ? "kimi" : "openai", references: references.length, skill: answerSkill, h3Mode: usingDirectH3Skill ? h3Mode : undefined });
+    return sendJson(res, 200, { answer, model: selectedModel, provider: isKimiPlan ? "ark-plan" : isGeminiNeon ? "gemini-neon" : isDeepseek ? "deepseek" : isKimi ? "kimi" : "openai", references: references.length, skill: answerSkill, h3Mode: usingDirectH3Skill ? h3Mode : undefined });
   } catch (error) {
     const failure = classifyError(error);
     return sendJson(res, failure.code === "REQUEST" ? 400 : 502, { error: failure.message, code: failure.code });
@@ -2118,15 +2160,17 @@ const server = http.createServer(async (req, res) => {
     const mjKey = await resolveMjApiKey(req);
     const runningHubKey = await resolveRunningHubApiKey(req);
     const deepseekKey = await resolveDeepseekApiKey(req);
+    const geminiNeonKey = await resolveGeminiNeonApiKey(req);
     const claudeKey = await resolveClaudeApiKey(req);
     const moyuKimiKey = await resolveKimiApiKey(req, "kimi-k3-moyu");
     const moonshotKimiKey = await resolveKimiApiKey(req, "kimi-k3-moonshot");
-    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, arkPlanAnswer: { ready: Boolean(arkPlanKey), protocol: "kimi-ark-plan-v1", model: kimiPlanModel, vision: true, referenceLimit: 8 }, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, mossWorkflowId: mossWorkflow.id, wenwuWorkflowId: runningHubVideoWorkflows.wenwu.id, wenwuMaxSeconds: runningHubVideoWorkflows.wenwu.maxSeconds, cloneAudioReferences: true, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
+    return sendJson(res, 200, { ready: Boolean(key), model, models: image2Models, image25SizeProtocol, baseUrl, arkPlanAnswer: { ready: Boolean(arkPlanKey), protocol: "kimi-ark-plan-v1", model: kimiPlanModel, vision: true, referenceLimit: 8 }, ark: { ready: Boolean(arkKey), protocol: arkProtocol, models: arkModels.map(item => item.id), baseUrl: arkBaseUrl }, arkPlan: { ready: Boolean(arkPlanKey), protocol: arkPlanProtocol, models: arkPlanModels.map(item => item.id), baseUrl: arkPlanBaseUrl }, seedream: { ready: Boolean(seedreamKey), model: seedreamDefaultModel, models: seedreamImageModels, baseUrl: seedreamBaseUrl }, midjourney: { ready: Boolean(mjKey), model: mjFastModel, baseUrl: mjBaseUrl }, runninghub: { ready: Boolean(runningHubKey), workflowId: runningHubWorkflowId, mossWorkflowId: mossWorkflow.id, wenwuWorkflowId: runningHubVideoWorkflows.wenwu.id, wenwuMaxSeconds: runningHubVideoWorkflows.wenwu.maxSeconds, cloneAudioReferences: true, instanceType: runningHubInstanceType, baseUrl: runningHubBaseUrl }, deepseek: { ready: Boolean(deepseekKey), model: deepseekVisionModel, visionModel: deepseekVisionModel, models: deepseekModels, baseUrl: deepseekBaseUrl }, geminiNeon: { ready: Boolean(geminiNeonKey), model: geminiNeonModel, baseUrl: geminiNeonBaseUrl }, claude: { ready: Boolean(claudeKey), model: claudeDefaultModel, models: claudeModels, baseUrl: claudeBaseUrl }, kimi: { ready: Boolean(moyuKimiKey || moonshotKimiKey), model: kimiDefaultModel, models: kimiModels, providers: { moyu: { ready: Boolean(moyuKimiKey), model: "kimi-k3-moyu", apiModel: kimiApiModel, baseUrl: kimiMoyuBaseUrl }, moonshot: { ready: Boolean(moonshotKimiKey), model: "kimi-k3-moonshot", apiModel: kimiApiModel, baseUrl: await resolveKimiBaseUrl("kimi-k3-moonshot") } } }, jobs: jobs.size });
   }
   if (req.method === "GET" && url.pathname === "/api/health") return checkGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/seedream/health") return checkSeedreamGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/midjourney/health") return checkMjGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/deepseek/health") return checkDeepseekGateway(req, res);
+  if (req.method === "GET" && url.pathname === "/api/providers/gemini-neon/health") return checkGeminiNeonGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/claude/health") return checkClaudeGateway(req, res);
   if (req.method === "GET" && url.pathname === "/api/providers/kimi/health") return checkKimiGateway(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/ark-plan") return saveArkProvider(req, res, 'ark-plan');
@@ -2135,6 +2179,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/providers/midjourney") return saveMjProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/runninghub") return saveRunningHubProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/deepseek") return saveDeepseekProvider(req, res);
+  if (req.method === "POST" && url.pathname === "/api/providers/gemini-neon") return saveGeminiNeonProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/claude") return saveClaudeProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/providers/kimi") return saveKimiProvider(req, res);
   if (req.method === "POST" && url.pathname === "/api/restart") return restartLocalService(req, res);
