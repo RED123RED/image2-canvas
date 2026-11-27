@@ -5,8 +5,21 @@ import { managedImageKey, collectMediaReferences, mediaCleanupProtocol } from '.
 
 const failure = (message, status = 400) => Object.assign(new Error(message), { status });
 
+export const generatedFolders = { image: '图像', video: '视频' };
+
+export function generatedFolder(root, filename) {
+  const extension = path.extname(filename).toLowerCase();
+  if (['.mp4', '.webm', '.mov'].includes(extension)) return path.join(root, generatedFolders.video);
+  if (['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(extension)) return path.join(root, generatedFolders.image);
+  return root;
+}
+
 export function createMediaCleanup({ generatedDir, assetsDir, getJobs, now = Date.now, graceMs = 10 * 60_000 }) {
-  const directories = { generated: generatedDir, assets: assetsDir };
+  const folders = [
+    ['generated', generatedDir],
+    ['generated', path.join(generatedDir, generatedFolders.image)],
+    ['assets', assetsDir]
+  ];
   const previews = new Map();
   let deleting = false;
   const protection = body => {
@@ -40,7 +53,8 @@ export function createMediaCleanup({ generatedDir, assetsDir, getJobs, now = Dat
         for (const item of preview.candidates) {
           if (needed(item.key, protection(body))) { skipped++; continue; }
           try {
-            const file = path.join(directories[item.directory], item.filename);
+            if (!(await fs.lstat(item.folder)).isDirectory()) { skipped++; continue; }
+            const file = path.join(item.folder, item.filename);
             const stat = await fs.lstat(file);
             if (!stat.isFile() || stat.isSymbolicLink() || signature(stat) !== item.signature || now() - stat.mtimeMs < graceMs || needed(item.key, protection(body))) { skipped++; continue; }
             await fs.unlink(file); deleted++; deletedBytes += stat.size;
@@ -52,10 +66,13 @@ export function createMediaCleanup({ generatedDir, assetsDir, getJobs, now = Dat
     const protectedFiles = protection(body), candidates = [];
     const byDirectory = {};
     let totalImageCount = 0, protectedCount = 0, recentCount = 0;
-    for (const [directory, folder] of Object.entries(directories)) {
-      byDirectory[directory] = { unusedCount: 0, reclaimBytes: 0 };
+    for (const [directory, folder] of folders) {
+      byDirectory[directory] ??= { unusedCount: 0, reclaimBytes: 0 };
       let entries;
-      try { entries = await fs.readdir(folder, { withFileTypes: true }); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      try {
+        if (!(await fs.lstat(folder)).isDirectory()) continue;
+        entries = await fs.readdir(folder, { withFileTypes: true });
+      } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
       for (const entry of entries) {
         const key = managedImageKey(directory + '/' + entry.name);
         if (!entry.isFile() || !key) continue;
@@ -65,7 +82,7 @@ export function createMediaCleanup({ generatedDir, assetsDir, getJobs, now = Dat
         try { stat = await fs.lstat(path.join(folder, entry.name)); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
         if (!stat.isFile() || stat.isSymbolicLink()) continue;
         if (time - stat.mtimeMs < graceMs) { recentCount++; continue; }
-        candidates.push({ key, directory, filename: entry.name, signature: signature(stat) });
+        candidates.push({ key, folder, filename: entry.name, signature: signature(stat) });
         byDirectory[directory].unusedCount++; byDirectory[directory].reclaimBytes += stat.size;
       }
     }

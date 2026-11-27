@@ -1,5 +1,5 @@
 import http from "node:http";
-import {createMediaCleanup} from './media-cleanup.mjs';
+import {createMediaCleanup, generatedFolder, generatedFolders} from './media-cleanup.mjs';
 import fsNative from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -139,6 +139,7 @@ const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".gif": "image/gif",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -208,7 +209,7 @@ async function writeJobLog(job, event) {
 
 async function initializeJobs() {
   await Promise.all([
-    fs.mkdir(generatedDir, { recursive: true }),
+    ...Object.values(generatedFolders).map(folder => fs.mkdir(path.join(generatedDir, folder), { recursive: true })),
     fs.mkdir(assetsDir, { recursive: true }),
     fs.mkdir(videoAssetsDir, { recursive: true }),
     fs.mkdir(audioAssetsDir, { recursive: true }),
@@ -448,6 +449,17 @@ function isCloneAudioUrl(source) {
 function isVideoReferenceAudio(source) {
   return isCloneAudioUrl(source) || (typeof source === "string" && /^\/api\/audio-assets\/[A-Za-z0-9._%()-]+$/.test(source));
 }
+// Project and history URLs keep their original basename after media is organized.
+async function existingGeneratedPath(filename) {
+  const folder = generatedFolder(generatedDir, filename);
+  const file = path.join(folder, filename);
+  if (folder !== generatedDir) {
+    try { await fs.access(file); return file; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  return path.join(generatedDir, filename);
+}
+
 async function localMediaPath(source, kind = "video") {
   const pathname = decodeURIComponent(new URL(String(source || ""), "http://127.0.0.1").pathname);
   const locations = kind === "audio"
@@ -457,7 +469,7 @@ async function localMediaPath(source, kind = "video") {
   if (!matched) throw new Error(kind === "audio" ? "只能使用本机画布中的音频" : "只能使用本机画布中的视频");
   const filename = pathname.slice(matched[0].length);
   if (!filename || path.basename(filename) !== filename) throw new Error(kind === "audio" ? "音频地址无效" : "视频地址无效");
-  const filePath = path.join(matched[1], filename);
+  const filePath = matched[1] === generatedDir ? await existingGeneratedPath(filename) : path.join(matched[1], filename);
   const stat = await fs.stat(filePath);
   if (!stat.isFile()) throw new Error(kind === "audio" ? "音频文件不存在" : "视频文件不存在");
   return filePath;
@@ -858,7 +870,7 @@ async function persistGeneratedImage(job, item, index) {
   const extension = extensionForMime(mime);
   const filename = `${job.id}-${index + 1}.${extension}`;
   const isLayer = job.kind === 'layer-decomposition';
-  await fs.writeFile(path.join(isLayer ? assetsDir : generatedDir, filename), image.buffer);
+  await fs.writeFile(path.join(isLayer ? assetsDir : generatedFolder(generatedDir, filename), filename), image.buffer);
   const dimensions = imageDimensions(image.buffer, mime);
   return { url: `/api/${isLayer ? 'assets' : 'generated'}/${filename}`, revisedPrompt: item.revised_prompt || "", width: dimensions.width, height: dimensions.height, outputType: extension };
 }
@@ -873,7 +885,7 @@ async function persistGeneratedMedia(job, item, index) {
   if (!file?.buffer?.length) throw new Error("RunningHub 返回的媒体文件为空");
   const extension = outputType !== "bin" ? outputType : extensionForMime(file.mime);
   const filename = `${job.id}-${index + 1}.${extension}`;
-  await fs.writeFile(path.join(generatedDir, filename), file.buffer);
+  await fs.writeFile(path.join(generatedFolder(generatedDir, filename), filename), file.buffer);
   return { url: `/api/generated/${filename}`, outputType: extension, nodeId: item?.nodeId || "", text: item?.text || "" };
 }
 
@@ -1775,13 +1787,14 @@ async function restartLocalService(req, res) {
   }, 120);
 }
 
-async function openGeneratedFolder(req, res) {
+async function openGeneratedFolder(req, res, kind) {
   try {
-    await fs.mkdir(generatedDir, { recursive: true });
+    const folder = Object.hasOwn(generatedFolders, kind) ? path.join(generatedDir, generatedFolders[kind]) : generatedDir;
+    await fs.mkdir(folder, { recursive: true });
     if (process.platform !== "win32") return sendJson(res, 501, { error: "当前系统不支持打开 Windows 图片文件夹" });
     const explorerPath = path.join(process.env.WINDIR || "C:\\Windows", "explorer.exe");
     await new Promise((resolve, reject) => {
-      const child = spawn(explorerPath, [generatedDir], { detached: true, stdio: "ignore", windowsHide: false });
+      const child = spawn(explorerPath, [folder], { detached: true, stdio: "ignore", windowsHide: false });
       child.once("error", reject);
       child.once("spawn", () => { child.unref(); resolve(); });
     });
@@ -1795,8 +1808,9 @@ async function serveStoredMedia(req, res, directory, filename) {
   const safeName = path.basename(filename);
   if (!safeName || safeName !== filename) return sendJson(res, 403, { error: "禁止访问" });
   try {
-    const filePath = path.join(directory, safeName);
+    const filePath = directory === generatedDir ? await existingGeneratedPath(safeName) : path.join(directory, safeName);
     const stat = await fs.stat(filePath);
+    if (!stat.isFile()) return sendJson(res, 404, { error: "媒体文件不存在" });
     const mime = mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream";
     const isVideo = mime.startsWith("video/");
     const baseHeaders = { "Content-Type": mime, "Accept-Ranges": "bytes", "Cache-Control": isVideo ? "no-store" : "private, max-age=3600" };
@@ -1850,7 +1864,7 @@ async function deleteGeneratedImages(req, res) {
     if (filenames.length !== requested.length) return sendJson(res, 400, { error: "包含不支持的生成媒体文件名" });
     let deleted = 0; let missing = 0;
     for (const filename of filenames) {
-      try { await fs.unlink(path.join(generatedDir, filename)); deleted += 1; }
+      try { await fs.unlink(await existingGeneratedPath(filename)); deleted += 1; }
       catch (error) { if (error?.code === "ENOENT") missing += 1; else throw error; }
     }
     return sendJson(res, 200, { deleted, missing });
@@ -2137,7 +2151,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/generated/delete") return deleteGeneratedImages(req, res);
   if (req.method === "POST" && url.pathname === "/api/generated/cleanup-unused") return sendJson(res, 409, { error: "清理功能已更新，请刷新页面后重试" });
   if (req.method === "POST" && url.pathname === "/api/media/cleanup-unused") return cleanupUnusedGeneratedImages(req, res);
-  if (req.method === "POST" && url.pathname === "/api/generated/open-folder") return openGeneratedFolder(req, res);
+  if (req.method === "POST" && url.pathname === "/api/generated/open-folder") return openGeneratedFolder(req, res, url.searchParams.get("kind"));
   const mjUpscaleMatch = req.method === "POST" && /^\/api\/jobs\/([^/]+)\/midjourney\/upscale$/.exec(url.pathname);
   if (mjUpscaleMatch) { const id = safeDecodePath(mjUpscaleMatch[1]); return id === null ? sendJson(res, 400, { error: "任务地址无效" }) : createMjUpscaleJob(req, res, id); }
   const cancelJobMatch = req.method === "POST" && /^\/api\/jobs\/([^/]+)\/cancel$/.exec(url.pathname);

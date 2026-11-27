@@ -3233,11 +3233,13 @@ async function requestJson(url, options = {}, timeoutMs = 30_000) {
   }
 }
 async function openGeneratedFolder() {
+  const node = selectedNode();
+  const video = ["video", "video-editor", "video-preview"].includes(node?.type) || node?.mediaType === "video";
   try {
-    await requestJson("/api/generated/open-folder", { method: "POST" }, 10_000);
-    toast("已请求 Windows 打开生成图片文件夹");
+    await requestJson("/api/generated/open-folder?kind=" + (video ? "video" : "image"), { method: "POST" }, 10_000);
+    toast(video ? "已请求 Windows 打开生成视频文件夹" : "已请求 Windows 打开生成图片文件夹");
   } catch (error) {
-    toast(error?.message || "无法打开生成图片文件夹", true);
+    toast(error?.message || "无法打开生成文件夹", true);
   }
 }
 function stopGenerationPolling(jobId, resetFailures = true) {

@@ -59,6 +59,21 @@ test('deletes orphan images in both directories and retains used images, preview
   for(const key of ['generated/job-orphan-1.png','assets/asset-orphan.png','assets/asset-orphan.preview.jpg','assets/job-unused-layer-1.png'])assert.equal(await f.exists(key),false,key);
 });
 
+test('categorized images use the original project key and share the generated count', async t => {
+  const f = await fixture(t);
+  await fs.mkdir(path.join(f.root, 'generated/图像'));
+  await f.put('generated/图像/job-keep-1.png');
+  await f.put('generated/图像/job-unused-1.png');
+  await f.put('generated/job-old-1.jpg');
+  const references = body({ referencedImages: ['generated/job-keep-1.png'] });
+  const preview = await f.cleanup(references);
+  assert.equal(preview.byDirectory.generated.unusedCount, 2);
+  assert.equal(preview.protectedCount, 1);
+  const result = await f.cleanup({...references, action:'delete', previewToken:preview.previewToken});
+  assert.equal(result.deleted, 2);
+  assert.ok(await f.exists('generated/图像/job-keep-1.png'));
+});
+
 test('confirmation protects new references, changed files, new active jobs and files outside preview', async t => {
   const f=await fixture(t);
   for(const key of ['assets/asset-now-used.png','assets/asset-changed.png','generated/job-started-1.png','assets/asset-delete.png'])await f.put(key);
